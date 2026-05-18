@@ -1,0 +1,7 @@
+build/
+.pio/
+*.bin
+*.elf
+*.map
+tmp_*
+index_html.h.gch
