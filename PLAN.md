@@ -2,37 +2,30 @@
 
 Ce document détaille les étapes nécessaires pour transformer le transceiver actuel en une passerelle applicative fonctionnelle.
 
-## Phase 0 : Stabilité Réseau & Infrastructure (CRITIQUE)
-*Indispensable pour garantir l'accès à distance (OTA) et la stabilité sur les réseaux Freebox.*
+## Phase 0 : Stabilité Réseau & Infrastructure (TERMINÉ ✅)
+- [x] **Correction WiFi** : Forçage `WIFI_PS_NONE` et `setMinSecurity` pour compatibilité Freebox.
+- [x] **Interface Autonome** : Suppression des dépendances CDN pour éviter les hangs sur l'AP.
+- [x] **Architecture Modulaire** : Séparation en modules `z_config`, `z_logger`, `z_network`, `z_mstp`, `z_ui`.
+- [x] **Gestion de projet** : `arduino-cli` opérationnel pour compilation autonome + Git versioning.
 
-1.  **Correction du Bug de Configuration** :
-    *   Mettre à jour la route `/save` pour capturer `static_ip`, `local_ip`, `gateway`, et `subnet`.
-    *   Harmoniser l'interface HTML (`index.html`) pour inclure ces champs.
-2.  **Optimisation Wi-Fi (Fix Timeout/Handshake)** :
-    *   Forcer `WiFi.setSleep(WIFI_PS_NONE)` pour éviter les déconnexions intempestives.
-    *   Améliorer la robustesse de la connexion initiale (disconnect/mode/begin).
-3.  **Sécurisation du Reboot** :
-    *   Remplacer le `ESP.restart()` immédiat dans le thread async par un flag global traité dans la `loop()`.
-4.  **Validation OTA** :
-    *   Vérifier que le mécanisme d'Update actuel est pleinement fonctionnel pour permettre le déploiement en rack.
+## Phase 1 : Fiabilisation du Transport MS/TP (EN ATTENTE ⏳)
+*Objectif : Capture et validation des données binaires.*
 
-## Phase 1 : Fiabilisation du Transport MS/TP
-*Capture et validation des données.*
-
-1.  **Implémentation du CRC16 (Data CRC)** :
-    *   Ajouter la fonction `calc_data_crc(uint8_t *data, size_t len)` (Polynôme ASHRAE 135).
-2.  **Extension de la FSM (Core 1)** :
-    *   Gérer les types de trames `BACnetDataExpectReply` (0x05) et `BACnetDataNoReply` (0x06).
-    *   Validation CRC16 et extraction du Payload.
+1.  **Implémentation du CRC16** :
+    *   Ajouter `calc_data_crc` (Polynôme 0x1021) dans `z_mstp.cpp`.
+2.  **Extension de la FSM** :
+    *   Gestion des trames `0x05` (ExpectReply) et `0x06` (NoReply).
+    *   Validation dynamique de la longueur (Header octets 5-6).
+    *   Validation CRC16 du Payload.
 
 ## Phase 2 : Analyse NPDU / APDU (Minimaliste)
-1.  **Parseur NPDU** : Routage et identification des destinataires.
-2.  **Parseur APDU** : Décodage des services `ReadProperty` (0x0C).
+1.  **Parseur NPDU** : Identification des adresses source/destination BACnet.
+2.  **Parseur APDU** : Décodage initial du service `ReadProperty`.
 
 ## Phase 3 : Mapping et Publication MQTT
-1.  **Décodeur ASN.1** : Conversion des types BACnet (Real, Binary, etc.) en JSON.
-2.  **Publication MQTT** : Envoi automatique des changements de valeurs sur le broker.
+1.  **Décodeur ASN.1** : Conversion des types de données BACnet en JSON.
+2.  **Moteur de publication** : Envoi sur topic `{prefix}/{id}/{obj_type}/{inst}/val`.
 
 ## Phase 4 : Interface Utilisateur et Diagnostics
-1.  **Stats Bus** : Affichage temps réel des erreurs CRC et du trafic.
-2.  **Logs Distants** : Envoi des diagnostics via MQTT.
+1.  **Statistiques Web** : Affichage du taux d'erreur CRC et activité bus.
+2.  **MQTT Remote Logs** : Supervision à distance.
