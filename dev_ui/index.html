@@ -2,86 +2,201 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ZIRCON1UM | Simulator</title>
+    <title>ZIRCON1UM | Management</title>
     <style>
-        body { background: #0f172a; color: #f8fafc; font-family: system-ui, sans-serif; margin: 0; padding: 0; }
-        nav { background: #4338ca; padding: 1rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); display: flex; justify-content: space-between; }
-        .badge { padding: 0.2rem 0.6rem; border-radius: 1rem; font-size: 0.7rem; font-weight: bold; }
-        .bg-red { background: #ef4444; } .bg-green { background: #10b981; }
-        .container { max-width: 800px; margin: 1rem auto; padding: 1rem; display: grid; gap: 1rem; }
-        .card { background: #1e293b; padding: 1.2rem; border-radius: 0.5rem; border: 1px solid #334155; }
-        h2 { color: #818cf8; font-size: 0.8rem; text-transform: uppercase; margin-top: 0; }
-        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-        label { display: block; font-size: 0.7rem; color: #94a3b8; margin-bottom: 0.2rem; }
-        input[type="text"], input[type="password"] { width: 100%; background: #0f172a; border: 1px solid #475569; padding: 0.5rem; color: white; border-radius: 0.3rem; box-sizing: border-box; }
-        button { background: #4f46e5; color: white; border: none; padding: 0.7rem; width: 100%; border-radius: 0.3rem; font-weight: bold; cursor: pointer; margin-top: 1rem; }
-        #logs { height: 250px; overflow-y: auto; background: #000; color: #4ade80; font-family: monospace; font-size: 0.7rem; padding: 0.5rem; border-radius: 0.3rem; margin-top: 1rem; }
+        :root { --bg: #0f172a; --card: #1e293b; --primary: #4f46e5; --accent: #818cf8; --text: #f8fafc; --muted: #94a3b8; --green: #10b981; --red: #ef4444; }
+        body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; margin: 0; }
+        nav { background: #1e1b4b; padding: 0.75rem 1.5rem; border-bottom: 1px solid #312e81; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 100; }
+        .logo { font-weight: 800; font-size: 1.2rem; letter-spacing: -0.025em; }
+        .logo span { font-weight: 300; color: var(--muted); font-size: 0.8rem; margin-left: 0.5rem; }
+        .badge { padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; }
+        
+        .tabs { display: flex; background: #1e1b4b; padding: 0 1.5rem; border-bottom: 1px solid #312e81; gap: 1rem; overflow-x: auto; }
+        .tab-btn { padding: 1rem 0.5rem; background: none; border: none; color: var(--muted); font-weight: 600; font-size: 0.85rem; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; white-space: nowrap; }
+        .tab-btn:hover { color: var(--text); }
+        .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+        .container { max-width: 1000px; margin: 1.5rem auto; padding: 0 1rem; }
+        .tab-content { display: none; animation: fadeIn 0.3s ease-out; }
+        .tab-content.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+
+        .card { background: var(--card); border-radius: 0.75rem; border: 1px solid #334155; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+        .card-title { color: var(--accent); font-size: 0.75rem; font-weight: 700; text-transform: uppercase; margin-bottom: 1.25rem; letter-spacing: 0.05em; display: flex; align-items: center; gap: 0.5rem; }
+        
+        .grid-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+        .stat-item { background: var(--bg); padding: 1rem; border-radius: 0.5rem; border: 1px solid #334155; }
+        .stat-label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; }
+        .stat-value { font-size: 1.25rem; font-weight: 700; font-family: monospace; margin-top: 0.25rem; }
+
+        form { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+        .full-w { grid-column: span 2; }
+        .form-group { display: flex; flex-direction: column; gap: 0.35rem; }
+        label { font-size: 0.75rem; font-weight: 600; color: var(--muted); }
+        input, select { background: var(--bg); border: 1px solid #475569; padding: 0.6rem; color: white; border-radius: 0.4rem; font-size: 0.9rem; }
+        input:focus { border-color: var(--accent); outline: none; ring: 1px var(--accent); }
+        
+        .checkbox-group { display: flex; align-items: center; gap: 0.75rem; background: var(--bg); padding: 0.6rem; border-radius: 0.4rem; border: 1px solid #475569; }
+        .checkbox-group input { width: auto; }
+
+        button.primary { background: var(--primary); color: white; border: none; padding: 0.8rem; border-radius: 0.4rem; font-weight: 700; cursor: pointer; transition: background 0.2s; }
+        button.primary:hover { background: #4338ca; }
+
+        #terminal { background: #000; color: #4ade80; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.75rem; height: 350px; overflow-y: auto; padding: 1rem; border-radius: 0.5rem; line-height: 1.4; border: 1px solid #1e293b; }
+        .log-time { color: #71717a; margin-right: 0.5rem; }
+        .log-inf { color: #60a5fa; } .log-wrn { color: #facc15; } .log-err { color: #f87171; }
     </style>
 </head>
 <body>
     <nav>
-        <div style="font-weight:bold;">ZIRCON1UM v2.1 (SIMULATOR)</div>
-        <div id="status" class="badge bg-red">Déconnecté</div>
+        <div class="logo">ZIRCON1UM <span>v2.2 Prototype</span></div>
+        <div id="global-status" class="badge bg-red">Offline</div>
     </nav>
+
+    <div class="tabs">
+        <button class="tab-btn active" onclick="openTab(event, 'tab-dash')">Dashboard</button>
+        <button class="tab-btn" onclick="openTab(event, 'tab-wifi')">WiFi</button>
+        <button class="tab-btn" onclick="openTab(event, 'tab-bacnet')">BACnet</button>
+        <button class="tab-btn" onclick="openTab(event, 'tab-mqtt')">MQTT</button>
+        <button class="tab-btn" onclick="openTab(event, 'tab-sys')">Système</button>
+    </div>
+
     <div class="container">
-        <div class="card">
-            <h2>Statut</h2>
-            <div style="font-size: 0.9rem; font-family: monospace;">
-                IP: <span id="ip">0.0.0.0</span> | Signal: <span id="rssi">--</span> dBm
+        <!-- DASHBOARD -->
+        <div id="tab-dash" class="tab-content active">
+            <div class="grid-stats">
+                <div class="stat-item"><div class="stat-label">WiFi Signal</div><div id="stat-rssi" class="stat-value">-- dBm</div></div>
+                <div class="stat-item"><div class="stat-label">IP Address</div><div id="stat-ip" class="stat-value">0.0.0.0</div></div>
+                <div class="stat-item"><div class="stat-label">MS/TP Master</div><div id="stat-mstp" class="stat-value">Idle</div></div>
+                <div class="stat-item"><div class="stat-label">MQTT Status</div><div id="stat-mqtt" class="stat-value text-red-500">Offline</div></div>
+            </div>
+            <div class="card" style="margin-top: 1.5rem;">
+                <div class="card-title">Console de diagnostic</div>
+                <div id="terminal"></div>
             </div>
         </div>
-        <div class="card">
-            <h2>Configuration WiFi</h2>
-            <form action="/save" method="POST">
-                <label>SSID</label><input type="text" name="ssid" id="field_ssid">
-                <label>Password</label><input type="password" name="pass" id="field_pass">
-                <div style="margin-top: 1rem; display: flex; align-items: center;">
-                    <input type="checkbox" name="static_ip" id="static_ip">
-                    <label for="static_ip" style="margin: 0 0 0 0.5rem;">IP Statique (192.168.1.50)</label>
-                </div>
-                <button type="submit">Sauvegarder & Redémarrer</button>
-            </form>
+
+        <!-- WIFI CONFIG -->
+        <div id="tab-wifi" class="tab-content">
+            <div class="card">
+                <div class="card-title">Paramètres WiFi</div>
+                <form action="/save" method="POST">
+                    <div class="form-group"><label>SSID</label><input type="text" name="ssid" id="f_ssid"></div>
+                    <div class="form-group"><label>Mot de passe</label><input type="password" name="pass" id="f_pass"></div>
+                    <div class="form-group checkbox-group">
+                        <input type="checkbox" name="static_ip" id="f_static_ip" onchange="toggleStatic()">
+                        <label for="f_static_ip">Utiliser une IP Statique</label>
+                    </div>
+                    <div id="static-fields" class="full-w grid" style="display:none;">
+                        <div class="form-group"><label>IP Locale</label><input type="text" name="local_ip" id="f_ip" placeholder="192.168.1.50"></div>
+                        <div class="form-group"><label>Passerelle</label><input type="text" name="gateway" id="f_gw" placeholder="192.168.1.1"></div>
+                        <div class="form-group"><label>Masque</label><input type="text" name="subnet" id="f_sn" placeholder="255.255.255.0"></div>
+                    </div>
+                    <button type="submit" class="primary full-w">Appliquer WiFi</button>
+                </form>
+            </div>
         </div>
-        <div class="card">
-            <h2>Console</h2>
-            <div id="logs"></div>
+
+        <!-- BACNET CONFIG -->
+        <div id="tab-bacnet" class="tab-content">
+            <div class="card">
+                <div class="card-title">Configuration MS/TP</div>
+                <form action="/save" method="POST">
+                    <div class="form-group"><label>Adresse MAC (0-127)</label><input type="text" name="mac" id="f_mac" value="1"></div>
+                    <div class="form-group"><label>Max Master</label><input type="text" name="max_m" id="f_max_m" value="127"></div>
+                    <div class="form-group"><label>Polling Automate (MAC)</label><input type="text" name="target" id="f_target" value="4"></div>
+                    <div class="form-group"><label>Intervalle (ms)</label><input type="text" name="poll_ms" id="f_poll" value="5000"></div>
+                    <button type="submit" class="primary full-w">Appliquer BACnet</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- MQTT CONFIG -->
+        <div id="tab-mqtt" class="tab-content">
+            <div class="card">
+                <div class="card-title">Paramètres Broker</div>
+                <form action="/save" method="POST">
+                    <div class="form-group"><label>Serveur MQTT (IP)</label><input type="text" name="mq_host" id="f_mq_host"></div>
+                    <div class="form-group"><label>Port</label><input type="text" name="mq_port" id="f_mq_port" value="1883"></div>
+                    <div class="form-group"><label>Utilisateur</label><input type="text" name="mq_user" id="f_mq_user"></div>
+                    <div class="form-group"><label>Password</label><input type="password" name="mq_pass" id="f_mq_pass"></div>
+                    <div class="form-group full-w"><label>Préfixe des Topics</label><input type="text" name="mq_pref" id="f_mq_pref" value="bacnet"></div>
+                    <button type="submit" class="primary full-w">Appliquer MQTT</button>
+                </form>
+            </div>
+            <div class="card">
+                <div class="card-title">Diffusion des Objets</div>
+                <div style="font-size: 0.8rem; color: var(--muted); text-align: center; padding: 1rem;">
+                    La liste des objets détectés s'affichera ici après la Phase 1.
+                </div>
+            </div>
+        </div>
+
+        <!-- SYSTEM CONFIG -->
+        <div id="tab-sys" class="tab-content">
+            <div class="card">
+                <div class="card-title">Paramètres Système</div>
+                <form action="/save" method="POST">
+                    <div class="form-group">
+                        <label>Niveau de Logs</label>
+                        <select name="log_lvl" id="f_log_lvl">
+                            <option value="0">0 - Erreurs uniquement</option>
+                            <option value="1">1 - Alertes</option>
+                            <option value="2" selected>2 - Info (Standard)</option>
+                            <option value="3">3 - Debug (Verbeux)</option>
+                        </select>
+                    </div>
+                    <div class="form-group checkbox-group">
+                        <input type="checkbox" name="bridge_mode" id="f_bridge">
+                        <label for="f_bridge">Mode Pont TCP (Port 6638)</label>
+                    </div>
+                    <div class="form-group"><label>Admin User</label><input type="text" name="adm_user" id="f_adm_user" value="admin"></div>
+                    <div class="form-group"><label>Admin Pass</label><input type="password" name="adm_pass" id="f_adm_pass"></div>
+                    <button type="submit" class="primary full-w">Sauvegarder Système</button>
+                </form>
+            </div>
+            <button onclick="if(confirm('Redémarrer l\'ESP32 ?')) fetch('/reboot')" style="background:var(--red); color:white; border:none; padding:0.8rem; border-radius:0.4rem; width:100%; font-weight:bold; cursor:pointer;">REBOOT APPAREIL</button>
         </div>
     </div>
+
     <script>
-        // Simulation logic for UI development
-        let ws;
+        function openTab(evt, tabId) {
+            let i, tabcontent, tablinks;
+            tabcontent = document.getElementsByClassName("tab-content");
+            for (i = 0; i < tabcontent.length; i++) tabcontent[i].classList.remove("active");
+            tablinks = document.getElementsByClassName("tab-btn");
+            for (i = 0; i < tablinks.length; i++) tablinks[i].classList.remove("active");
+            document.getElementById(tabId).classList.add("active");
+            evt.currentTarget.classList.add("active");
+        }
+
+        function toggleStatic() {
+            const show = document.getElementById('f_static_ip').checked;
+            document.getElementById('static-fields').style.display = show ? 'grid' : 'none';
+        }
+
         function connect() {
-            // Check if we are in simulator mode (localhost) or real mode
-            const host = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" ? "localhost:8000" : window.location.hostname;
-            const protocol = window.location.hostname.includes("localhost") ? "ws://" : "ws://"; // Replace with your mock WS server if needed
+            // Mock connection for prototype
+            document.getElementById('global-status').className='badge bg-green'; 
+            document.getElementById('global-status').innerText='Simulateur Connecté';
             
-            console.log("Connecting to Mock WebSocket...");
-            // In pure simulator mode, we just mock the messages
-            document.getElementById('status').className='badge bg-green'; 
-            document.getElementById('status').innerText='Simulateur Actif';
-
-            // Fetch mock config
-            fetch('/api/config')
-                .then(r => r.json())
-                .then(data => {
-                    document.getElementById('field_ssid').value = data.ssid;
-                    document.getElementById('static_ip').checked = data.static_ip;
-                });
-
-            // Fake log generator
+            // Simulation des données
             setInterval(() => {
-                const logs = document.getElementById('logs');
-                const d = document.createElement('div');
-                d.textContent = "[INF] Heap: 242 KB | Signal -55 dBm | IP: 192.168.1.50";
-                logs.appendChild(d);
-                logs.scrollTop = logs.scrollHeight;
-                if(logs.children.length > 50) logs.removeChild(logs.firstChild);
-                
-                // Update stats from mock logs
-                document.getElementById('ip').innerText = "192.168.1.50";
-                document.getElementById('rssi').innerText = "-55";
+                const term = document.getElementById('terminal');
+                const line = document.createElement('div');
+                const now = new Date().toLocaleTimeString();
+                line.innerHTML = `<span class="log-time">${now}</span> <span class="log-inf">[INF]</span> MS/TP Token passed to MAC 4 | RSSI: -52 dBm`;
+                term.appendChild(line);
+                term.scrollTop = term.scrollHeight;
+                if(term.children.length > 100) term.removeChild(term.firstChild);
+
+                document.getElementById('stat-rssi').innerText = "-52 dBm";
+                document.getElementById('stat-ip').innerText = "192.168.1.50";
+                document.getElementById('stat-mqtt').innerText = "Connected";
+                document.getElementById('stat-mqtt').className = "stat-value text-green-400";
             }, 3000);
         }
+
         window.onload = connect;
     </script>
 </body>
