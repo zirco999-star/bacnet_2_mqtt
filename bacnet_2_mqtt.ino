@@ -1,6 +1,6 @@
 /******************************************************************************
 *  PROJET ZIRCON1UM - BACnet MS/TP transceiver
-*  Version 2.1 - Architecture Modulaire Professionnelle (Fix Naming)
+*  Version 2.3.2 - Stable Version String
 *****************************************************************************/
 #include "z_config.h"
 #include "z_logger.h"
@@ -27,7 +27,9 @@ void setup() {
     init_log_system();
     setup_network_infrastructure();
     setup_mstp();
-    log_to_web(1, "ZIRCON1UM v2.1 pret.");
+    
+    // Correction de la version dans les logs
+    log_to_web(1, "ZIRCON1UM v2.3.2 pret.");
 }
 
 void loop() {
