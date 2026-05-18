@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZIRCON1UM | Simulator</title>
+    <style>
+        body { background: #0f172a; color: #f8fafc; font-family: system-ui, sans-serif; margin: 0; padding: 0; }
+        nav { background: #4338ca; padding: 1rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); display: flex; justify-content: space-between; }
+        .badge { padding: 0.2rem 0.6rem; border-radius: 1rem; font-size: 0.7rem; font-weight: bold; }
+        .bg-red { background: #ef4444; } .bg-green { background: #10b981; }
+        .container { max-width: 800px; margin: 1rem auto; padding: 1rem; display: grid; gap: 1rem; }
+        .card { background: #1e293b; padding: 1.2rem; border-radius: 0.5rem; border: 1px solid #334155; }
+        h2 { color: #818cf8; font-size: 0.8rem; text-transform: uppercase; margin-top: 0; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+        label { display: block; font-size: 0.7rem; color: #94a3b8; margin-bottom: 0.2rem; }
+        input[type="text"], input[type="password"] { width: 100%; background: #0f172a; border: 1px solid #475569; padding: 0.5rem; color: white; border-radius: 0.3rem; box-sizing: border-box; }
+        button { background: #4f46e5; color: white; border: none; padding: 0.7rem; width: 100%; border-radius: 0.3rem; font-weight: bold; cursor: pointer; margin-top: 1rem; }
+        #logs { height: 250px; overflow-y: auto; background: #000; color: #4ade80; font-family: monospace; font-size: 0.7rem; padding: 0.5rem; border-radius: 0.3rem; margin-top: 1rem; }
+    </style>
+</head>
+<body>
+    <nav>
+        <div style="font-weight:bold;">ZIRCON1UM v2.1 (SIMULATOR)</div>
+        <div id="status" class="badge bg-red">Déconnecté</div>
+    </nav>
+    <div class="container">
+        <div class="card">
+            <h2>Statut</h2>
+            <div style="font-size: 0.9rem; font-family: monospace;">
+                IP: <span id="ip">0.0.0.0</span> | Signal: <span id="rssi">--</span> dBm
+            </div>
+        </div>
+        <div class="card">
+            <h2>Configuration WiFi</h2>
+            <form action="/save" method="POST">
+                <label>SSID</label><input type="text" name="ssid" id="field_ssid">
+                <label>Password</label><input type="password" name="pass" id="field_pass">
+                <div style="margin-top: 1rem; display: flex; align-items: center;">
+                    <input type="checkbox" name="static_ip" id="static_ip">
+                    <label for="static_ip" style="margin: 0 0 0 0.5rem;">IP Statique (192.168.1.50)</label>
+                </div>
+                <button type="submit">Sauvegarder & Redémarrer</button>
+            </form>
+        </div>
+        <div class="card">
+            <h2>Console</h2>
+            <div id="logs"></div>
+        </div>
+    </div>
+    <script>
+        // Simulation logic for UI development
+        let ws;
+        function connect() {
+            // Check if we are in simulator mode (localhost) or real mode
+            const host = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" ? "localhost:8000" : window.location.hostname;
+            const protocol = window.location.hostname.includes("localhost") ? "ws://" : "ws://"; // Replace with your mock WS server if needed
+            
+            console.log("Connecting to Mock WebSocket...");
+            // In pure simulator mode, we just mock the messages
+            document.getElementById('status').className='badge bg-green'; 
+            document.getElementById('status').innerText='Simulateur Actif';
+
+            // Fetch mock config
+            fetch('/api/config')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('field_ssid').value = data.ssid;
+                    document.getElementById('static_ip').checked = data.static_ip;
+                });
+
+            // Fake log generator
+            setInterval(() => {
+                const logs = document.getElementById('logs');
+                const d = document.createElement('div');
+                d.textContent = "[INF] Heap: 242 KB | Signal -55 dBm | IP: 192.168.1.50";
+                logs.appendChild(d);
+                logs.scrollTop = logs.scrollHeight;
+                if(logs.children.length > 50) logs.removeChild(logs.firstChild);
+                
+                // Update stats from mock logs
+                document.getElementById('ip').innerText = "192.168.1.50";
+                document.getElementById('rssi').innerText = "-55";
+            }, 3000);
+        }
+        window.onload = connect;
+    </script>
+</body>
+</html>
