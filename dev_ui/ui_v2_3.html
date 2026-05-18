@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BACnet-MS/TP_2_MQTT | Console</title>
+    <title>BACnet-MS/TP_2_MQTT v2.3 | Console</title>
     <style>
         :root { 
             --bg: #0a0f14; --card: #141b21; --primary: #f59e0b; --accent: #0ea5e9; 
@@ -10,114 +10,112 @@
         }
         body { background: var(--bg); color: var(--text); font-family: 'Consolas', 'Monaco', monospace; margin: 0; }
         
-        /* Industrial Header */
+        /* Responsive Industrial Header */
         nav { 
-            background: #000; padding: 0.5rem 1.5rem; border-bottom: 2px solid var(--primary); 
+            background: #000; padding: 0.75rem 1rem; border-bottom: 2px solid var(--primary); 
             display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 100;
         }
-        .logo { font-weight: 900; font-size: 1.1rem; color: var(--primary); text-transform: uppercase; letter-spacing: 0.1em; }
-        .logo span { color: var(--muted); font-size: 0.7rem; letter-spacing: 0; text-transform: none; margin-left: 0.5rem; font-weight: 300; }
-        .badge { border: 1px solid currentColor; padding: 0.1rem 0.6rem; font-size: 0.65rem; font-weight: bold; }
+        .logo { font-weight: 900; font-size: 0.9rem; color: var(--primary); text-transform: uppercase; letter-spacing: 0.05em; }
+        .logo span { color: var(--muted); font-size: 0.6rem; letter-spacing: 0; text-transform: none; margin-left: 0.3rem; font-weight: 300; display: block; }
+        @media(min-width: 640px) { .logo { font-size: 1.1rem; } .logo span { display: inline; font-size: 0.7rem; } }
+
+        .badge { border: 1px solid currentColor; padding: 0.1rem 0.4rem; font-size: 0.6rem; font-weight: bold; white-space: nowrap; }
         
-        /* Terminal Tabs */
-        .tabs { display: flex; background: #000; border-bottom: 1px solid var(--border); gap: 2px; }
-        .tab-btn { 
-            padding: 0.75rem 1.25rem; background: #141b21; border: none; color: var(--muted); 
-            font-size: 0.75rem; font-weight: bold; cursor: pointer; text-transform: uppercase;
-            border-top: 2px solid transparent; transition: all 0.1s;
+        /* Scrollable Tabs for Mobile */
+        .tabs { 
+            display: flex; background: #000; border-bottom: 1px solid var(--border); 
+            overflow-x: auto; scrollbar-width: none; -ms-overflow-style: none;
         }
-        .tab-btn:hover { background: #1e293b; color: var(--text); }
+        .tabs::-webkit-scrollbar { display: none; }
+        .tab-btn { 
+            padding: 0.8rem 1rem; background: #141b21; border: none; color: var(--muted); 
+            font-size: 0.7rem; font-weight: bold; cursor: pointer; text-transform: uppercase;
+            border-top: 2px solid transparent; transition: all 0.1s; white-space: nowrap; flex-shrink: 0;
+        }
         .tab-btn.active { background: var(--bg); color: var(--primary); border-top-color: var(--primary); }
 
-        .container { max-width: 1100px; margin: 1rem auto; padding: 0 1rem; }
+        .container { max-width: 1100px; margin: 0.5rem auto; padding: 0 0.75rem; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
 
-        /* Industrial Cards */
+        /* Mobile Friendly Cards */
         .card { 
-            background: var(--card); border: 1px solid var(--border); margin-bottom: 1rem; 
-            box-shadow: inset 0 0 10px rgba(0,0,0,0.5); position: relative;
+            background: var(--card); border: 1px solid var(--border); margin-bottom: 0.75rem; 
+            box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
         }
         .card-header { 
-            background: #1e293b; padding: 0.4rem 1rem; border-bottom: 1px solid var(--border);
-            color: var(--accent); font-size: 0.7rem; font-weight: bold; text-transform: uppercase;
+            background: #1e293b; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border);
+            color: var(--accent); font-size: 0.65rem; font-weight: bold; text-transform: uppercase;
             display: flex; justify-content: space-between;
         }
-        .card-body { padding: 1.25rem; }
+        .card-body { padding: 1rem; }
         
-        /* Stats Grid */
-        .grid-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1px; background: var(--border); border: 1px solid var(--border); }
-        .stat-item { background: var(--card); padding: 0.75rem; }
-        .stat-label { font-size: 0.6rem; color: var(--muted); margin-bottom: 0.25rem; }
-        .stat-value { font-size: 1rem; font-weight: bold; color: var(--success); }
+        /* Stats Grid - Stacked on Mobile */
+        .grid-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--border); border: 1px solid var(--border); }
+        @media(min-width: 768px) { .grid-stats { grid-template-columns: repeat(4, 1fr); } }
+        .stat-item { background: var(--card); padding: 0.6rem; }
+        .stat-label { font-size: 0.55rem; color: var(--muted); margin-bottom: 0.2rem; }
+        .stat-value { font-size: 0.85rem; font-weight: bold; color: var(--success); overflow: hidden; text-overflow: ellipsis; }
 
-        /* Industrial Form */
-        form { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-        .full-w { grid-column: span 2; }
-        label { display: block; font-size: 0.65rem; color: var(--muted); margin-bottom: 0.3rem; text-transform: uppercase; }
+        /* Form Layout */
+        form { display: grid; grid-template-columns: 1fr; gap: 0.75rem; }
+        @media(min-width: 640px) { form { grid-template-columns: 1fr 1fr; } }
+        .full-w { grid-column: 1 / -1; }
+        label { display: block; font-size: 0.6rem; color: var(--muted); margin-bottom: 0.2rem; text-transform: uppercase; }
         input, select { 
             background: #000; border: 1px solid var(--border); padding: 0.6rem; color: var(--success); 
-            border-radius: 0; font-family: monospace; font-size: 0.85rem; width: 100%; box-sizing: border-box;
+            border-radius: 0; font-family: monospace; font-size: 0.8rem; width: 100%; box-sizing: border-box;
         }
-        input:focus { border-color: var(--primary); outline: none; }
-        input:disabled { color: var(--muted); opacity: 0.5; }
         
-        /* Checkbox Styling */
         .checkbox-row { 
-            grid-column: span 2; display: flex; align-items: center; gap: 1rem; 
+            grid-column: 1 / -1; display: flex; align-items: center; gap: 0.75rem; 
             background: #000; padding: 0.75rem; border: 1px solid var(--border); cursor: pointer;
         }
         .checkbox-row input { width: 1.2rem; height: 1.2rem; margin: 0; }
-        .checkbox-row span { font-size: 0.8rem; color: var(--text); }
+        .checkbox-row span { font-size: 0.75rem; color: var(--text); }
 
         button.btn-cmd { 
             background: transparent; border: 1px solid var(--primary); color: var(--primary); 
             padding: 0.75rem; font-weight: bold; cursor: pointer; text-transform: uppercase;
-            transition: all 0.2s; width: 100%;
+            font-size: 0.75rem; width: 100%;
         }
-        button.btn-cmd:hover { background: var(--primary); color: #000; }
-        button.btn-danger { border-color: var(--error); color: var(--error); }
-        button.btn-danger:hover { background: var(--error); color: white; }
+        button.btn-danger { border-color: var(--error); color: var(--error); margin-top: 0.5rem; }
 
-        /* Terminal Display */
         #console-out { 
-            background: #05070a; color: #4ade80; height: 300px; overflow-y: auto; padding: 0.75rem; 
-            font-size: 0.75rem; border: 1px solid #1e293b; line-height: 1.4;
+            background: #05070a; color: #4ade80; height: 250px; overflow-y: auto; padding: 0.5rem; 
+            font-size: 0.65rem; border: 1px solid #1e293b; line-height: 1.3;
         }
-        .c-time { color: var(--muted); margin-right: 0.5rem; }
-        .c-tag { color: var(--accent); font-weight: bold; }
-
-        /* Objects Table */
-        .obj-table { width: 100%; border-collapse: collapse; font-size: 0.7rem; }
-        .obj-table th { text-align: left; color: var(--muted); border-bottom: 1px solid var(--border); padding: 0.5rem; }
-        .obj-table td { padding: 0.5rem; border-bottom: 1px solid #1e293b; }
+        .obj-table { width: 100%; border-collapse: collapse; font-size: 0.6rem; }
+        .obj-table th { text-align: left; color: var(--muted); border-bottom: 1px solid var(--border); padding: 0.4rem; }
+        .obj-table td { padding: 0.4rem; border-bottom: 1px solid #1e293b; }
+        .scroll-x { overflow-x: auto; }
     </style>
 </head>
 <body>
     <nav>
-        <div class="logo">BACnet-MS/TP_2_MQTT <span>by Z1rc0n1um</span></div>
-        <div id="status-tag" class="badge" style="color:var(--success)">System Ready</div>
+        <div class="logo">BACnet-MS/TP_2_MQTT v2.3 <span>by Z1rc0n1um</span></div>
+        <div id="status-tag" class="badge" style="color:var(--success)">Ready</div>
     </nav>
 
     <div class="tabs">
-        <button class="tab-btn active" onclick="openTab(event, 't-dash')">01.Dashboard</button>
-        <button class="tab-btn" onclick="openTab(event, 't-wifi')">02.Network</button>
-        <button class="tab-btn" onclick="openTab(event, 't-bac')">03.BACnet</button>
-        <button class="tab-btn" onclick="openTab(event, 't-mq')">04.MQTT</button>
-        <button class="tab-btn" onclick="openTab(event, 't-sys')">05.System</button>
+        <button class="tab-btn active" onclick="openTab(event, 't-dash')">Dashboard</button>
+        <button class="tab-btn" onclick="openTab(event, 't-wifi')">Network</button>
+        <button class="tab-btn" onclick="openTab(event, 't-bac')">BACnet</button>
+        <button class="tab-btn" onclick="openTab(event, 't-mq')">MQTT</button>
+        <button class="tab-btn" onclick="openTab(event, 't-sys')">System</button>
     </div>
 
     <div class="container">
         <!-- DASHBOARD -->
         <div id="t-dash" class="tab-content active">
             <div class="grid-stats">
-                <div class="stat-item"><div class="stat-label">WiFi Link</div><div id="s-rssi" class="stat-value">-55 dBm</div></div>
-                <div class="stat-item"><div class="stat-label">Local IP</div><div id="s-ip" class="stat-value">192.168.1.50</div></div>
-                <div class="stat-item"><div class="stat-label">MS/TP Mode</div><div class="stat-value">TRANSCEIVER</div></div>
-                <div class="stat-item"><div class="stat-label">MQTT Node</div><div id="s-mq" class="stat-value" style="color:var(--success)">CONNECTED</div></div>
+                <div class="stat-item"><div class="stat-label">WiFi</div><div id="s-rssi" class="stat-value">-55 dBm</div></div>
+                <div class="stat-item"><div class="stat-label">IP</div><div id="s-ip" class="stat-value">192.168.1.50</div></div>
+                <div class="stat-item"><div class="stat-label">MS/TP</div><div class="stat-value">ACTIVE</div></div>
+                <div class="stat-item"><div class="stat-label">MQTT</div><div id="s-mq" class="stat-value" style="color:var(--success)">ONLINE</div></div>
             </div>
-            <div class="card" style="margin-top: 1rem;">
-                <div class="card-header"><span>Kernel Log Output</span><span>Real-time stream</span></div>
+            <div class="card" style="margin-top: 0.75rem;">
+                <div class="card-header"><span>Kernel Stream</span></div>
                 <div id="console-out"></div>
             </div>
         </div>
@@ -125,21 +123,21 @@
         <!-- WIFI -->
         <div id="t-wifi" class="tab-content">
             <div class="card">
-                <div class="card-header">Interface Configuration</div>
+                <div class="card-header">WiFi Config</div>
                 <div class="card-body">
-                    <form>
-                        <div class="form-group"><label>WiFi SSID</label><input type="text" value="ZIRCON1UM_EXT"></div>
-                        <div class="form-group"><label>Passphrase</label><input type="password" value="********"></div>
+                    <form onsubmit="return false">
+                        <div class="form-group"><label>SSID</label><input type="text" value="ZIRCON1UM_EXT"></div>
+                        <div class="form-group"><label>Password</label><input type="password" value="********"></div>
                         <label class="checkbox-row">
                             <input type="checkbox" id="c_static" onchange="document.getElementById('static-box').style.display = this.checked ? 'grid' : 'none'">
-                            <span>Override DHCP (Static Assignment)</span>
+                            <span>Static IP Assignment</span>
                         </label>
-                        <div id="static-box" class="full-w grid" style="display:none; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                        <div id="static-box" class="full-w grid" style="display:none; grid-template-columns: 1fr; gap: 0.75rem;">
                             <div class="form-group"><label>Address</label><input type="text" placeholder="192.168.1.50"></div>
                             <div class="form-group"><label>Gateway</label><input type="text" placeholder="192.168.1.1"></div>
                             <div class="form-group"><label>Mask</label><input type="text" placeholder="255.255.255.0"></div>
                         </div>
-                        <button class="btn-cmd full-w">Commit Network Changes</button>
+                        <button class="btn-cmd full-w">Save Network</button>
                     </form>
                 </div>
             </div>
@@ -148,24 +146,23 @@
         <!-- BACNET -->
         <div id="t-bac" class="tab-content">
             <div class="card">
-                <div class="card-header">MS/TP Layer Parameters</div>
+                <div class="card-header">BACnet Layer</div>
                 <div class="card-body">
-                    <form>
-                        <div class="form-group"><label>Station Address (MAC)</label><input type="text" value="1"></div>
-                        <div class="form-group"><label>Target Automate MAC</label><input type="text" value="4"></div>
-                        <div class="form-group"><label>Max Info Frames</label><input type="text" value="127"></div>
-                        <div class="form-group"><label>Device Instance</label><input type="text" value="Discovery Active..." disabled></div>
-                        <button class="btn-cmd full-w">Update MS/TP Stack</button>
+                    <form onsubmit="return false">
+                        <div class="form-group"><label>Local MAC</label><input type="text" value="1"></div>
+                        <div class="form-group"><label>Target MAC</label><input type="text" value="4"></div>
+                        <div class="form-group full-w"><label>Max Info Frames</label><input type="text" value="127"></div>
+                        <button class="btn-cmd full-w">Update Stack</button>
                     </form>
                 </div>
             </div>
             <div class="card">
-                <div class="card-header">Discovered Objects (Automate #4)</div>
-                <div class="card-body" style="padding: 0;">
+                <div class="card-header">Discovered Objects</div>
+                <div class="card-body scroll-x" style="padding: 0;">
                     <table class="obj-table">
                         <thead><tr><th>ID</th><th>TYPE</th><th>NAME</th><th>VALUE</th></tr></thead>
                         <tbody>
-                            <tr><td colspan="4" style="text-align:center; padding:2rem; color:var(--muted)">[ BUS SCAN IN PROGRESS - PHASE 1 ]</td></tr>
+                            <tr><td colspan="4" style="text-align:center; padding:1.5rem; color:var(--muted)">[ BUS SCAN ACTIVE ]</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -175,24 +172,23 @@
         <!-- MQTT -->
         <div id="t-mq" class="tab-content">
             <div class="card">
-                <div class="card-header">Broker Connection</div>
+                <div class="card-header">MQTT Broker</div>
                 <div class="card-body">
-                    <form>
-                        <div class="form-group"><label>Broker Endpoint (IP)</label><input type="text" value="192.168.1.11"></div>
+                    <form onsubmit="return false">
+                        <div class="form-group"><label>Server IP</label><input type="text" value="192.168.1.11"></div>
                         <div class="form-group"><label>Port</label><input type="text" value="1883"></div>
-                        <div class="form-group"><label>Client ID</label><input type="text" value="Zirconium_Node_01"></div>
-                        <div class="form-group"><label>Topic Prefix</label><input type="text" value="bacnet/raw"></div>
-                        <button class="btn-cmd full-w">Commit Broker Config</button>
+                        <div class="form-group full-w"><label>Prefix</label><input type="text" value="bacnet/node1"></div>
+                        <button class="btn-cmd full-w">Save Broker</button>
                     </form>
                 </div>
             </div>
             <div class="card">
-                <div class="card-header">MQTT Publication Map</div>
-                <div class="card-body" style="padding: 0;">
+                <div class="card-header">Publication Map</div>
+                <div class="card-body scroll-x" style="padding: 0;">
                     <table class="obj-table">
-                        <thead><tr><th>STATUS</th><th>MQTT TOPIC</th><th>MAPPED OBJECT</th><th>ENABLE</th></tr></thead>
+                        <thead><tr><th>TOPIC</th><th>OBJECT</th><th>STATE</th></tr></thead>
                         <tbody>
-                            <tr><td colspan="4" style="text-align:center; padding:2rem; color:var(--muted)">[ NO MAPPINGS DEFINED ]</td></tr>
+                            <tr><td colspan="3" style="text-align:center; padding:1.5rem; color:var(--muted)">[ NO MAPPINGS ]</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -202,24 +198,22 @@
         <!-- SYSTEM -->
         <div id="t-sys" class="tab-content">
             <div class="card">
-                <div class="card-header">Engine Control</div>
+                <div class="card-header">System Control</div>
                 <div class="card-body">
-                    <form>
+                    <form onsubmit="return false">
                         <div class="form-group full-w">
-                            <label>Log Verbosity Level</label>
-                            <select><option>Level 0 (Fatal)</option><option>Level 1 (Warn)</option><option selected>Level 2 (Info)</option><option>Level 3 (Debug)</option></select>
+                            <label>Logs</label>
+                            <select><option>Fatal</option><option>Warn</option><option selected>Info</option><option>Debug</option></select>
                         </div>
                         <label class="checkbox-row">
                             <input type="checkbox" id="c_bridge">
-                            <span>Enable TCP-to-Serial Bridge (Port 6638)</span>
+                            <span>Enable TCP Bridge</span>
                         </label>
-                        <div class="form-group"><label>Admin User</label><input type="text" value="admin"></div>
-                        <div class="form-group"><label>Admin Password</label><input type="password" value="********"></div>
-                        <button class="btn-cmd full-w">Save System State</button>
+                        <button class="btn-cmd full-w">Save Config</button>
                     </form>
                 </div>
             </div>
-            <button class="btn-cmd btn-danger" onclick="confirm('Execute Hardware Reset?')">Master Reboot</button>
+            <button class="btn-cmd btn-danger" onclick="confirm('Reset Hardware?')">Master Reboot</button>
         </div>
     </div>
 
@@ -232,17 +226,14 @@
             document.getElementById(tabId).style.display = "block";
             evt.currentTarget.classList.add("active");
         }
-
-        // Industrial Stream Simulator
         setInterval(() => {
             const term = document.getElementById('console-out');
             const line = document.createElement('div');
-            const time = new Date().toLocaleTimeString('fr-FR');
-            line.innerHTML = `<span class="c-time">[${time}]</span> <span class="c-tag">SYS:</span> CORE1 MSTP_TOKEN_PASS -> ADDR 04 | RSSI: -55dBm`;
+            line.innerHTML = `<span style="color:var(--muted)">[${new Date().toLocaleTimeString()}]</span> <span style="color:var(--accent)">SYS:</span> MSTP_TOKEN -> ADDR 04 | RSSI: -55dBm`;
             term.appendChild(line);
             term.scrollTop = term.scrollHeight;
             if(term.children.length > 50) term.removeChild(term.firstChild);
-        }, 2500);
+        }, 3000);
     </script>
 </body>
 </html>
