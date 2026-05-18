@@ -1,5 +1,5 @@
-#ifndef WEB_UI_H
-#define WEB_UI_H
+#ifndef Z_UI_H
+#define Z_UI_H
 
 #include <Arduino.h>
 

@@ -53,7 +53,9 @@ void setup_network_infrastructure() {
     ArduinoOTA.begin();
     ws.onEvent([](AsyncWebSocket *s, AsyncWebSocketClient *c, AwsEventType t, void *a, uint8_t *d, size_t l) {
         if (t == WS_EVT_CONNECT) {
-            for(int i=0; i<backlog_count; i++) c->text(log_backlog[(backlog_index - backlog_count + i + BACKLOG_SIZE) % BACKLOG_SIZE]);
+            for(int i=0; i<backlog_count; i++) {
+                c->text(log_backlog[(backlog_index - backlog_count + i + BACKLOG_SIZE) % BACKLOG_SIZE]);
+            }
         }
     });
     webServer.addHandler(&ws);

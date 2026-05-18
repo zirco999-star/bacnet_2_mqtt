@@ -2,6 +2,7 @@
 #define Z_CONFIG_H
 
 #include <Arduino.h>
+#include <WiFi.h>          // CRITIQUE : Définit WiFiClient et WiFi
 #include <Preferences.h>
 #include <atomic>
 #include <AsyncTCP.h>

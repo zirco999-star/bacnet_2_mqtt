@@ -9,7 +9,7 @@
 
 // Définitions des variables globales
 Config sysCfg;
-Preferences preferences; // Définition manquante ajoutée
+Preferences preferences; 
 AsyncWebServer webServer(WEB_PORT);
 AsyncWebSocket ws("/ws-logs");
 WiFiClient mqttWifiClient;
