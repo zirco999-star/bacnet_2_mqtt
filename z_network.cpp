@@ -2,6 +2,15 @@
 #include <Update.h>
 #include <ArduinoJson.h>
 
+// Variable pour capturer la raison de l'échec WiFi
+int last_wifi_reason = 0;
+
+void WiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+    if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+        last_wifi_reason = info.wifi_sta_disconnected.reason;
+    }
+}
+
 void load_configuration() {
     if (!preferences.begin("sys", false)) return;
     if(preferences.getBytesLength("cfg") == sizeof(Config)) {
@@ -18,7 +27,7 @@ void save_configuration() {
 
 bool is_authenticated(AsyncWebServerRequest *request) {
     if (!request->authenticate(sysCfg.admin_user, sysCfg.admin_pass)) {
-        request->requestAuthentication("ZIRCON1UM Console");
+        request->requestAuthentication("BACnetMSTP2MQTT Console");
         return false;
     }
     return true;
@@ -27,43 +36,51 @@ bool is_authenticated(AsyncWebServerRequest *request) {
 void setup_network_infrastructure() {
     load_configuration();
     
-    WiFi.disconnect(true);
+    WiFi.onEvent(WiFiEvent);
+    WiFi.disconnect(true, true);
     WiFi.mode(WIFI_OFF);
     delay(500);
 
     if (strlen(sysCfg.wifi_ssid) == 0) {
         is_ap_mode = true;
         WiFi.mode(WIFI_AP);
-        WiFi.softAP("ZIRCON1UM_SETUP", "admin1234");
+        WiFi.softAP("BACnetMSTP2MQTT_SETUP", "admin1234");
         log_to_web(1, "Mode AP Setup: 192.168.4.1");
     } else {
         is_ap_mode = false;
         WiFi.mode(WIFI_STA);
-        WiFi.setSleep(WIFI_PS_NONE);
-        WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK);
+        
+        WiFi.setSleep(WIFI_PS_NONE); 
+        WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK); 
+        WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
+        WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
         WiFi.setAutoReconnect(true);
 
         if (sysCfg.static_ip) {
             IPAddress ip, gw, sn;
             if (ip.fromString(sysCfg.local_ip) && gw.fromString(sysCfg.gateway) && sn.fromString(sysCfg.subnet)) {
                 WiFi.config(ip, gw, sn);
+                log_to_web(1, "Config IP Statique: %s", sysCfg.local_ip);
             }
         }
         
+        log_to_web(1, "WiFi: Connexion à [%s]...", sysCfg.wifi_ssid);
         WiFi.begin(sysCfg.wifi_ssid, sysCfg.wifi_pass);
+        
         uint32_t start = millis();
-        while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) { 
+        while (WiFi.status() != WL_CONNECTED && millis() - start < 30000) { 
             delay(500); 
             Serial.print("."); 
+            if (WiFi.status() == WL_CONNECT_FAILED) break;
         }
         
         if(WiFi.status() == WL_CONNECTED) {
-            log_to_web(1, "Connected! IP: %s (Signal: %d dBm)", WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
+            log_to_web(1, "WiFi Connecté ! IP: %s (Signal: %d dBm)", WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
         } else {
             is_ap_mode = true;
             WiFi.mode(WIFI_AP);
-            WiFi.softAP("ZIRCON1UM_RECOVERY", "admin1234");
-            log_to_web(0, "WiFi failed, Recovery AP active");
+            WiFi.softAP("BACnetMSTP2MQTT_RECOVERY", "admin1234");
+            log_to_web(0, "WiFi Echec (Raison: %d). Mode RECOVERY (192.168.4.1)", last_wifi_reason);
         }
     }
 
@@ -73,7 +90,7 @@ void setup_network_infrastructure() {
 
     ArduinoOTA.begin();
 
-    // ROUTES API (ArduinoJson v7 syntax)
+    // ROUTES API
     webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         JsonDocument doc;
         doc["rssi"] = WiFi.RSSI();
@@ -131,7 +148,7 @@ void setup_network_infrastructure() {
         if(request->hasParam("adm_pass", true)) strncpy(sysCfg.admin_pass, request->getParam("adm_pass", true)->value().c_str(), 63);
 
         save_configuration();
-        request->send(200, "text/plain", "Configuration Saved. Rebooting...");
+        request->send(200, "text/plain", "OK. Rebooting...");
         pending_reboot = true; 
         reboot_timer = millis();
     });
@@ -143,7 +160,6 @@ void setup_network_infrastructure() {
         reboot_timer = millis();
     });
 
-    // ROUTE UPDATE OTA WEB
     webServer.on("/update", HTTP_POST, [](AsyncWebServerRequest *request) {
         if(!is_authenticated(request)) return;
         bool error = Update.hasError();
@@ -175,16 +191,12 @@ void setup_network_infrastructure() {
 
 void handle_network() {
     ArduinoOTA.handle();
-    
-    if (pending_reboot && (millis() - reboot_timer > 2000)) {
-        ESP.restart();
-    }
-
+    if (pending_reboot && (millis() - reboot_timer > 2000)) ESP.restart();
     if (!is_ap_mode && !mqttClient.connected()) {
         static uint32_t last_mq = 0;
         if (millis() - last_mq > 10000) {
             last_mq = millis();
-            mqttClient.connect("Zirconium_Node", sysCfg.mqtt_user, sysCfg.mqtt_pass);
+            mqttClient.connect("BACnetMSTP2MQTT_Node", sysCfg.mqtt_user, sysCfg.mqtt_pass);
         }
     } else if (mqttClient.connected()) {
         mqttClient.loop();

@@ -2,7 +2,7 @@
 #define Z_CONFIG_H
 
 #include <Arduino.h>
-#include <WiFi.h>          // CRITIQUE : Définit WiFiClient et WiFi
+#include <WiFi.h>
 #include <Preferences.h>
 #include <atomic>
 #include <AsyncTCP.h>
@@ -35,7 +35,7 @@ struct Config {
     uint32_t polling_interval = 5000;
     uint8_t log_level = 2;
     char admin_user[32] = "admin";
-    char admin_pass[64] = "zirconium";
+    char admin_pass[64] = "admin1234"; // Changé de zirconium à admin1234 pour cohérence
 };
 
 extern Config sysCfg;

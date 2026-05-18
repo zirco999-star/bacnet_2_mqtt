@@ -1,6 +1,6 @@
 /******************************************************************************
-*  PROJET ZIRCON1UM - BACnet MS/TP transceiver
-*  Version 2.3.2 - Stable Version String
+*  PROJET BACnetMSTP2MQTT - by Z1rc0n1um
+*  Micrologiciel souverain asymétrique avec contrôle d'accès
 *****************************************************************************/
 #include "z_config.h"
 #include "z_logger.h"
@@ -28,8 +28,7 @@ void setup() {
     setup_network_infrastructure();
     setup_mstp();
     
-    // Correction de la version dans les logs
-    log_to_web(1, "ZIRCON1UM v2.3.2 pret.");
+    log_to_web(1, "BACnetMSTP2MQTT v2.3.2 pret.");
 }
 
 void loop() {
