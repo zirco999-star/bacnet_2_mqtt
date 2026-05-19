@@ -1,81 +1,36 @@
 # Suivi du Projet : BACnetMSTP2MQTT
 
-## 📋 Historique des Versions et Stabilisation
+## Historique des Versions et Stabilisation
 
-### 🛡 Phase 0 : Infrastructure (Terminée)
-- **v2.3.0 - v2.3.5** : Lutte contre les erreurs WiFi "Reason 202" et les crashs NVS. Introduction du rebranding et de l'UI Industrielle.
-- **v2.4 - v2.5** : Tentative de clonage de la stack WiFi ESPHome (PMF fix, Power Save fix).
-- **v2.6** : Échec de l'init native IDF (Bootloop).
-- **v2.7** : Introduction du Scan-First et BSSID Lock. Premier succès partiel du scan.
-- **v2.8** : **Percée Technique.** Désactivation de la persistance WiFi (Cold Boot) pour tuer le CCMP Replay.
-- **v2.9** : Passage en mode **Asynchrone**. Le WiFi ne bloque plus le démarrage des services.
-- **v3.0** : Activation du mode **DEBUG** total et protection NULL Pointer sur le Logger.
-- **v3.1** : **Atomic Wipe.** Nettoyage automatique du NVS en cas de corruption du mot de passe. Ajout du bouton 👁️ sur l'UI.
-- **v3.3** : **Validation Finale.** Succès de la mise à jour OTA à distance et vérification de la persistance de la configuration.
+### Phase 0 : Infrastructure (Terminee)
+- v2.3.0 - v3.9.2 : Stabilisation du socle WiFi, NVS, OTA (Partition min_spiffs) et UI Industrielle.
 
-## 🚀 État de la Main
-- **Branche main** : Contient la v3.3 stable.
-- **IP Fixe** : 192.168.1.50
-- **Gateway** : 192.168.1.254
+### Phase 1 : Transport MS/TP et Ronde de Jetons
+- v4.0.0 - v4.2.6 : Implementation CRC8/16, FSM initiale, essais de pilotage RTS manuel (GPIO 21).
+- v4.2.9 - v4.2.10 : Modularisation du code. Apparition du probleme de "surdite" (RX=0).
+- v4.2.11 - v4.2.13 : PERCEE TECHNIQUE. Identification du conflit GPIO 47 (OPI PSRAM). Le retrait du GPIO 47 restaure la reception UART.
+- v4.2.14 : REFERENCE STABLE. Implementation du mode UART_MODE_RS485_HALF_DUPLEX natif (Auto-RTS). Ronde de jetons 1 <-> 4 parfaitement stable.
 
-## 🎯 Prochain Objectif : Phase 1 - Transport MS/TP
-L'environnement WiFi est désormais bétonné. Le travail en autonomie va se concentrer sur le driver RS485 et la capture de données BACnet.
+### Phase 2 : Decouverte Automatique des Objets
+- v4.2.15-Phase 1.5 : Succes de la lecture de l'Object_List (index 0). L'automate ECB-203 (MAC 4) confirme la presence de 98 objets.
+- v4.2.15-Phase 2.4 : Tentative de lecture sequentielle bloquante. Echec (blocage du jeton > 20ms, exclusion de la ronde).
+- v4.2.24.2 : VERSION ACTUELLE. Implementation de la strategie "YABE Clone" :
+    - Polling lent (1 requete tous les 20 jetons).
+    - Attente non-bloquante de 280ms pour capturer la reponse lente de l'automate.
+    - Enumeration automatique des 98 objets en cours (40/98 decouverts a l'arret de la session).
 
-## 📝 Notes pour l'Agent (Mode Autonome)
-1. Toujours utiliser `curl` pour vérifier l'état de l'ESP32 avant et après un flash OTA.
-2. Garder le niveau de log à DEBUG (3) pour la Phase 1.
-3. Ne jamais modifier la config WiFi (SSID/Pass) sauf demande explicite.
+## Etat de la Main
+- Branche main : Contient le commit v4.2.14 (Ring Reference).
+- Version active : v4.2.24.2 (Discovery active).
+- IP Fixe : 192.168.1.50
+- MAC Adresse : 1 (ESP32) <-> 4 (ECB-203).
 
-### [13:40] Phase 2.11 : Restauration Professionnelle (v3.3.S)
-- Action : Retour intégral au commit 9526cd7 (v3.3 stable).
-- Fix Flash : Passage forcé en mode 'DIO' pour correspondre aux spécifications matérielles validées par les logs ESPHome.
-- Objectif : Retrouver l'IP 192.168.1.50 et l'UI industrielle.
+## Prochain Objectif : Phase 3 - Monitoring et MQTT
+1. Finaliser l'enumeration des 98 objets (automatique au prochain boot).
+2. Implémenter la boucle de lecture Present_Value (Prop 85) pour tous les objets decouverts.
+3. Publier les valeurs sur MQTT (192.168.1.11).
 
-### [13:50] Phase 3 : Reconnexion Infrastructure (v3.6)
-- État : Bootloader validé en mode DIO/PSRAM.
-- Action : Réintégration du code réseau v3.3 (WiFi/IP Fixe/Digest).
-- Paramètres : Compilation forcée avec les flags de boot v3.5 (Huge App, OPI).
-- Objectif : Retrouver l'IP 192.168.1.50.
-
-### [14:45] Phase 4.1 : Pivot Partition OTA (v3.7.2)
-- Erreur Identifiée : 'huge_app' ne supporte pas l'OTA (No OTA).
-- Solution : Basculement vers 'min_spiffs' (1.9MB APP avec OTA).
-- Fix OTA : Ajout d'un délai de 1s avant ESP.restart() pour éviter l'erreur 'Connection reset'.
-- Action requise : Un dernier flash USB est nécessaire pour changer la table des partitions.
-
-### [15:10] Phase 4.2 : Correction Sauvegarde & Network (v3.7.3)
-- Bug : Popup de sauvegarde vide et absence de reboot (endpoint /save manquant).
-- Fix : Restauration de l'endpoint /save dans z_network.cpp et mise en conformité avec le frontend.
-- Network : Restauration des valeurs par défaut pour l'IP statique (192.168.1.50) si non configuré.
-- Boot : Unification des versions (v3.7.3) dans tous les fichiers et logs série.
-- Partition : Maintien du schéma 'min_spiffs' (1.9MB avec OTA).
-
-### [15:55] Phase 4.6 : Restauration Radicale Réseau v3.8.3 (Pivot v3.3)
-- État : IP Statique non fonctionnelle dans les versions 3.7.x.
-- Action : Restauration de la logique v3.3 (WiFi.config() et NVS par blocs structurés).
-- Fix : Correction de la détection de la checkbox 'static_ip' dans l'API.
-- Logs : Réactivation des logs de boot détaillés (Mode, SSID, IP).
-- Résultat attendu : Retour immédiat à 192.168.1.50 après flash USB.
-
-### [16:15] Phase 5.1 : Validation de l'Autonomie et UI (v3.9.2)
-- État : IP Statique (192.168.1.50) et DHCP fonctionnels avec pré-remplissage.
-- UI : Restauration des logs de debug en direct (Kernel Stream) et de l'indicateur de statut (Connected/Disconnected).
-- OTA : Fiabilisation totale via 'espota.py'.
-- Commit : Version 3.9.2 sauvegardée dans Git comme nouvelle base de référence stable.
-
-### [17:40] Phase 1 : Fiabilisation MS/TP (v4.0.0)
-- Action : Implémentation du CRC16 et support des trames de données.
-- Objectif : Capture stable des payloads BACnet.
-
-### [18:15] Phase 1 Finalisée (v4.0.0)
-- CRC16 : Implémentation conforme ASHRAE 135-2020 (Polynôme 0x1021).
-- FSM : Support complet des trames 0x05/0x06 avec validation CRC.
-- APDU : Extraction propre NPDU/APDU.
-- Flash : Version 4.0.0 déployée avec succès.
-- Résultat : Communication MS/TP stable et vérifiée par l'API status.
-- Phase 1.1 : Correction Token-Safe & CRC16 (v4.2.1) - Déploiement imminent
-- Phase 1.2 : Amélioration Logique Token & Logs (v4.2.2)
-- Phase 1.3 : Fix RTS Direction & Token Recovery (v4.2.3)
-- Phase 1.4 : Hardware RTS & Token Recovery (v4.2.4)
-- Phase 1.5 : Turnaround Delay & Ring Discovery (v4.2.5)
-- Phase 1.6 : Manual RTS & Timing Optimization (v4.2.6)
+## Notes pour l'Agent (Session Suivante)
+1. Timing CRITIQUE : L'automate ECB-203 met ~240ms a repondre. Toujours maintenir l'attente de 280ms sans bloquer la boucle uart_read_bytes.
+2. PSRAM Warning : Ne JAMAIS toucher au GPIO 47 (bus memoire Octal SPI).
+3. Logs : Utiliser listen_logs_v2.py via le venv pour le monitoring.
