@@ -3,6 +3,11 @@
 #include <ArduinoJson.h>
 #include "esp_wifi.h" 
 
+// Variables de gestion asynchrone
+static uint32_t connection_start_ms = 0;
+static bool connection_active = false;
+static int last_wifi_status = -1;
+
 void load_configuration() {
     memset(&sysCfg, 0, sizeof(Config));
     strncpy(sysCfg.wifi_ssid, "", 31);
@@ -48,46 +53,31 @@ bool is_authenticated(AsyncWebServerRequest *request) {
 void setup_network_infrastructure() {
     load_configuration();
     
-    // RESET HARD RADIO
+    // RESET HARD (Nettoyage NVS pour tuer le CCMP Replay)
+    WiFi.persistent(false);
+    WiFi.disconnect(true, true);
     WiFi.mode(WIFI_OFF);
-    delay(1000); // 1 seconde de silence radio complet
+    delay(500);
 
     if (strlen(sysCfg.wifi_ssid) == 0) {
         is_ap_mode = true;
         WiFi.mode(WIFI_AP);
         WiFi.softAP("BACnetMSTP2MQTT_SETUP", "admin1234");
-        log_to_web(1, "Mode AP Setup: 192.168.4.1");
+        log_to_web(1, "Mode AP Setup (192.168.4.1)");
     } else {
         is_ap_mode = false;
         WiFi.mode(WIFI_STA);
         
-        // --- NATIVE IDF TWEAKS (ESPHome Style) ---
+        // --- CONFIGURATION STRICTE WPA2 (No PMF) ---
         esp_wifi_set_storage(WIFI_STORAGE_RAM);
         esp_wifi_set_ps(WIFI_PS_NONE);
         
         wifi_config_t conf;
         esp_wifi_get_config(WIFI_IF_STA, &conf);
-        conf.sta.pmf_cfg.capable = true;
+        conf.sta.pmf_cfg.capable = false;  // ON REFUSE LE PMF (Cure contre le CCMP Replay)
         conf.sta.pmf_cfg.required = false;
         esp_wifi_set_config(WIFI_IF_STA, &conf);
-        // -----------------------------------------
-
-        // SCAN ET CAPTURE LOCALE DU BSSID (évite LoadProhibited)
-        log_to_web(1, "WiFi: Scan [%s]...", sysCfg.wifi_ssid);
-        int n = WiFi.scanNetworks();
-        int target_channel = 0;
-        uint8_t target_bssid[6];
-        bool found = false;
-        
-        for (int i = 0; i < n; ++i) {
-            if (WiFi.SSID(i) == String(sysCfg.wifi_ssid)) {
-                target_channel = WiFi.channel(i);
-                memcpy(target_bssid, WiFi.BSSID(i), 6);
-                found = true;
-                log_to_web(1, "WiFi: AP vu sur CH:%d (%d dBm)", target_channel, WiFi.RSSI(i));
-                break;
-            }
-        }
+        // -------------------------------------------
 
         if (sysCfg.static_ip) {
             IPAddress ip, gw, sn;
@@ -96,34 +86,17 @@ void setup_network_infrastructure() {
             }
         }
         
-        if (found) {
-            log_to_web(1, "WiFi: Connexion avec BSSID Lock...");
-            WiFi.begin(sysCfg.wifi_ssid, sysCfg.wifi_pass, target_channel, target_bssid);
-        } else {
-            log_to_web(1, "WiFi: AP non detecte, essai normal...");
-            WiFi.begin(sysCfg.wifi_ssid, sysCfg.wifi_pass);
-        }
+        log_to_web(1, "WiFi: Lancement connexion a [%s]...", sysCfg.wifi_ssid);
+        WiFi.begin(sysCfg.wifi_ssid, sysCfg.wifi_pass);
         
-        uint32_t start = millis();
-        while (WiFi.status() != WL_CONNECTED && millis() - start < 30000) { 
-            delay(500);
-            Serial.print(".");
-        }
-        
-        if(WiFi.status() == WL_CONNECTED) {
-            log_to_web(1, "WiFi Connecté ! IP: %s", WiFi.localIP().toString().c_str());
-        } else {
-            log_to_web(0, "Echec WiFi (Status: %d). Mode RECOVERY.", (int)WiFi.status());
-            is_ap_mode = true;
-            WiFi.mode(WIFI_AP);
-            WiFi.softAP("BACnetMSTP2MQTT_RECOVERY", "admin1234");
-        }
-        WiFi.scanDelete(); 
+        // Démarrage du monitoring asynchrone
+        connection_start_ms = millis();
+        connection_active = true;
     }
 
     ArduinoOTA.begin();
 
-    // ROUTES API
+    // API
     webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         JsonDocument doc;
         doc["rssi"] = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
@@ -144,12 +117,10 @@ void setup_network_infrastructure() {
         doc["subnet"] = String(sysCfg.subnet);
         doc["mac"] = sysCfg.mac_address;
         doc["target"] = sysCfg.target_mac;
-        doc["max_m"] = sysCfg.max_master;
         doc["mq_host"] = String(sysCfg.mqtt_server);
         doc["mq_port"] = sysCfg.mqtt_port;
         doc["mq_pref"] = String(sysCfg.mqtt_prefix);
         doc["log_lvl"] = sysCfg.log_level;
-        doc["adm_user"] = String(sysCfg.admin_user);
         String res; serializeJson(doc, res);
         request->send(200, "application/json", res);
     });
@@ -162,11 +133,6 @@ void setup_network_infrastructure() {
         if(request->hasParam("local_ip", true)) strncpy(sysCfg.local_ip, request->getParam("local_ip", true)->value().c_str(), 15);
         if(request->hasParam("gateway", true)) strncpy(sysCfg.gateway, request->getParam("gateway", true)->value().c_str(), 15);
         if(request->hasParam("subnet", true)) strncpy(sysCfg.subnet, request->getParam("subnet", true)->value().c_str(), 15);
-        if(request->hasParam("mac", true)) sysCfg.mac_address = request->getParam("mac", true)->value().toInt();
-        if(request->hasParam("target", true)) sysCfg.target_mac = request->getParam("target", true)->value().toInt();
-        if(request->hasParam("mq_host", true)) strncpy(sysCfg.mqtt_server, request->getParam("mq_host", true)->value().c_str(), 31);
-        if(request->hasParam("mq_port", true)) sysCfg.mqtt_port = request->getParam("mq_port", true)->value().toInt();
-        if(request->hasParam("log_lvl", true)) sysCfg.log_level = request->getParam("log_lvl", true)->value().toInt();
         save_configuration();
         request->send(200, "text/plain", "OK. Reboot...");
         pending_reboot = true; reboot_timer = millis();
@@ -174,7 +140,7 @@ void setup_network_infrastructure() {
 
     webServer.on("/reboot", HTTP_GET, [](AsyncWebServerRequest *request) {
         if(!is_authenticated(request)) return;
-        request->send(200, "text/plain", "Reboot...");
+        request->send(200, "text/plain", "Rebooting...");
         pending_reboot = true; reboot_timer = millis();
     });
 
@@ -183,9 +149,9 @@ void setup_network_infrastructure() {
         request->send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
         if(!Update.hasError()) { pending_reboot = true; reboot_timer = millis(); }
     }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
-        if (!index) { Update.begin(UPDATE_SIZE_UNKNOWN); }
+        if (!index) Update.begin(UPDATE_SIZE_UNKNOWN);
         if (!Update.hasError()) Update.write(data, len);
-        if (final) { Update.end(true); }
+        if (final) Update.end(true);
     });
 
     webServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -199,6 +165,28 @@ void setup_network_infrastructure() {
 void handle_network() {
     ArduinoOTA.handle();
     if (pending_reboot && (millis() - reboot_timer > 2000)) ESP.restart();
+
+    // Surveillance asynchrone de la connexion WiFi
+    if (connection_active) {
+        int status = WiFi.status();
+        
+        if (status == WL_CONNECTED) {
+            log_to_web(1, "WiFi Connecté ! IP: %s (Signal: %d dBm)", WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
+            connection_active = false;
+        } else if (millis() - connection_start_ms > 40000) { // Timeout 40s
+            log_to_web(0, "WiFi Timeout. Activation Mode RECOVERY.");
+            is_ap_mode = true;
+            WiFi.mode(WIFI_AP);
+            WiFi.softAP("BACnetMSTP2MQTT_RECOVERY", "admin1234");
+            connection_active = false;
+        }
+        
+        if (status != last_wifi_status) {
+            last_wifi_status = status;
+            Serial.printf("[WiFi] Status change: %d\n", status);
+        }
+    }
+
     if (!is_ap_mode && WiFi.status() == WL_CONNECTED && !mqttClient.connected()) {
         static uint32_t last_mq = 0;
         if (millis() - last_mq > 15000) {
@@ -206,12 +194,4 @@ void handle_network() {
             mqttClient.connect("BACnetNode", sysCfg.mqtt_user, sysCfg.mqtt_pass);
         }
     } else if (mqttClient.connected()) mqttClient.loop();
-    
-    static uint32_t ls = 0;
-    if(millis() - ls > 10000) {
-        ls = millis();
-        if (WiFi.status() == WL_CONNECTED) {
-            log_to_web(2, "IP: %s | Signal %d dBm | Free: %d KB", WiFi.localIP().toString().c_str(), (int)WiFi.RSSI(), (int)ESP.getFreeHeap() / 1024);
-        }
-    }
 }
