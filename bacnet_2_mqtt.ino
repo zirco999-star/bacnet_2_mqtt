@@ -26,6 +26,7 @@ void setup() {
     WiFi.disconnect(true, true);
     
     Serial.begin(115200);
+    delay(2000); Serial.println("\n\n>>> V3.6 - RECONNECTING TO INFRASTRUCTURE <<<");
     delay(1000); 
     
     Serial.println("\n\n#########################################");

@@ -26,39 +26,7 @@ L'environnement WiFi est désormais bétonné. Le travail en autonomie va se con
 2. Garder le niveau de log à DEBUG (3) pour la Phase 1.
 3. Ne jamais modifier la config WiFi (SSID/Pass) sauf demande explicite.
 
-## 📅 Travail en Autonomie - Début de Nuit
-- **Objectif** : Phase 1 - Moteur de Capture MS/TP (v3.3.x).
-- **Status** : En cours.
-- **Dernier Check** : IP 192.168.1.50 stable.
-### [04:25] Phase 1.1 : Raffinement CRC et FSM
-- Analyse des traces Wireshark ECB203 : Validation des types de trames (5, 6, 7).
-- Extraction des constantes temporelles : T_NO_TOKEN (500ms), T_USAGE (15ms), T_REPLY (250ms).
-- Mise à jour de z_mstp.cpp avec les algorithmes CRC prouvés du projet legacy.
-- Ajout d'une protection PSRAM pour le buffer de données (2048 bytes).
-### [04:35] Diagnostic Sniffer (v3.3.2)
-- Constat : mstp_f = 0. Le bus ne semble pas décodé.
-- Hypothèse : Mauvais baudrate ou UART non réactif.
-- Action : Ajout d'un compteur de "Raw Bytes" pour vérifier l'activité électrique du bus RS485.
-
-### [10:30] Phase 2 : Architecture Token-Safe (v3.3.6)
-- Implémentation de la file d'attente TX FreeRTOS.
-- Sécurisation de l'émission : attente du jeton avant envoi.
-- Ajout du service WriteProperty (Service 15) prêt pour test.
-- Flashage OTA v3.3.6 réussi.
-    
-### [10:45] Phase 2.1 : Fix Initialisation Tâche (v3.3.7)
-- Correction : Tâche mstp_rt_task non démarrée dans setup_mstp.
-- Déplacement de la création de mstp_tx_queue dans setup_mstp pour éviter les conditions de course.
-- Démarrage de la tâche MSTP sur Core 1 validé par flashage OTA.
-
-### [11:10] Phase 2.3 : Correction Critique Bootloop (v3.3.9)
-- Bug Root-Cause : mstp_tx_queue non instanciée avant le lancement de la tâche Core 1.
-- Fix : Réécriture complète de z_mstp.cpp, instanciation sécurisée de la queue dans setup_mstp.
-- Ajout de vérifications (mstp_tx_queue != NULL) avant xQueueReceive/Send.
-- Prêt pour flashage USB (OTA impossible car bootloop).
-
-### [11:35] Phase 2.4 : Safe Start & Diagnostic (v3.4.0)
-- Correction : Déplacement de Serial.begin au début de setup().
-- Sécurisation : Ajout de vTaskDelay(1) dans la boucle MSTP UART timeout.
-- Protection : Vérification systématique du pointeur mstp_tx_queue.
-- Prêt pour flashage USB v3.4.0.
+### [13:40] Phase 2.11 : Restauration Professionnelle (v3.3.S)
+- Action : Retour intégral au commit 9526cd7 (v3.3 stable).
+- Fix Flash : Passage forcé en mode 'DIO' pour correspondre aux spécifications matérielles validées par les logs ESPHome.
+- Objectif : Retrouver l'IP 192.168.1.50 et l'UI industrielle.
