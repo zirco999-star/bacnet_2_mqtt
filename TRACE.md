@@ -30,3 +30,22 @@ L'environnement WiFi est désormais bétonné. Le travail en autonomie va se con
 - Action : Retour intégral au commit 9526cd7 (v3.3 stable).
 - Fix Flash : Passage forcé en mode 'DIO' pour correspondre aux spécifications matérielles validées par les logs ESPHome.
 - Objectif : Retrouver l'IP 192.168.1.50 et l'UI industrielle.
+
+### [13:50] Phase 3 : Reconnexion Infrastructure (v3.6)
+- État : Bootloader validé en mode DIO/PSRAM.
+- Action : Réintégration du code réseau v3.3 (WiFi/IP Fixe/Digest).
+- Paramètres : Compilation forcée avec les flags de boot v3.5 (Huge App, OPI).
+- Objectif : Retrouver l'IP 192.168.1.50.
+
+### [14:45] Phase 4.1 : Pivot Partition OTA (v3.7.2)
+- Erreur Identifiée : 'huge_app' ne supporte pas l'OTA (No OTA).
+- Solution : Basculement vers 'min_spiffs' (1.9MB APP avec OTA).
+- Fix OTA : Ajout d'un délai de 1s avant ESP.restart() pour éviter l'erreur 'Connection reset'.
+- Action requise : Un dernier flash USB est nécessaire pour changer la table des partitions.
+
+### [15:10] Phase 4.2 : Correction Sauvegarde & Network (v3.7.3)
+- Bug : Popup de sauvegarde vide et absence de reboot (endpoint /save manquant).
+- Fix : Restauration de l'endpoint /save dans z_network.cpp et mise en conformité avec le frontend.
+- Network : Restauration des valeurs par défaut pour l'IP statique (192.168.1.50) si non configuré.
+- Boot : Unification des versions (v3.7.3) dans tous les fichiers et logs série.
+- Partition : Maintien du schéma 'min_spiffs' (1.9MB avec OTA).

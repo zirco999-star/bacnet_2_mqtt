@@ -8,5 +8,6 @@
 
 void setup_network_infrastructure();
 void handle_network();
+bool is_authenticated(AsyncWebServerRequest *request);
 
 #endif

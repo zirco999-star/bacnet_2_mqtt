@@ -8,34 +8,35 @@
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <PubSubClient.h>
+#include <ArduinoOTA.h>
 
-// Pins
+#define VERSION_GLOBAL "v3.8.3"
+
+// Pins Waveshare R8
 #define RX_PIN 18
 #define TX_PIN 17
 #define RTS_PIN 21
 #define RS485_UART_PORT UART_NUM_1
-#define TCP_PORT 6638
 #define WEB_PORT 80
 
 struct Config {
-    char wifi_ssid[32] = "";
-    char wifi_pass[64] = "";
-    bool static_ip = false;
-    char local_ip[16] = "192.168.1.50";
-    char gateway[16] = "192.168.1.254";
-    char subnet[16] = "255.255.255.0";
-    char mqtt_server[32] = "";
-    uint16_t mqtt_port = 1883;
-    char mqtt_user[32] = "";
-    char mqtt_pass[32] = "";
-    char mqtt_prefix[64] = "bacnet";
-    uint8_t mac_address = 1;
-    uint8_t target_mac = 4;
-    uint8_t max_master = 127;
-    uint32_t polling_interval = 5000;
-    uint8_t log_level = 3; 
-    char admin_user[32] = "admin";
-    char admin_pass[64] = "admin1234";
+    char wifi_ssid[32];
+    char wifi_pass[64];
+    bool static_ip;
+    char local_ip[16];
+    char gateway[16];
+    char subnet[16];
+    char mqtt_server[32];
+    uint16_t mqtt_port;
+    char mqtt_user[32];
+    char mqtt_pass[32];
+    char mqtt_prefix[64];
+    uint8_t mac_address;
+    uint8_t target_mac;
+    uint8_t max_master;
+    uint8_t log_level; 
+    char admin_user[32];
+    char admin_pass[64];
 };
 
 extern Config sysCfg;

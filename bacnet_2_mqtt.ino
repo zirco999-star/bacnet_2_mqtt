@@ -1,14 +1,10 @@
-/******************************************************************************
-*  PROJET BACnetMSTP2MQTT - by Z1rc0n1um
-*  Version 3.1 - ATOMIC WIPE & UI REFINEMENT (Eye Toggle)
-*****************************************************************************/
 #include "z_config.h"
-#include "z_logger.h"
 #include "z_network.h"
 #include "z_mstp.h"
+#include "z_logger.h"
 
 Config sysCfg;
-Preferences preferences; 
+Preferences preferences;
 AsyncWebServer webServer(WEB_PORT);
 AsyncWebSocket ws("/ws-logs");
 WiFiClient mqttWifiClient;
@@ -21,27 +17,21 @@ bool pending_reboot = false;
 uint32_t reboot_timer = 0;
 
 void setup() {
-    // KILL AUTO-CONNECT IMMEDIAT (Antidote CCMP Replay)
-    WiFi.persistent(false);
-    WiFi.disconnect(true, true);
-    
     Serial.begin(115200);
-    delay(2000); Serial.println("\n\n>>> V3.6 - RECONNECTING TO INFRASTRUCTURE <<<");
-    delay(1000); 
+    delay(2000); 
+    Serial.println("\n\n>>> " + String(VERSION_GLOBAL) + " - RECONNECTING TO INFRASTRUCTURE <<<");
     
-    Serial.println("\n\n#########################################");
-    Serial.println("# BACnetMSTP2MQTT v3.3 Starting...      #");
     Serial.println("#########################################");
-    
-    init_log_system();
+    Serial.println("# BACnetMSTP2MQTT " + String(VERSION_GLOBAL) + " Starting...      #");
+    Serial.println("#########################################");
+
     setup_network_infrastructure();
     setup_mstp();
-    
-    log_to_web(1, "BACnetMSTP2MQTT v3.3 pret.");
+
+    Serial.println("[" + String(VERSION_GLOBAL) + "] pret.");
 }
 
 void loop() {
     handle_network();
-    ws.cleanupClients();
-    vTaskDelay(pdMS_TO_TICKS(10));
+    vTaskDelay(pdMS_TO_TICKS(1));
 }
