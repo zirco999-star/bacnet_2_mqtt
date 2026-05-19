@@ -16,7 +16,7 @@ High-performance BACnet MS/TP to MQTT gateway for ESP32-S3 (specifically Wavesha
 - **PSRAM Mode** : OPI.
 - **RS485** : Connecté sur les pins RX:18, TX:17, RTS:21.
 
-## 📡 Configuration WiFi (v3.2+)
+## 📡 Configuration WiFi (v3.3+)
 Le gateway utilise une séquence de démarrage à froid pour garantir la stabilité sur les routeurs modernes (Freebox) :
 1. **No Persistence** : Les credentials ne sont plus écrits en flash de manière automatique par la stack pour éviter les désynchronisations de compteurs de sécurité.
 2. **RAM Storage** : La pile WiFi utilise exclusivement la RAM pour ses sessions.

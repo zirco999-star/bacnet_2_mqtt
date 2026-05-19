@@ -11,10 +11,10 @@
 - **v2.9** : Passage en mode **Asynchrone**. Le WiFi ne bloque plus le démarrage des services.
 - **v3.0** : Activation du mode **DEBUG** total et protection NULL Pointer sur le Logger.
 - **v3.1** : **Atomic Wipe.** Nettoyage automatique du NVS en cas de corruption du mot de passe. Ajout du bouton 👁️ sur l'UI.
-- **v3.2** : **Validation Finale.** Succès de la mise à jour OTA à distance et vérification de la persistance de la configuration.
+- **v3.3** : **Validation Finale.** Succès de la mise à jour OTA à distance et vérification de la persistance de la configuration.
 
 ## 🚀 État de la Main
-- **Branche main** : Contient la v3.2 stable.
+- **Branche main** : Contient la v3.3 stable.
 - **IP Fixe** : 192.168.1.50
 - **Gateway** : 192.168.1.254
 

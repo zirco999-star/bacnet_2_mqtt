@@ -29,14 +29,14 @@ void setup() {
     delay(1000); 
     
     Serial.println("\n\n#########################################");
-    Serial.println("# BACnetMSTP2MQTT v3.2 Starting...      #");
+    Serial.println("# BACnetMSTP2MQTT v3.3 Starting...      #");
     Serial.println("#########################################");
     
     init_log_system();
     setup_network_infrastructure();
     setup_mstp();
     
-    log_to_web(1, "BACnetMSTP2MQTT v3.2 pret.");
+    log_to_web(1, "BACnetMSTP2MQTT v3.3 pret.");
 }
 
 void loop() {
