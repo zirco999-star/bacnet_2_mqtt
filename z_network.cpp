@@ -1,13 +1,9 @@
 #include "z_network.h"
 #include <Update.h>
 #include <ArduinoJson.h>
-
-// Variables de contrôle
-bool wifi_connected = false;
-int last_wifi_err = 0;
+#include "esp_wifi.h" // API Native pour le PMF et le Power Save
 
 void load_configuration() {
-    // 1. Reset de la structure avec des valeurs sûres
     memset(&sysCfg, 0, sizeof(Config));
     strncpy(sysCfg.wifi_ssid, "", 31);
     strncpy(sysCfg.wifi_pass, "", 63);
@@ -26,8 +22,7 @@ void load_configuration() {
     strncpy(sysCfg.admin_user, "admin", 31);
     strncpy(sysCfg.admin_pass, "admin1234", 63);
 
-    // 2. Chargement NVS
-    if (preferences.begin("sys", true)) { // Lecture seule d'abord
+    if (preferences.begin("sys", true)) {
         if(preferences.getBytesLength("cfg") == sizeof(Config)) {
             preferences.getBytes("cfg", &sysCfg, sizeof(Config));
         }
@@ -53,46 +48,55 @@ bool is_authenticated(AsyncWebServerRequest *request) {
 void setup_network_infrastructure() {
     load_configuration();
     
-    // Initialisation WiFi ultra-basique (Évite CCMP Replay)
+    // 1. Reset Hard de la pile WiFi (ESPHome Style)
+    WiFi.disconnect(true, true);
     WiFi.mode(WIFI_OFF);
-    delay(200);
+    delay(500);
     
     if (strlen(sysCfg.wifi_ssid) == 0) {
         is_ap_mode = true;
         WiFi.mode(WIFI_AP);
         WiFi.softAP("BACnetMSTP2MQTT_SETUP", "admin1234");
-        log_to_web(1, "Mode AP Setup: 192.168.4.1");
+        log_to_web(1, "AP Mode: 192.168.4.1");
     } else {
         is_ap_mode = false;
         WiFi.mode(WIFI_STA);
-        
-        // Paramètres de stabilité Freebox
-        WiFi.setSleep(WIFI_PS_NONE); 
-        WiFi.setAutoReconnect(true);
         WiFi.setHostname("BACnetGateway");
 
+        // 2. Configuration IP Statique AVANT le begin()
         if (sysCfg.static_ip) {
             IPAddress ip, gw, sn;
             if (ip.fromString(sysCfg.local_ip) && gw.fromString(sysCfg.gateway) && sn.fromString(sysCfg.subnet)) {
                 WiFi.config(ip, gw, sn);
+                log_to_web(1, "WiFi: IP Statique préparée.");
             }
         }
         
-        log_to_web(1, "WiFi: Tentative sur [%s]...", sysCfg.wifi_ssid);
+        // 3. Application des paramètres de stabilité bas niveau (IDF)
+        // Désactivation Power Save (Antenne 100% active)
+        esp_wifi_set_ps(WIFI_PS_NONE);
+        
+        // Configuration PMF (Capable mais pas requis - Max compatibilité)
+        wifi_config_t conf;
+        if (esp_wifi_get_config(WIFI_IF_STA, &conf) == ESP_OK) {
+            conf.sta.pmf_cfg.capable = true;
+            conf.sta.pmf_cfg.required = false;
+            esp_wifi_set_config(WIFI_IF_STA, &conf);
+        }
+
+        log_to_web(1, "WiFi: Connexion à [%s]...", sysCfg.wifi_ssid);
         WiFi.begin(sysCfg.wifi_ssid, sysCfg.wifi_pass);
         
-        // Attente asynchrone simplifiée
         uint32_t start = millis();
         while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) { 
             delay(500);
-            if (WiFi.status() == WL_CONNECT_FAILED) break;
+            Serial.print(".");
         }
         
         if(WiFi.status() == WL_CONNECTED) {
-            wifi_connected = true;
-            log_to_web(1, "WiFi OK. IP: %s (Signal: %d dBm)", WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
+            log_to_web(1, "WiFi Connecté ! IP: %s (Signal: %d dBm)", WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
         } else {
-            log_to_web(0, "WiFi Echec (Code: %d). Mode RECOVERY.", (int)WiFi.status());
+            log_to_web(0, "WiFi Echec. Passage en mode RECOVERY.");
             is_ap_mode = true;
             WiFi.mode(WIFI_AP);
             WiFi.softAP("BACnetMSTP2MQTT_RECOVERY", "admin1234");
@@ -101,7 +105,7 @@ void setup_network_infrastructure() {
 
     ArduinoOTA.begin();
 
-    // ROUTES API AVEC SÉCURITÉ NULL
+    // ROUTES API
     webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         JsonDocument doc;
         doc["rssi"] = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
@@ -128,7 +132,6 @@ void setup_network_infrastructure() {
         doc["mq_port"] = sysCfg.mqtt_port;
         doc["mq_pref"] = String(sysCfg.mqtt_prefix);
         doc["log_lvl"] = sysCfg.log_level;
-        doc["bridge"] = tcp_bridge_active;
         doc["adm_user"] = String(sysCfg.admin_user);
         String response;
         serializeJson(doc, response);
@@ -137,7 +140,6 @@ void setup_network_infrastructure() {
 
     webServer.on("/save", HTTP_POST, [](AsyncWebServerRequest *request){
         if(!is_authenticated(request)) return;
-        
         if(request->hasParam("ssid", true)) strncpy(sysCfg.wifi_ssid, request->getParam("ssid", true)->value().c_str(), 31);
         if(request->hasParam("pass", true)) strncpy(sysCfg.wifi_pass, request->getParam("pass", true)->value().c_str(), 63);
         sysCfg.static_ip = request->hasParam("static_ip", true);
@@ -151,30 +153,27 @@ void setup_network_infrastructure() {
         if(request->hasParam("log_lvl", true)) sysCfg.log_level = request->getParam("log_lvl", true)->value().toInt();
         
         save_configuration();
-        request->send(200, "text/plain", "Sauvegarde OK. Redemarrage...");
+        request->send(200, "text/plain", "OK. Rebooting...");
         pending_reboot = true; reboot_timer = millis();
     });
 
     webServer.on("/reboot", HTTP_GET, [](AsyncWebServerRequest *request) {
         if(!is_authenticated(request)) return;
-        request->send(200, "text/plain", "Reboot...");
+        request->send(200, "text/plain", "Rebooting...");
         pending_reboot = true; reboot_timer = millis();
     });
 
-    // OTA Web
     webServer.on("/update", HTTP_POST, [](AsyncWebServerRequest *request) {
         if(!is_authenticated(request)) return;
         request->send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
         if(!Update.hasError()) { pending_reboot = true; reboot_timer = millis(); }
     }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
         if (!index) {
-            log_to_web(1, "OTA Start: %s", filename.c_str());
             if (!Update.begin(UPDATE_SIZE_UNKNOWN)) Update.printError(Serial);
         }
         if (!Update.hasError()) { if (Update.write(data, len) != len) Update.printError(Serial); }
         if (final) {
-            if (Update.end(true)) log_to_web(1, "OTA Succes: %u octets", index + len);
-            else Update.printError(Serial);
+            if (!Update.end(true)) Update.printError(Serial);
         }
     });
 
@@ -189,8 +188,6 @@ void setup_network_infrastructure() {
 void handle_network() {
     ArduinoOTA.handle();
     if (pending_reboot && (millis() - reboot_timer > 2000)) ESP.restart();
-    
-    // Reconnexion MQTT
     if (!is_ap_mode && WiFi.status() == WL_CONNECTED && !mqttClient.connected()) {
         static uint32_t last_mq = 0;
         if (millis() - last_mq > 15000) {
@@ -198,13 +195,4 @@ void handle_network() {
             mqttClient.connect("BACnetNode", sysCfg.mqtt_user, sysCfg.mqtt_pass);
         }
     } else if (mqttClient.connected()) mqttClient.loop();
-
-    // Stats
-    static uint32_t ls = 0;
-    if(millis() - ls > 10000) {
-        ls = millis();
-        if (WiFi.status() == WL_CONNECTED) {
-            log_to_web(2, "RSSI: %d dBm | Free: %d KB", (int)WiFi.RSSI(), (int)ESP.getFreeHeap() / 1024);
-        }
-    }
 }
