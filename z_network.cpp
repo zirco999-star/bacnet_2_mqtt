@@ -48,10 +48,9 @@ bool is_authenticated(AsyncWebServerRequest *request) {
 void setup_network_infrastructure() {
     load_configuration();
     
-    // 1. RESET PROPRE (Sans crash v2.6)
-    WiFi.disconnect(true, true);
+    // RESET HARD RADIO
     WiFi.mode(WIFI_OFF);
-    delay(500);
+    delay(1000); // 1 seconde de silence radio complet
 
     if (strlen(sysCfg.wifi_ssid) == 0) {
         is_ap_mode = true;
@@ -62,33 +61,34 @@ void setup_network_infrastructure() {
         is_ap_mode = false;
         WiFi.mode(WIFI_STA);
         
-        // --- CONFIGURATION ESPHOME NATIVE ---
-        esp_wifi_set_storage(WIFI_STORAGE_RAM); // Re-sync counters every boot
-        esp_wifi_set_ps(WIFI_PS_NONE);          // Pas de dodo radio
+        // --- NATIVE IDF TWEAKS (ESPHome Style) ---
+        esp_wifi_set_storage(WIFI_STORAGE_RAM);
+        esp_wifi_set_ps(WIFI_PS_NONE);
         
         wifi_config_t conf;
         esp_wifi_get_config(WIFI_IF_STA, &conf);
         conf.sta.pmf_cfg.capable = true;
         conf.sta.pmf_cfg.required = false;
         esp_wifi_set_config(WIFI_IF_STA, &conf);
-        // -------------------------------------
+        // -----------------------------------------
 
-        // 2. SCAN DES RÉSEAUX (La clé du succès)
-        log_to_web(1, "WiFi: Scan en cours pour trouver [%s]...", sysCfg.wifi_ssid);
+        // SCAN ET CAPTURE LOCALE DU BSSID (évite LoadProhibited)
+        log_to_web(1, "WiFi: Scan [%s]...", sysCfg.wifi_ssid);
         int n = WiFi.scanNetworks();
         int target_channel = 0;
-        uint8_t* target_bssid = NULL;
+        uint8_t target_bssid[6];
+        bool found = false;
         
         for (int i = 0; i < n; ++i) {
             if (WiFi.SSID(i) == String(sysCfg.wifi_ssid)) {
                 target_channel = WiFi.channel(i);
-                target_bssid = WiFi.BSSID(i);
-                log_to_web(1, "WiFi: AP trouvé ! Canal: %d, Signal: %d dBm", target_channel, WiFi.RSSI(i));
+                memcpy(target_bssid, WiFi.BSSID(i), 6);
+                found = true;
+                log_to_web(1, "WiFi: AP vu sur CH:%d (%d dBm)", target_channel, WiFi.RSSI(i));
                 break;
             }
         }
 
-        // 3. CONFIGURATION IP STATIQUE (AVANT begin)
         if (sysCfg.static_ip) {
             IPAddress ip, gw, sn;
             if (ip.fromString(sysCfg.local_ip) && gw.fromString(sysCfg.gateway) && sn.fromString(sysCfg.subnet)) {
@@ -96,17 +96,16 @@ void setup_network_infrastructure() {
             }
         }
         
-        // 4. CONNEXION CIBLÉE (BSSID + Canal)
-        if (target_bssid) {
-            log_to_web(1, "WiFi: Connexion ciblée (BSSID Lock)...");
+        if (found) {
+            log_to_web(1, "WiFi: Connexion avec BSSID Lock...");
             WiFi.begin(sysCfg.wifi_ssid, sysCfg.wifi_pass, target_channel, target_bssid);
         } else {
-            log_to_web(1, "WiFi: AP non vu au scan, tentative aveugle...");
+            log_to_web(1, "WiFi: AP non detecte, essai normal...");
             WiFi.begin(sysCfg.wifi_ssid, sysCfg.wifi_pass);
         }
         
         uint32_t start = millis();
-        while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) { 
+        while (WiFi.status() != WL_CONNECTED && millis() - start < 30000) { 
             delay(500);
             Serial.print(".");
         }
@@ -114,12 +113,12 @@ void setup_network_infrastructure() {
         if(WiFi.status() == WL_CONNECTED) {
             log_to_web(1, "WiFi Connecté ! IP: %s", WiFi.localIP().toString().c_str());
         } else {
-            log_to_web(0, "WiFi Echec (Code: %d). Mode RECOVERY.", (int)WiFi.status());
+            log_to_web(0, "Echec WiFi (Status: %d). Mode RECOVERY.", (int)WiFi.status());
             is_ap_mode = true;
             WiFi.mode(WIFI_AP);
             WiFi.softAP("BACnetMSTP2MQTT_RECOVERY", "admin1234");
         }
-        WiFi.scanDelete(); // Libère la RAM du scan
+        WiFi.scanDelete(); 
     }
 
     ArduinoOTA.begin();
@@ -175,7 +174,7 @@ void setup_network_infrastructure() {
 
     webServer.on("/reboot", HTTP_GET, [](AsyncWebServerRequest *request) {
         if(!is_authenticated(request)) return;
-        request->send(200, "text/plain", "Rebooting...");
+        request->send(200, "text/plain", "Reboot...");
         pending_reboot = true; reboot_timer = millis();
     });
 
@@ -207,4 +206,12 @@ void handle_network() {
             mqttClient.connect("BACnetNode", sysCfg.mqtt_user, sysCfg.mqtt_pass);
         }
     } else if (mqttClient.connected()) mqttClient.loop();
+    
+    static uint32_t ls = 0;
+    if(millis() - ls > 10000) {
+        ls = millis();
+        if (WiFi.status() == WL_CONNECTED) {
+            log_to_web(2, "IP: %s | Signal %d dBm | Free: %d KB", WiFi.localIP().toString().c_str(), (int)WiFi.RSSI(), (int)ESP.getFreeHeap() / 1024);
+        }
+    }
 }
