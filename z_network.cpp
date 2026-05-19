@@ -5,9 +5,21 @@
 #include <Update.h>
 #include <ESPmDNS.h>
 #include "esp_wifi.h"
+#include <stdarg.h>
+
+extern AsyncWebSocket ws;
+
+void z_log(const char* format, ...) {
+    char loc_buf[256];
+    va_list arg;
+    va_start(arg, format);
+    vsnprintf(loc_buf, sizeof(loc_buf), format, arg);
+    va_end(arg);
+    Serial.print(loc_buf);
+    if (ws.count() > 0) ws.textAll(loc_buf);
+}
 
 void load_configuration() {
-    // Defaults Industriels
     strlcpy(sysCfg.wifi_ssid, "", 32);
     strlcpy(sysCfg.wifi_pass, "", 64);
     sysCfg.static_ip = false;
@@ -15,8 +27,8 @@ void load_configuration() {
     strlcpy(sysCfg.gateway, "192.168.1.254", 16);
     strlcpy(sysCfg.subnet, "255.255.255.0", 16);
     sysCfg.mac_address = 1;
-    sysCfg.max_master = 3;
-    sysCfg.device_id = 4;
+    sysCfg.max_master = 127;
+    sysCfg.device_id = 1234;
     sysCfg.apdu_timeout = 1000;
     sysCfg.max_retries = 3;
     strlcpy(sysCfg.mqtt_server, "192.168.1.11", 32);
@@ -74,50 +86,26 @@ void save_configuration() {
 }
 
 void setup_network_infrastructure() {
-    WiFi.persistent(false);
     load_configuration();
-    delay(500);
-
+    WiFi.persistent(false);
     if (strlen(sysCfg.wifi_ssid) == 0) {
         is_ap_mode = true;
         WiFi.mode(WIFI_AP);
         WiFi.softAP("ZIRCON-GW-CONFIG", "admin1234");
-        Serial.println("[WIFI] Mode AP: 192.168.4.1 (No Config)");
     } else {
         is_ap_mode = false;
         WiFi.mode(WIFI_STA);
-        esp_wifi_set_ps(WIFI_PS_NONE);
-
         if (sysCfg.static_ip) {
             IPAddress ip, gw, sn;
-            if (ip.fromString(sysCfg.local_ip) && gw.fromString(sysCfg.gateway) && sn.fromString(sysCfg.subnet)) {
-                WiFi.config(ip, gw, sn);
-                Serial.printf("[WIFI] STATIC IP: %s\n", sysCfg.local_ip);
-            }
+            if (ip.fromString(sysCfg.local_ip) && gw.fromString(sysCfg.gateway) && sn.fromString(sysCfg.subnet)) WiFi.config(ip, gw, sn);
         }
-        
-        Serial.printf("[WIFI] Connecting to %s ", sysCfg.wifi_ssid);
         WiFi.begin(sysCfg.wifi_ssid, sysCfg.wifi_pass);
-        uint32_t start = millis();
-        while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
-            delay(500); Serial.print(".");
-        }
-        if (WiFi.status() == WL_CONNECTED) {
-            Serial.println("\n[WIFI] Connected! IP: " + WiFi.localIP().toString());
-            MDNS.begin("bacnet-gateway");
-            ArduinoOTA.begin();
-        } else {
-            Serial.println("\n[WIFI] Failed. AP Mode.");
-            WiFi.softAP("ZIRCON-GW-CONFIG", "admin1234");
-            is_ap_mode = true;
-        }
     }
-
+    webServer.addHandler(&ws);
     webServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
         if(!is_authenticated(request)) return;
         request->send_P(200, "text/html", INDEX_HTML);
     });
-
     webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         JsonDocument doc;
         doc["ver"] = VERSION_GLOBAL;
@@ -128,10 +116,35 @@ void setup_network_infrastructure() {
         doc["mac_id"] = sysCfg.mac_address;
         doc["mstp_t"] = bacnetStats.tokens_seen;
         doc["mstp_p"] = bacnetStats.pfm_replies;
+        doc["mstp_rx"] = bacnetStats.ms_msgs_rx;
+        doc["mstp_err"] = bacnetStats.errors_crc;
         String res; serializeJson(doc, res);
         request->send(200, "application/json", res);
     });
-
+    webServer.on("/api/discover", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if(!is_authenticated(request)) return;
+        BACnetJob j; j.type = JOB_WHO_IS;
+        enqueue_bacnet_job(j);
+        request->send(200, "text/plain", "OK");
+    });
+    webServer.on("/api/cache", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if(!is_authenticated(request)) return;
+        JsonDocument doc;
+        JsonArray arr = doc.to<JsonArray>();
+        for (const auto& dev : bacnet_network_cache) {
+            JsonObject d = arr.add<JsonObject>();
+            d["mac"] = dev.mac_address;
+            d["id"] = dev.device_id;
+            d["done"] = dev.discovery_done;
+            JsonArray objs = d["objs"].to<JsonArray>();
+            for (const auto& obj : dev.objects) {
+                JsonObject o = objs.add<JsonObject>();
+                o["t"] = obj.type; o["i"] = obj.instance; o["v"] = obj.present_value;
+            }
+        }
+        String res; serializeJson(doc, res);
+        request->send(200, "application/json", res);
+    });
     webServer.on("/api/config", HTTP_GET, [](AsyncWebServerRequest *request) {
         if(!is_authenticated(request)) return;
         JsonDocument doc;
@@ -153,52 +166,40 @@ void setup_network_infrastructure() {
         String res; serializeJson(doc, res);
         request->send(200, "application/json", res);
     });
-
     webServer.on("/save", HTTP_POST, [](AsyncWebServerRequest *request) {
         if(!is_authenticated(request)) return;
-        
-        // Sauvegarde Différentielle : on ne touche qu'aux champs présents
         if(request->hasParam("ssid", true)) strlcpy(sysCfg.wifi_ssid, request->getParam("ssid", true)->value().c_str(), 32);
         if(request->hasParam("pass", true)) strlcpy(sysCfg.wifi_pass, request->getParam("pass", true)->value().c_str(), 64);
-        
-        // Flag Static : Présent uniquement dans le form WiFi
-        if(request->hasParam("form_type", true) && request->getParam("form_type", true)->value() == "wifi") {
-            sysCfg.static_ip = request->hasParam("static_ip", true);
-        }
-        
+        if(request->hasParam("form_type", true) && request->getParam("form_type", true)->value() == "wifi") sysCfg.static_ip = request->hasParam("static_ip", true);
         if(request->hasParam("local_ip", true)) strlcpy(sysCfg.local_ip, request->getParam("local_ip", true)->value().c_str(), 16);
         if(request->hasParam("gateway", true)) strlcpy(sysCfg.gateway, request->getParam("gateway", true)->value().c_str(), 16);
         if(request->hasParam("subnet", true)) strlcpy(sysCfg.subnet, request->getParam("subnet", true)->value().c_str(), 16);
         if(request->hasParam("mac", true)) sysCfg.mac_address = request->getParam("mac", true)->value().toInt();
         if(request->hasParam("mm", true)) sysCfg.max_master = request->getParam("mm", true)->value().toInt();
         if(request->hasParam("did", true)) sysCfg.device_id = request->getParam("did", true)->value().toInt();
-        if(request->hasParam("to", true)) sysCfg.apdu_timeout = request->getParam("to", true)->value().toInt();
-        if(request->hasParam("ret", true)) sysCfg.max_retries = request->getParam("ret", true)->value().toInt();
         if(request->hasParam("mqh", true)) strlcpy(sysCfg.mqtt_server, request->getParam("mqh", true)->value().c_str(), 32);
         if(request->hasParam("mqp", true)) sysCfg.mqtt_port = request->getParam("mqp", true)->value().toInt();
-        if(request->hasParam("mqu", true)) strlcpy(sysCfg.mqtt_user, request->getParam("mqu", true)->value().c_str(), 32);
-        if(request->hasParam("mqpa", true)) strlcpy(sysCfg.mqtt_pass, request->getParam("mqpa", true)->value().c_str(), 32);
-        if(request->hasParam("mqpr", true)) strlcpy(sysCfg.mqtt_prefix, request->getParam("mqpr", true)->value().c_str(), 64);
-        
         save_configuration();
-        request->send(200, "text/plain", "Configuration sauvegardee. Redemarrage...");
+        request->send(200, "text/plain", "OK");
         pending_reboot = true; reboot_timer = millis();
     });
-
+    webServer.on("/reboot", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if(!is_authenticated(request)) return;
+        request->send(200, "text/plain", "Rebooting...");
+        pending_reboot = true; reboot_timer = millis();
+    });
     webServer.on("/update", HTTP_POST, [](AsyncWebServerRequest *request) {
         if(!is_authenticated(request)) return;
-        AsyncWebServerResponse *response = request->beginResponse(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
-        response->addHeader("Connection", "close");
-        request->send(response);
+        request->send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
         if(!Update.hasError()) { pending_reboot = true; reboot_timer = millis(); }
     }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
         if (!index) Update.begin(UPDATE_SIZE_UNKNOWN);
         if (!Update.hasError()) Update.write(data, len);
         if (final) Update.end(true);
     });
-
-    webServer.addHandler(&ws);
     webServer.begin();
+    MDNS.begin("bacnet-gateway");
+    ArduinoOTA.begin();
 }
 
 void handle_network() {

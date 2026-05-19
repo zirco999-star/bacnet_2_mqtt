@@ -56,3 +56,26 @@ L'environnement WiFi est désormais bétonné. Le travail en autonomie va se con
 - Fix : Correction de la détection de la checkbox 'static_ip' dans l'API.
 - Logs : Réactivation des logs de boot détaillés (Mode, SSID, IP).
 - Résultat attendu : Retour immédiat à 192.168.1.50 après flash USB.
+
+### [16:15] Phase 5.1 : Validation de l'Autonomie et UI (v3.9.2)
+- État : IP Statique (192.168.1.50) et DHCP fonctionnels avec pré-remplissage.
+- UI : Restauration des logs de debug en direct (Kernel Stream) et de l'indicateur de statut (Connected/Disconnected).
+- OTA : Fiabilisation totale via 'espota.py'.
+- Commit : Version 3.9.2 sauvegardée dans Git comme nouvelle base de référence stable.
+
+### [17:40] Phase 1 : Fiabilisation MS/TP (v4.0.0)
+- Action : Implémentation du CRC16 et support des trames de données.
+- Objectif : Capture stable des payloads BACnet.
+
+### [18:15] Phase 1 Finalisée (v4.0.0)
+- CRC16 : Implémentation conforme ASHRAE 135-2020 (Polynôme 0x1021).
+- FSM : Support complet des trames 0x05/0x06 avec validation CRC.
+- APDU : Extraction propre NPDU/APDU.
+- Flash : Version 4.0.0 déployée avec succès.
+- Résultat : Communication MS/TP stable et vérifiée par l'API status.
+- Phase 1.1 : Correction Token-Safe & CRC16 (v4.2.1) - Déploiement imminent
+- Phase 1.2 : Amélioration Logique Token & Logs (v4.2.2)
+- Phase 1.3 : Fix RTS Direction & Token Recovery (v4.2.3)
+- Phase 1.4 : Hardware RTS & Token Recovery (v4.2.4)
+- Phase 1.5 : Turnaround Delay & Ring Discovery (v4.2.5)
+- Phase 1.6 : Manual RTS & Timing Optimization (v4.2.6)

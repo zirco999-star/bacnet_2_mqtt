@@ -44,6 +44,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         #console-out { background: #05070a; color: #4ade80; height: 350px; overflow-y: auto; padding: 0.5rem; font-size: 0.65rem; border: 1px solid #1e293b; line-height: 1.3; margin-top: 0.5rem; }
         #up-progress { height: 4px; background: #000; border-radius: 2px; margin-top: 10px; display: none; overflow: hidden; }
         #up-bar { width: 0%; height: 100%; background: var(--success); transition: width 0.3s; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+        th { text-align: left; color: var(--muted); border-bottom: 1px solid var(--border); padding: 0.5rem; }
+        td { padding: 0.5rem; border-bottom: 1px solid #1e293b; }
     </style>
 </head>
 <body>
@@ -53,9 +56,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     </nav>
     <div class="tabs">
         <button class="tab-btn active" onclick="openTab(event, 't-dash')">Dashboard</button>
-        <button class="tab-btn" onclick="openTab(event, 't-wifi')">Network</button>
-        <button class="tab-btn" onclick="openTab(event, 't-bac')">BACnet</button>
-        <button class="tab-btn" onclick="openTab(event, 't-mq')">MQTT</button>
+        <button class="tab-btn" onclick="openTab(event, 't-bac')">Discovery</button>
+        <button class="tab-btn" onclick="openTab(event, 't-conf')">Configuration</button>
         <button class="tab-btn" onclick="openTab(event, 't-sys')">System</button>
     </div>
     <div class="container">
@@ -71,8 +73,14 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 <div id="console-out"></div>
             </div>
         </div>
-        <div id="t-wifi" class="tab-content">
-            <div class="card"><div class="card-header">WiFi Interface</div><div class="card-body">
+        <div id="t-bac" class="tab-content">
+            <div class="card"><div class="card-header">Discovered BACnet Devices</div><div class="card-body">
+                <div id="cache-list"></div>
+                <button type="button" onclick="fetch('/api/discover')" class="btn-cmd full-w" style="margin-top:1rem; border-color:var(--accent); color:var(--accent)">Trigger Who-Is</button>
+            </div></div>
+        </div>
+        <div id="t-conf" class="tab-content">
+            <div class="card"><div class="card-header">Network Settings</div><div class="card-body">
                 <form id="f-wifi">
                     <input type="hidden" name="form_type" value="wifi">
                     <div class="form-group"><label>SSID</label><input type="text" name="ssid" id="in-ssid"></div>
@@ -83,34 +91,17 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                         <div class="form-group"><label>Gateway</label><input type="text" name="gateway" id="in-gw"></div>
                         <div class="form-group"><label>Mask</label><input type="text" name="subnet" id="in-sn"></div>
                     </div>
-                    <button type="button" onclick="doSave('f-wifi')" class="btn-cmd full-w">Commit Network Changes</button>
+                    <button type="button" onclick="doSave('f-wifi')" class="btn-cmd full-w">Save Network</button>
                 </form>
             </div></div>
-        </div>
-        <div id="t-bac" class="tab-content">
-            <div class="card"><div class="card-header">BACnet Stack Parameters</div><div class="card-body">
+            <div class="card"><div class="card-header">BACnet & MQTT Configuration</div><div class="card-body">
                 <form id="f-bac">
                     <input type="hidden" name="form_type" value="bacnet">
-                    <div class="form-group"><label>Local MAC (0-127)</label><input type="number" name="mac" id="in-mac"></div>
-                    <div class="form-group"><label>Max Master</label><input type="number" name="mm" id="in-mm"></div>
-                    <div class="form-group"><label>Device Object Instance</label><input type="number" name="did" id="in-did"></div>
-                    <div class="form-group"><label>APDU Timeout (ms)</label><input type="number" name="to" id="in-to"></div>
-                    <div class="form-group"><label>Max Retries</label><input type="number" name="ret" id="in-ret"></div>
-                    <button type="button" onclick="doSave('f-bac')" class="btn-cmd full-w">Update Stack</button>
-                    <button type="button" onclick="fetch('/api/discover')" class="btn-cmd full-w" style="margin-top:1rem; border-color:var(--accent); color:var(--accent)">Who-Is Discovery</button>
-                </form>
-            </div></div>
-        </div>
-        <div id="t-mq" class="tab-content">
-            <div class="card"><div class="card-header">MQTT Broker</div><div class="card-body">
-                <form id="f-mq">
-                    <input type="hidden" name="form_type" value="mqtt">
-                    <div class="form-group"><label>Server IP</label><input type="text" name="mqh" id="in-mqh"></div>
-                    <div class="form-group"><label>Port</label><input type="number" name="mqp" id="in-mqp"></div>
-                    <div class="form-group"><label>User</label><input type="text" name="mqu" id="in-mqu"></div>
-                    <div class="form-group"><label>Password</label><input type="password" name="mqpa" id="in-mqpa"></div>
-                    <div class="form-group"><label>Prefix</label><input type="text" name="mqpr" id="in-mqpr"></div>
-                    <button type="button" onclick="doSave('f-mq')" class="btn-cmd full-w">Update Broker</button>
+                    <div class="form-group"><label>Local MAC</label><input type="number" name="mac" id="in-mac"></div>
+                    <div class="form-group"><label>Device ID</label><input type="number" name="did" id="in-did"></div>
+                    <div class="form-group"><label>MQTT Server</label><input type="text" name="mqh" id="in-mqh"></div>
+                    <div class="form-group"><label>MQTT Prefix</label><input type="text" name="mqpr" id="in-mqpr"></div>
+                    <button type="button" onclick="doSave('f-bac')" class="btn-cmd full-w">Update Services</button>
                 </form>
             </div></div>
         </div>
@@ -120,7 +111,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 <button type="button" onclick="doUpdate()" class="btn-cmd full-w" style="margin-top:1rem">Flash OTA</button>
                 <div id="up-progress"><div id="up-bar"></div></div>
             </div></div>
-            <button class="btn-cmd" style="color:red; border-color:red; margin-top:1rem" onclick="if(confirm('Reboot?'))fetch('/reboot')">Master Reboot</button>
+            <button class="btn-cmd" style="color:red; border-color:red; margin-top:1rem" onclick="if(confirm('Reboot?'))fetch('/reboot')">System Reboot</button>
         </div>
     </div>
     <script>
@@ -129,6 +120,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             const c=document.getElementsByClassName("tab-content"); for(let i=0; i<c.length; i++)c[i].style.display="none";
             const b=document.getElementsByClassName("tab-btn"); for(let i=0; i<b.length; i++)b[i].classList.remove("active");
             document.getElementById(id).style.display="block"; e.currentTarget.classList.add("active");
+            if(id === 't-bac') refreshCache();
         }
         function doSave(fid) {
             fetch('/save', {method:'POST', body:new FormData(document.getElementById(fid))})
@@ -168,6 +160,33 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('status-tag').innerText="Disconnected";
             });
         }
+        function refreshCache() {
+            fetch('/api/cache').then(r=>r.json()).then(data=>{
+                const container = document.getElementById('cache-list');
+                container.innerHTML = '';
+                if(data.length === 0) container.innerHTML = '<p style="color:var(--muted); font-size:0.7rem">No devices discovered yet.</p>';
+                data.forEach(dev => {
+                    const devCard = document.createElement('div');
+                    devCard.className = 'card';
+                    devCard.style.marginBottom = '1rem';
+                    devCard.innerHTML = `<div class="card-header">Device ID: ${dev.id} (MAC: ${dev.mac}) ${dev.done ? '✅' : '⏳'}</div>`;
+                    const body = document.createElement('div');
+                    body.className = 'card-body';
+                    if (dev.objs && dev.objs.length > 0) {
+                        let html = '<table><tr><th>Obj Type</th><th>Instance</th><th>Value</th></tr>';
+                        dev.objs.forEach(obj => {
+                            html += `<tr><td>${obj.t}</td><td>${obj.i}</td><td style="color:var(--success); font-weight:bold">${obj.v.toFixed(2)}</td></tr>`;
+                        });
+                        html += '</table>';
+                        body.innerHTML = html;
+                    } else {
+                        body.innerHTML = '<p style="color:var(--muted); font-size:0.6rem">No objects listed yet. Reading Object_List...</p>';
+                    }
+                    devCard.appendChild(body);
+                    container.appendChild(devCard);
+                });
+            });
+        }
         function loadConfig() {
             fetch('/api/config').then(r=>r.json()).then(c=>{
                 document.getElementById('in-ssid').value = c.ssid || "";
@@ -177,17 +196,13 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('in-gw').value = c.gateway;
                 document.getElementById('in-sn').value = c.subnet;
                 document.getElementById('in-mac').value = c.mac;
-                document.getElementById('in-mm').value = c.mm;
                 document.getElementById('in-did').value = c.did;
-                document.getElementById('in-to').value = c.to;
-                document.getElementById('in-ret').value = c.ret;
                 document.getElementById('in-mqh').value = c.mqh;
-                document.getElementById('in-mqp').value = c.mqp;
-                document.getElementById('in-mqu').value = c.mqu;
                 document.getElementById('in-mqpr').value = c.mqpr;
             });
         }
         initWS(); setInterval(updateStatus, 3000); loadConfig(); updateStatus();
+        setInterval(() => { if(document.getElementById('t-bac').classList.contains('active')) refreshCache(); }, 5000);
     </script>
 </body>
 </html>

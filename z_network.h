@@ -7,6 +7,7 @@
 
 void setup_network_infrastructure();
 void handle_network();
+void z_log(const char* format, ...);
 bool is_authenticated(AsyncWebServerRequest *request);
 
 #endif
