@@ -1,10 +1,25 @@
 #include "z_network.h"
 #include <Update.h>
 #include <ArduinoJson.h>
-#include "esp_wifi.h" // API Native ESP-IDF
+#include "esp_wifi.h" 
+
+// ESPHome-style Event Queue
+enum WiFiTaskEvent { EVENT_NONE, EVENT_CONNECTED, EVENT_DISCONNECTED };
+volatile WiFiTaskEvent pending_event = EVENT_NONE;
+volatile int last_err = 0;
+
+void WiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+    if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+        pending_event = EVENT_CONNECTED;
+    } else if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+        pending_event = EVENT_DISCONNECTED;
+        last_err = info.wifi_sta_disconnected.reason;
+    }
+}
 
 void load_configuration() {
     memset(&sysCfg, 0, sizeof(Config));
+    // Valeurs par défaut
     strncpy(sysCfg.wifi_ssid, "", 31);
     strncpy(sysCfg.wifi_pass, "", 63);
     sysCfg.static_ip = false;
@@ -48,8 +63,8 @@ bool is_authenticated(AsyncWebServerRequest *request) {
 void setup_network_infrastructure() {
     load_configuration();
     
-    // 1. SEQUENCE NATIVE ESP-IDF (Inspirée du code source ESPHome)
-    // Désactivation totale avant reset
+    // 1. INITIALISATION STYLE ESPHOME (Direct IDF)
+    WiFi.onEvent(WiFiEvent);
     WiFi.disconnect(true, true);
     WiFi.mode(WIFI_OFF);
     delay(500);
@@ -58,32 +73,30 @@ void setup_network_infrastructure() {
         is_ap_mode = true;
         WiFi.mode(WIFI_AP);
         WiFi.softAP("BACnetMSTP2MQTT_SETUP", "admin1234");
-        log_to_web(1, "Mode AP Setup: 192.168.4.1");
+        log_to_web(1, "Mode AP: 192.168.4.1");
     } else {
         is_ap_mode = false;
         WiFi.mode(WIFI_STA);
         
-        // --- LA TOUCHE MAGIQUE ESPHOME ---
-        // Force le stockage en RAM uniquement pour éviter les CCMP Replay (NVS Stale Data)
-        esp_wifi_set_storage(WIFI_STORAGE_RAM);
+        // --- CONFIGURATION CRITIQUE ESPHOME ---
+        esp_wifi_set_storage(WIFI_STORAGE_RAM); // Ne pas toucher au NVS pour les compteurs CCMP
+        esp_wifi_set_ps(WIFI_PS_NONE);          // Pas de dodo radio
         
-        // Désactivation du Power Save (Indispensable sur Freebox)
-        esp_wifi_set_ps(WIFI_PS_NONE);
+        wifi_config_t conf;
+        esp_wifi_get_config(WIFI_IF_STA, &conf);
         
-        // Configuration PMF (Capable mais pas requis)
-        wifi_config_t wifi_conf;
-        esp_wifi_get_config(WIFI_IF_STA, &wifi_conf);
-        wifi_conf.sta.pmf_cfg.capable = true;
-        wifi_conf.sta.pmf_cfg.required = false;
-        // Force le scan de tous les canaux pour trouver le meilleur AP
-        wifi_conf.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
-        wifi_conf.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
-        esp_wifi_set_config(WIFI_IF_STA, &wifi_conf);
-        // ---------------------------------
+        // Paramètres de sécurité "Gold Standard"
+        conf.sta.pmf_cfg.capable = true;
+        conf.sta.pmf_cfg.required = false;
+        conf.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+        
+        // Scan complet avant connexion
+        conf.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+        conf.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+        
+        esp_wifi_set_config(WIFI_IF_STA, &conf);
+        // --------------------------------------
 
-        WiFi.setHostname("BACnetGateway");
-
-        // Appliquer l'IP Statique AVANT le begin()
         if (sysCfg.static_ip) {
             IPAddress ip, gw, sn;
             if (ip.fromString(sysCfg.local_ip) && gw.fromString(sysCfg.gateway) && sn.fromString(sysCfg.subnet)) {
@@ -91,19 +104,19 @@ void setup_network_infrastructure() {
             }
         }
         
-        log_to_web(1, "WiFi: Connexion à [%s] (Mode ESPHome)...", sysCfg.wifi_ssid);
+        log_to_web(1, "WiFi: Connexion a [%s]...", sysCfg.wifi_ssid);
         WiFi.begin(sysCfg.wifi_ssid, sysCfg.wifi_pass);
         
         uint32_t start = millis();
-        while (WiFi.status() != WL_CONNECTED && millis() - start < 30000) { 
+        while (WiFi.status() != WL_CONNECTED && millis() - start < 25000) { 
             delay(500);
             Serial.print(".");
         }
         
         if(WiFi.status() == WL_CONNECTED) {
-            log_to_web(1, "WiFi Connecté ! IP: %s (Signal: %d dBm)", WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
+            log_to_web(1, "WiFi Connecté ! Signal: %d dBm", (int)WiFi.RSSI());
         } else {
-            log_to_web(0, "Echec WiFi (Status: %d). Mode RECOVERY.", (int)WiFi.status());
+            log_to_web(0, "WiFi Echec (Reason: %d). Mode RECOVERY.", last_err);
             is_ap_mode = true;
             WiFi.mode(WIFI_AP);
             WiFi.softAP("BACnetMSTP2MQTT_RECOVERY", "admin1234");
@@ -119,9 +132,8 @@ void setup_network_infrastructure() {
         doc["ip"] = is_ap_mode ? "192.168.4.1" : WiFi.localIP().toString();
         doc["mqtt"] = mqttClient.connected();
         doc["heap"] = ESP.getFreeHeap() / 1024;
-        String response;
-        serializeJson(doc, response);
-        request->send(200, "application/json", response);
+        String res; serializeJson(doc, res);
+        request->send(200, "application/json", res);
     });
 
     webServer.on("/api/config", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -140,9 +152,8 @@ void setup_network_infrastructure() {
         doc["mq_pref"] = String(sysCfg.mqtt_prefix);
         doc["log_lvl"] = sysCfg.log_level;
         doc["adm_user"] = String(sysCfg.admin_user);
-        String response;
-        serializeJson(doc, response);
-        request->send(200, "application/json", response);
+        String res; serializeJson(doc, res);
+        request->send(200, "application/json", res);
     });
 
     webServer.on("/save", HTTP_POST, [](AsyncWebServerRequest *request){
@@ -159,13 +170,7 @@ void setup_network_infrastructure() {
         if(request->hasParam("mq_port", true)) sysCfg.mqtt_port = request->getParam("mq_port", true)->value().toInt();
         if(request->hasParam("log_lvl", true)) sysCfg.log_level = request->getParam("log_lvl", true)->value().toInt();
         save_configuration();
-        request->send(200, "text/plain", "OK. Redemarrage...");
-        pending_reboot = true; reboot_timer = millis();
-    });
-
-    webServer.on("/reboot", HTTP_GET, [](AsyncWebServerRequest *request) {
-        if(!is_authenticated(request)) return;
-        request->send(200, "text/plain", "Reboot...");
+        request->send(200, "text/plain", "OK. Reboot...");
         pending_reboot = true; reboot_timer = millis();
     });
 
@@ -175,13 +180,12 @@ void setup_network_infrastructure() {
         if(!Update.hasError()) { pending_reboot = true; reboot_timer = millis(); }
     }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
         if (!index) {
-            log_to_web(1, "OTA Start: %s", filename.c_str());
-            if (!Update.begin(UPDATE_SIZE_UNKNOWN)) Update.printError(Serial);
+            log_to_web(1, "OTA: Start %s", filename.c_str());
+            Update.begin(UPDATE_SIZE_UNKNOWN);
         }
-        if (!Update.hasError()) { if (Update.write(data, len) != len) Update.printError(Serial); }
+        if (!Update.hasError()) Update.write(data, len);
         if (final) {
-            if (Update.end(true)) log_to_web(1, "OTA Succes !");
-            else Update.printError(Serial);
+            if (Update.end(true)) log_to_web(1, "OTA: Success.");
         }
     });
 
@@ -196,6 +200,16 @@ void setup_network_infrastructure() {
 void handle_network() {
     ArduinoOTA.handle();
     if (pending_reboot && (millis() - reboot_timer > 2000)) ESP.restart();
+
+    // Déport de la gestion d'événements WiFi (ESPHome Style)
+    if (pending_event == EVENT_CONNECTED) {
+        log_to_web(1, "Event: Connecté à l'IP %s", WiFi.localIP().toString().c_str());
+        pending_event = EVENT_NONE;
+    } else if (pending_event == EVENT_DISCONNECTED) {
+        log_to_web(0, "Event: Déconnecté (Raison: %d)", last_err);
+        pending_event = EVENT_NONE;
+    }
+
     if (!is_ap_mode && WiFi.status() == WL_CONNECTED && !mqttClient.connected()) {
         static uint32_t last_mq = 0;
         if (millis() - last_mq > 15000) {
@@ -207,8 +221,6 @@ void handle_network() {
     static uint32_t ls = 0;
     if(millis() - ls > 10000) {
         ls = millis();
-        if (WiFi.status() == WL_CONNECTED) {
-            log_to_web(2, "IP: %s | Signal %d dBm | Free: %d KB", WiFi.localIP().toString().c_str(), (int)WiFi.RSSI(), (int)ESP.getFreeHeap() / 1024);
-        }
+        if (WiFi.status() == WL_CONNECTED) log_to_web(2, "Signal %d dBm | Heap: %d KB", (int)WiFi.RSSI(), (int)ESP.getFreeHeap() / 1024);
     }
 }
