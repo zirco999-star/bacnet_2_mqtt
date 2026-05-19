@@ -22,3 +22,10 @@
 - Le projet est localisé dans `/home/dev/bacnet_2_mqtt` (qui est un symlink vers `/mnt/save/bacnet_2_mqtt`).
 - **ATTENTION :** En raison du lien symbolique externe, les outils natifs de fichiers (write_file, replace, list_directory) sont inopérants directement sur la cible. 
 - **Méthode d'édition :** L'agent doit écrire le fichier dans un dossier temporaire (ex: `/home/dev/tmp.ino`), puis utiliser `run_shell_command` avec `cp` ou `mv` pour le transférer dans `/home/dev/bacnet_2_mqtt/`. De même pour la lecture, `cp` vers le workspace puis lecture standard.
+
+## 🛠️ Directives de Développement ESP32 (Rigueur 2026)
+1. **Isolation par Briques** : Chaque module (WiFi, BACnet, MQTT, UI) doit résider dans son propre fichier .cpp/.h.
+2. **Sanctuarisation Réseau** : Ne jamais modifier 'z_network.cpp' ou 'z_config.h' (section WiFi/OTA) lors des travaux sur les couches applicatives, sauf instruction explicite.
+3. **Protocole de Flash** : Prioriser systématiquement l'OTA via 'espota.py'. Le flash USB est un dernier recours.
+4. **Persistance NVS** : Utiliser des clés individuelles explicites pour chaque paramètre pour éviter les ruptures de compatibilité.
+5. **UI Industrielle** : Toujours pré-remplir les champs avec les valeurs par défaut 'sysCfg' dans l'interface.

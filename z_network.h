@@ -2,7 +2,6 @@
 #define Z_NETWORK_H
 
 #include "z_config.h"
-#include "z_logger.h"
 #include "z_ui.h"
 #include <ArduinoOTA.h>
 

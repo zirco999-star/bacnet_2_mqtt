@@ -49,3 +49,10 @@ L'environnement WiFi est désormais bétonné. Le travail en autonomie va se con
 - Network : Restauration des valeurs par défaut pour l'IP statique (192.168.1.50) si non configuré.
 - Boot : Unification des versions (v3.7.3) dans tous les fichiers et logs série.
 - Partition : Maintien du schéma 'min_spiffs' (1.9MB avec OTA).
+
+### [15:55] Phase 4.6 : Restauration Radicale Réseau v3.8.3 (Pivot v3.3)
+- État : IP Statique non fonctionnelle dans les versions 3.7.x.
+- Action : Restauration de la logique v3.3 (WiFi.config() et NVS par blocs structurés).
+- Fix : Correction de la détection de la checkbox 'static_ip' dans l'API.
+- Logs : Réactivation des logs de boot détaillés (Mode, SSID, IP).
+- Résultat attendu : Retour immédiat à 192.168.1.50 après flash USB.

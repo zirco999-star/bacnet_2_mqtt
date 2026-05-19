@@ -10,9 +10,8 @@
 #include <PubSubClient.h>
 #include <ArduinoOTA.h>
 
-#define VERSION_GLOBAL "v3.8.3"
+#define VERSION_GLOBAL "v3.9.2"
 
-// Pins Waveshare R8
 #define RX_PIN 18
 #define TX_PIN 17
 #define RTS_PIN 21
@@ -26,14 +25,16 @@ struct Config {
     char local_ip[16];
     char gateway[16];
     char subnet[16];
+    uint8_t mac_address;
+    uint8_t max_master;
+    uint32_t device_id;
+    uint16_t apdu_timeout;
+    uint8_t max_retries;
     char mqtt_server[32];
     uint16_t mqtt_port;
     char mqtt_user[32];
     char mqtt_pass[32];
     char mqtt_prefix[64];
-    uint8_t mac_address;
-    uint8_t target_mac;
-    uint8_t max_master;
     uint8_t log_level; 
     char admin_user[32];
     char admin_pass[64];
@@ -45,9 +46,6 @@ extern AsyncWebServer webServer;
 extern AsyncWebSocket ws;
 extern PubSubClient mqttClient;
 extern WiFiClient mqttWifiClient;
-extern QueueHandle_t uart_queue;
-extern std::atomic<int> mstp_current_state;
-extern volatile bool tcp_bridge_active;
 extern bool is_ap_mode;
 extern bool pending_reboot;
 extern uint32_t reboot_timer;
