@@ -8,7 +8,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <html lang="fr">
 <head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BACnet-MS/TP_2_MQTT v2.3 | Console</title>
+    <title>BACnet-MS/TP_2_MQTT v2.3.4 | Console</title>
     <style>
         :root { 
             --bg: #0a0f14; --card: #141b21; --primary: #f59e0b; --accent: #0ea5e9; 
@@ -30,11 +30,17 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         .card { background: var(--card); border: 1px solid var(--border); margin-bottom: 0.75rem; box-shadow: inset 0 0 10px rgba(0,0,0,0.5); }
         .card-header { background: #1e293b; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); color: var(--accent); font-size: 0.65rem; font-weight: bold; text-transform: uppercase; display: flex; justify-content: space-between; }
         .card-body { padding: 1rem; }
+        
         .grid-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--border); border: 1px solid var(--border); }
         @media(min-width: 768px) { .grid-stats { grid-template-columns: repeat(4, 1fr); } }
         .stat-item { background: var(--card); padding: 0.6rem; }
         .stat-label { font-size: 0.55rem; color: var(--muted); margin-bottom: 0.2rem; }
         .stat-value { font-size: 0.85rem; font-weight: bold; color: var(--success); overflow: hidden; text-overflow: ellipsis; }
+        
+        /* Bargraph Signal WiFi */
+        .wifi-bar-container { width: 100%; height: 6px; background: #000; border-radius: 3px; margin-top: 5px; overflow: hidden; border: 1px solid #1e293b; }
+        #wifi-bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--error), var(--primary), var(--success)); transition: width 0.5s ease-in-out; }
+
         form { display: grid; grid-template-columns: 1fr; gap: 0.75rem; }
         @media(min-width: 640px) { form { grid-template-columns: 1fr 1fr; } }
         .full-w { grid-column: 1 / -1; }
@@ -58,7 +64,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 </head>
 <body>
     <nav>
-        <div class="logo">BACnet-MS/TP_2_MQTT v2.3 <span>by Z1rc0n1um</span></div>
+        <div class="logo">BACnet-MS/TP_2_MQTT v2.3.4 <span>by Z1rc0n1um</span></div>
         <div id="status-tag" class="badge" style="color:var(--error)">Disconnected</div>
     </nav>
     <div class="tabs">
@@ -69,9 +75,14 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         <button class="tab-btn" onclick="openTab(event, 't-sys')">System</button>
     </div>
     <div class="container">
+        <!-- DASHBOARD -->
         <div id="t-dash" class="tab-content active">
             <div class="grid-stats">
-                <div class="stat-item"><div class="stat-label">WiFi</div><div id="s-rssi" class="stat-value">-- dBm</div></div>
+                <div class="stat-item">
+                    <div class="stat-label">WiFi Signal</div>
+                    <div id="s-rssi" class="stat-value">-- dBm</div>
+                    <div class="wifi-bar-container"><div id="wifi-bar-fill"></div></div>
+                </div>
                 <div class="stat-item"><div class="stat-label">Local IP</div><div id="s-ip" class="stat-value">0.0.0.0</div></div>
                 <div class="stat-item"><div class="stat-label">MS/TP Mode</div><div class="stat-value">TRANSCEIVER</div></div>
                 <div class="stat-item"><div class="stat-label">MQTT Node</div><div id="s-mq" class="stat-value" style="color:var(--error)">OFFLINE</div></div>
@@ -81,56 +92,44 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 <div id="console-out"></div>
             </div>
         </div>
+        <!-- WIFI -->
         <div id="t-wifi" class="tab-content">
-            <div class="card">
-                <div class="card-header">WiFi Config</div>
-                <div class="card-body"><form id="f-wifi">
-                    <div class="form-group"><label>SSID</label><input type="text" name="ssid" id="in-ssid"></div>
-                    <div class="form-group"><label>Password</label><input type="password" name="pass"></div>
-                    <label class="checkbox-row"><input type="checkbox" name="static_ip" id="in-static" onchange="document.getElementById('static-box').style.display=this.checked?'grid':'none'"><span>Static IP Assignment</span></label>
-                    <div id="static-box" class="full-w grid" style="display:none; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
-                        <div class="form-group"><label>Address</label><input type="text" name="local_ip" id="in-ip"></div>
-                        <div class="form-group"><label>Gateway</label><input type="text" name="gateway" id="in-gw"></div>
-                        <div class="form-group"><label>Mask</label><input type="text" name="subnet" id="in-sn"></div>
-                    </div>
-                    <button type="button" onclick="doSave('f-wifi')" class="btn-cmd full-w">Save Network</button>
-                </form></div>
-            </div>
+            <div class="card"><div class="card-header">WiFi Interface</div><div class="card-body"><form id="f-wifi">
+                <div class="form-group"><label>SSID</label><input type="text" name="ssid" id="in-ssid"></div>
+                <div class="form-group"><label>Password</label><input type="password" name="pass"></div>
+                <label class="checkbox-row"><input type="checkbox" name="static_ip" id="in-static" onchange="document.getElementById('static-box').style.display=this.checked?'grid':'none'"><span>Static IP Assignment</span></label>
+                <div id="static-box" class="full-w grid" style="display:none; grid-template-columns: 1fr 1fr; gap: 0.75rem;"><div class="form-group"><label>Address</label><input type="text" name="local_ip" id="in-ip"></div><div class="form-group"><label>Gateway</label><input type="text" name="gateway" id="in-gw"></div><div class="form-group"><label>Mask</label><input type="text" name="subnet" id="in-sn"></div></div>
+                <button type="button" onclick="doSave('f-wifi')" class="btn-cmd full-w">Commit Network Changes</button>
+            </form></div></div>
         </div>
+        <!-- BACNET -->
         <div id="t-bac" class="tab-content">
-            <div class="card">
-                <div class="card-header">BACnet Layer</div>
-                <div class="card-body"><form id="f-bac">
-                    <div class="form-group"><label>Local MAC</label><input type="text" name="mac" id="in-mac"></div>
-                    <div class="form-group"><label>Target MAC</label><input type="text" name="target" id="in-target"></div>
-                    <div class="form-group full-w"><label>Max Info Frames</label><input type="text" name="max_m" id="in-maxm"></div>
-                    <button type="button" onclick="doSave('f-bac')" class="btn-cmd full-w">Update Stack</button>
-                </form></div>
-            </div>
+            <div class="card"><div class="card-header">BACnet Layer</div><div class="card-body"><form id="f-bac">
+                <div class="form-group"><label>Local MAC</label><input type="text" name="mac" id="in-mac"></div>
+                <div class="form-group"><label>Target MAC</label><input type="text" name="target" id="in-target"></div>
+                <div class="form-group full-w"><label>Max Info Frames</label><input type="text" name="max_m" id="in-maxm"></div>
+                <button type="button" onclick="doSave('f-bac')" class="btn-cmd full-w">Update Stack</button>
+            </form></div></div>
             <div class="card"><div class="card-header">Discovered Objects</div><div class="card-body scroll-x" style="padding:0;"><table class="obj-table"><thead><tr><th>ID</th><th>TYPE</th><th>NAME</th><th>VALUE</th></tr></thead><tbody id="obj-list"><tr><td colspan="4" style="text-align:center; padding:1.5rem; color:var(--muted)">[ SCAN ACTIVE ]</td></tr></tbody></table></div></div>
         </div>
+        <!-- MQTT -->
         <div id="t-mq" class="tab-content">
-            <div class="card">
-                <div class="card-header">MQTT Broker</div>
-                <div class="card-body"><form id="f-mq">
-                    <div class="form-group"><label>Server IP</label><input type="text" name="mq_host" id="in-mqh"></div>
-                    <div class="form-group"><label>Port</label><input type="text" name="mq_port" id="in-mqp"></div>
-                    <div class="form-group full-w"><label>Prefix</label><input type="text" name="mq_pref" id="in-mpre"></div>
-                    <button type="button" onclick="doSave('f-mq')" class="btn-cmd full-w">Save Broker</button>
-                </form></div>
-            </div>
+            <div class="card"><div class="card-header">MQTT Broker</div><div class="card-body"><form id="f-mq">
+                <div class="form-group"><label>Server IP</label><input type="text" name="mq_host" id="in-mqh"></div>
+                <div class="form-group"><label>Port</label><input type="text" name="mq_port" id="in-mqp"></div>
+                <div class="form-group full-w"><label>Prefix</label><input type="text" name="mq_pref" id="in-mpre"></div>
+                <button type="button" onclick="doSave('f-mq')" class="btn-cmd full-w">Update Broker</button>
+            </form></div></div>
             <div class="card"><div class="card-header">Publication Map</div><div class="card-body scroll-x" style="padding:0;"><table class="obj-table"><thead><tr><th>TOPIC</th><th>OBJECT</th><th>STATE</th></tr></thead><tbody id="pub-list"><tr><td colspan="3" style="text-align:center; padding:1.5rem; color:var(--muted)">[ NO MAPPINGS ]</td></tr></tbody></table></div></div>
         </div>
+        <!-- SYSTEM -->
         <div id="t-sys" class="tab-content">
-            <div class="card">
-                <div class="card-header">Engine Control</div>
-                <div class="card-body"><form id="f-sys">
-                    <div class="form-group full-w"><label>Logs</label><select name="log_lvl" id="in-logl"><option value="0">Fatal</option><option value="1">Warn</option><option value="2">Info</option><option value="3">Debug</option></select></div>
-                    <label class="checkbox-row"><input type="checkbox" name="bridge_mode" id="in-bridge"><span>Enable TCP Bridge</span></label>
-                    <div class="form-group"><label>Admin User</label><input type="text" name="adm_user" id="in-user"></div><div class="form-group"><label>Admin Password</label><input type="password" name="adm_pass"></div>
-                    <button type="button" onclick="doSave('f-sys')" class="btn-cmd full-w">Save Config</button>
-                </form></div>
-            </div>
+            <div class="card"><div class="card-header">Engine Control</div><div class="card-body"><form id="f-sys">
+                <div class="form-group full-w"><label>Logs</label><select name="log_lvl" id="in-logl"><option value="0">Fatal</option><option value="1">Warn</option><option value="2">Info</option><option value="3">Debug</option></select></div>
+                <label class="checkbox-row"><input type="checkbox" name="bridge_mode" id="in-bridge"><span>Enable TCP Bridge</span></label>
+                <div class="form-group"><label>Admin User</label><input type="text" name="adm_user" id="in-user"></div><div class="form-group"><label>Admin Password</label><input type="password" name="adm_pass"></div>
+                <button type="button" onclick="doSave('f-sys')" class="btn-cmd full-w">Save Config</button>
+            </form></div></div>
             <div class="card"><div class="card-header">Firmware Update</div><div class="card-body">
                 <label>Select .bin File</label>
                 <input type="file" id="fw-file" style="padding:0.4rem; font-size:0.7rem;">
@@ -147,8 +146,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             document.getElementById(id).style.display="block"; evt.currentTarget.classList.add("active");
         }
         function doSave(fid) {
-            const f = document.getElementById(fid);
-            fetch('/save', {method:'POST', body:new FormData(f)})
+            fetch('/save', {method:'POST', body:new FormData(document.getElementById(fid))})
             .then(r=>r.text()).then(t=>alert(t)).catch(e=>alert(e));
         }
         function doUpdate() {
@@ -161,9 +159,18 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             xhr.onload = () => { alert(xhr.status === 200 ? "Success! Rebooting..." : "Update Failed"); location.reload(); };
             xhr.send(fd);
         }
+        function updateWiFiBar(rssi) {
+            let q = 0;
+            if (rssi <= -100) q = 0;
+            else if (rssi >= -50) q = 100;
+            else q = 2 * (rssi + 100);
+            document.getElementById('wifi-bar-fill').style.width = q + '%';
+        }
         function updateStatus() {
             fetch('/api/status').then(r=>r.json()).then(d=>{
-                document.getElementById('s-rssi').innerText=d.rssi+" dBm"; document.getElementById('s-ip').innerText=d.ip;
+                document.getElementById('s-rssi').innerText=d.rssi+" dBm"; 
+                updateWiFiBar(d.rssi);
+                document.getElementById('s-ip').innerText=d.ip;
                 const m=document.getElementById('s-mq'); m.innerText=d.mqtt?"ONLINE":"OFFLINE"; m.style.color=d.mqtt?"var(--success)":"var(--error)";
                 document.getElementById('status-tag').style.color="var(--success)"; document.getElementById('status-tag').innerText="Connected";
             }).catch(()=>{document.getElementById('status-tag').style.color="var(--error)"; document.getElementById('status-tag').innerText="Disconnected";});
