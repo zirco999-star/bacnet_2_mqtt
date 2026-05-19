@@ -39,3 +39,20 @@ L'environnement WiFi est désormais bétonné. Le travail en autonomie va se con
 - Constat : mstp_f = 0. Le bus ne semble pas décodé.
 - Hypothèse : Mauvais baudrate ou UART non réactif.
 - Action : Ajout d'un compteur de "Raw Bytes" pour vérifier l'activité électrique du bus RS485.
+
+### [10:30] Phase 2 : Architecture Token-Safe (v3.3.6)
+- Implémentation de la file d'attente TX FreeRTOS.
+- Sécurisation de l'émission : attente du jeton avant envoi.
+- Ajout du service WriteProperty (Service 15) prêt pour test.
+- Flashage OTA v3.3.6 réussi.
+    
+### [10:45] Phase 2.1 : Fix Initialisation Tâche (v3.3.7)
+- Correction : Tâche mstp_rt_task non démarrée dans setup_mstp.
+- Déplacement de la création de mstp_tx_queue dans setup_mstp pour éviter les conditions de course.
+- Démarrage de la tâche MSTP sur Core 1 validé par flashage OTA.
+
+### [11:10] Phase 2.3 : Correction Critique Bootloop (v3.3.9)
+- Bug Root-Cause : mstp_tx_queue non instanciée avant le lancement de la tâche Core 1.
+- Fix : Réécriture complète de z_mstp.cpp, instanciation sécurisée de la queue dans setup_mstp.
+- Ajout de vérifications (mstp_tx_queue != NULL) avant xQueueReceive/Send.
+- Prêt pour flashage USB (OTA impossible car bootloop).

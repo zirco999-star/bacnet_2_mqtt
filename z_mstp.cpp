@@ -50,62 +50,50 @@ void send_token(uint8_t target_mac) {
     uart_send_frame(f, 8);
 }
 
-// --- SERVICES APPLICATION (Push to Queue) ---
+// --- SERVICES APPLICATION ---
 void send_who_is() {
+    if (!mstp_tx_queue) return;
     MSTP_TxFrame tx;
     tx.length = 18;
     tx.expect_reply = false;
-    
-    tx.buffer[0] = 0x55; tx.buffer[1] = 0xFF; tx.buffer[2] = 0x06; // Unconfirmed
+    tx.buffer[0] = 0x55; tx.buffer[1] = 0xFF; tx.buffer[2] = 0x06; 
     tx.buffer[3] = 0xFF; tx.buffer[4] = sysCfg.mac_address; 
     tx.buffer[5] = 0x00; tx.buffer[6] = 0x08; 
     tx.buffer[7] = calc_mstp_header_crc(&tx.buffer[2], 5);
-    
-    // NPDU + APDU Who-Is
     uint8_t *p = &tx.buffer[8];
     *p++ = 0x01; *p++ = 0x20; *p++ = 0xFF; *p++ = 0xFF; *p++ = 0x00; *p++ = 0xFF; *p++ = 0x10; *p++ = 0x08;
-    
     uint16_t crc16 = calc_mstp_data_crc(&tx.buffer[8], 8);
     tx.buffer[16] = crc16 & 0xFF; tx.buffer[17] = (crc16 >> 8) & 0xFF;
-    
-    if (mstp_tx_queue) xQueueSend(mstp_tx_queue, &tx, 0);
+    xQueueSend(mstp_tx_queue, &tx, 0);
 }
 
 void send_write_property(uint8_t target_mac, uint16_t obj_type, uint32_t obj_inst, float value) {
+    if (!mstp_tx_queue) return;
     MSTP_TxFrame tx;
     tx.expect_reply = true;
     int p = 0;
-    
     tx.buffer[p++] = 0x55; tx.buffer[p++] = 0xFF;
-    tx.buffer[p++] = 0x05; // DER
-    tx.buffer[p++] = target_mac; tx.buffer[p++] = sysCfg.mac_address;
+    tx.buffer[p++] = 0x05; tx.buffer[p++] = target_mac; tx.buffer[p++] = sysCfg.mac_address;
     int len_pos = p; p += 2;
-    tx.buffer[p++] = 0; // CRC placeholder
-    
+    tx.buffer[p++] = 0; 
     int data_start = p;
-    tx.buffer[p++] = 0x01; tx.buffer[p++] = 0x04; // NPDU
-    tx.buffer[p++] = 0x00; tx.buffer[p++] = 0x05; tx.buffer[p++] = 0x01; tx.buffer[p++] = 0x0F; // APDU WriteProperty
-    
-    tx.buffer[p++] = 0x0C; // Tag 0 (ObjID)
+    tx.buffer[p++] = 0x01; tx.buffer[p++] = 0x04; 
+    tx.buffer[p++] = 0x00; tx.buffer[p++] = 0x05; tx.buffer[p++] = 0x01; tx.buffer[p++] = 0x0F; 
+    tx.buffer[p++] = 0x0C; 
     uint32_t oid = ((uint32_t)obj_type << 22) | (obj_inst & 0x3FFFFF);
     tx.buffer[p++] = (oid >> 24) & 0xFF; tx.buffer[p++] = (oid >> 16) & 0xFF; tx.buffer[p++] = (oid >> 8) & 0xFF; tx.buffer[p++] = oid & 0xFF;
-    
-    tx.buffer[p++] = 0x19; tx.buffer[p++] = 85; // Tag 1 (PropID 85)
-    tx.buffer[p++] = 0x3E; tx.buffer[p++] = 0x44; // Value Open + Real Tag
+    tx.buffer[p++] = 0x19; tx.buffer[p++] = 85; 
+    tx.buffer[p++] = 0x3E; tx.buffer[p++] = 0x44; 
     uint8_t *v = (uint8_t *)&value;
     tx.buffer[p++] = v[3]; tx.buffer[p++] = v[2]; tx.buffer[p++] = v[1]; tx.buffer[p++] = v[0];
-    tx.buffer[p++] = 0x3F; tx.buffer[p++] = 0x49; tx.buffer[p++] = 16; // Value Close + Priority 16
-    
+    tx.buffer[p++] = 0x3F; tx.buffer[p++] = 0x49; tx.buffer[p++] = 16; 
     uint16_t dlen = p - data_start;
     tx.buffer[len_pos] = (dlen >> 8) & 0xFF; tx.buffer[len_pos+1] = dlen & 0xFF;
     tx.buffer[7] = calc_mstp_header_crc(&tx.buffer[2], 5);
-    
     uint16_t crc16 = calc_mstp_data_crc(&tx.buffer[data_start], dlen);
     tx.buffer[p++] = crc16 & 0xFF; tx.buffer[p++] = (crc16 >> 8) & 0xFF;
     tx.length = p;
-    
-    if (mstp_tx_queue) xQueueSend(mstp_tx_queue, &tx, 0);
-    log_to_web(2, "WriteProperty Queued for MAC %d", target_mac);
+    xQueueSend(mstp_tx_queue, &tx, 0);
 }
 
 void mstp_rt_task(void *pvParameters) {
@@ -115,16 +103,14 @@ void mstp_rt_task(void *pvParameters) {
     uint8_t *data_buf = (uint8_t *)malloc(2048);
     uint16_t data_len = 0, data_idx = 0, received_crc16 = 0;
     enum { RX_IDLE, RX_PREAMBLE_55, RX_PREAMBLE_FF, RX_HEADER, RX_DATA, RX_CRC16_L, RX_CRC16_H } state = RX_IDLE;
-    
     uint32_t last_rx_time = millis();
     uint8_t next_station = sysCfg.mac_address;
     uint8_t poll_station = (sysCfg.mac_address + 1) % (sysCfg.max_master + 1);
 
-    mstp_tx_queue = xQueueCreate(10, sizeof(MSTP_TxFrame));
-    log_to_web(1, "MSTP Core 1: FSM Token-Safe Active. MAC=%d", sysCfg.mac_address);
+    Serial.println("[MSTP] Task Started on Core 1");
 
     for (;;) {
-        if (uart_read_bytes(RS485_UART_PORT, &rx_byte, 1, pdMS_TO_TICKS(2)) > 0) {
+        if (uart_read_bytes(RS485_UART_PORT, &rx_byte, 1, pdMS_TO_TICKS(1)) > 0) {
             last_rx_time = millis(); mstpStats.raw_bytes++;
             switch (state) {
                 case RX_IDLE: if (rx_byte == 0x55) state = RX_PREAMBLE_55; break;
@@ -139,12 +125,9 @@ void mstp_rt_task(void *pvParameters) {
                             if (ftype == 0x00) {
                                 mstpStats.tokens_seen++;
                                 if (dest == sysCfg.mac_address) {
-                                    // NOUS AVONS LE JETON !
                                     MSTP_TxFrame tx;
-                                    if (xQueueReceive(mstp_tx_queue, &tx, 0) == pdTRUE) {
-                                        log_to_web(3, "Envoi Data Frame sous Jeton (len=%d)", tx.length);
+                                    if (mstp_tx_queue && xQueueReceive(mstp_tx_queue, &tx, 0) == pdTRUE) {
                                         uart_send_frame(tx.buffer, tx.length);
-                                        // TODO: Attendre reply si expect_reply
                                     }
                                     send_token(next_station);
                                 }
@@ -156,31 +139,29 @@ void mstp_rt_task(void *pvParameters) {
                         } else { mstpStats.crc_header_errors++; state = RX_IDLE; }
                     }
                     break;
-                case RX_DATA:
-                    data_buf[data_idx++] = rx_byte;
-                    if (data_idx == data_len) state = RX_CRC16_L;
-                    break;
+                case RX_DATA: data_buf[data_idx++] = rx_byte; if (data_idx == data_len) state = RX_CRC16_L; break;
                 case RX_CRC16_L: received_crc16 = rx_byte; state = RX_CRC16_H; break;
                 case RX_CRC16_H:
                     received_crc16 |= (rx_byte << 8);
-                    if (calc_mstp_data_crc(data_buf, data_len) == received_crc16) {
-                        mstpStats.data_frames++;
-                        log_to_web(2, "Data Rx OK! Type=0x%02X Src=%d", header[0], header[2]);
-                    } else mstpStats.crc_data_errors++;
+                    if (calc_mstp_data_crc(data_buf, data_len) == received_crc16) mstpStats.data_frames++;
+                    else mstpStats.crc_data_errors++;
                     state = RX_IDLE;
                     break;
             }
-        } else if (millis() - last_rx_time > 500) {
-            // Bus mort ou seul au monde -> Tenter de réveiller
-            last_rx_time = millis();
-            poll_station = (poll_station + 1) % (sysCfg.max_master + 1);
-            if (poll_station == sysCfg.mac_address) poll_station = (poll_station + 1) % (sysCfg.max_master + 1);
-            send_pfm(poll_station);
+        } else {
+            if (millis() - last_rx_time > 500) {
+                last_rx_time = millis();
+                poll_station = (poll_station + 1) % (sysCfg.max_master + 1);
+                if (poll_station == sysCfg.mac_address) poll_station = (poll_station + 1) % (sysCfg.max_master + 1);
+                send_pfm(poll_station);
+            }
+            vTaskDelay(pdMS_TO_TICKS(1)); // Anti-Watchdog
         }
     }
 }
 
 void setup_mstp() {
+    Serial.println("[MSTP] Configuring GPIO and UART...");
     gpio_reset_pin(GPIO_NUM_47);
     gpio_set_direction(GPIO_NUM_47, GPIO_MODE_OUTPUT);
     gpio_set_level(GPIO_NUM_47, 1); 
@@ -189,4 +170,10 @@ void setup_mstp() {
     uart_param_config(RS485_UART_PORT, &uc);
     uart_set_pin(RS485_UART_PORT, TX_PIN, RX_PIN, RTS_PIN, UART_PIN_NO_CHANGE);
     uart_set_mode(RS485_UART_PORT, UART_MODE_RS485_HALF_DUPLEX);
+    
+    Serial.println("[MSTP] Creating TX Queue...");
+    mstp_tx_queue = xQueueCreate(10, sizeof(MSTP_TxFrame));
+    
+    Serial.println("[MSTP] Starting RT Task...");
+    xTaskCreatePinnedToCore(mstp_rt_task, "MSTP_FSM", 8192, NULL, 10, NULL, 1);
 }
