@@ -1,6 +1,6 @@
 /******************************************************************************
 *  PROJET BACnetMSTP2MQTT - by Z1rc0n1um
-*  Version 2.6 - FULL NATIVE ESP-IDF TCP/IP STACK
+*  Version 2.7 - ESPHome Mirror (Scan-First & BSSID Lock)
 *****************************************************************************/
 #include "z_config.h"
 #include "z_logger.h"
@@ -26,14 +26,14 @@ void setup() {
     delay(2000); 
     
     Serial.println("\n\n#########################################");
-    Serial.println("# BACnetMSTP2MQTT v2.6 Starting...      #");
+    Serial.println("# BACnetMSTP2MQTT v2.7 Starting...      #");
     Serial.println("#########################################");
     
     init_log_system();
     setup_network_infrastructure();
     setup_mstp();
     
-    log_to_web(1, "BACnetMSTP2MQTT v2.6 pret (Native IDF Stack).");
+    log_to_web(1, "BACnetMSTP2MQTT v2.7 pret.");
 }
 
 void loop() {
