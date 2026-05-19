@@ -1,6 +1,6 @@
 /******************************************************************************
 *  PROJET BACnetMSTP2MQTT - by Z1rc0n1um
-*  Version 2.4.1 - ABSOLUTE WiFi STABILITY (Native ESP-IDF API)
+*  Version 2.6 - FULL NATIVE ESP-IDF TCP/IP STACK
 *****************************************************************************/
 #include "z_config.h"
 #include "z_logger.h"
@@ -23,17 +23,17 @@ uint32_t reboot_timer = 0;
 
 void setup() {
     Serial.begin(115200);
-    delay(2000); // Délai de stabilisation série
+    delay(2000); 
     
     Serial.println("\n\n#########################################");
-    Serial.println("# BACnetMSTP2MQTT v2.4.1 Starting...    #");
+    Serial.println("# BACnetMSTP2MQTT v2.6 Starting...      #");
     Serial.println("#########################################");
     
     init_log_system();
     setup_network_infrastructure();
     setup_mstp();
     
-    log_to_web(1, "BACnetMSTP2MQTT v2.4.1 pret.");
+    log_to_web(1, "BACnetMSTP2MQTT v2.6 pret (Native IDF Stack).");
 }
 
 void loop() {

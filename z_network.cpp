@@ -2,24 +2,30 @@
 #include <Update.h>
 #include <ArduinoJson.h>
 #include "esp_wifi.h" 
+#include "esp_netif.h"
+#include "esp_event.h"
 
-// ESPHome-style Event Queue
-enum WiFiTaskEvent { EVENT_NONE, EVENT_CONNECTED, EVENT_DISCONNECTED };
-volatile WiFiTaskEvent pending_event = EVENT_NONE;
-volatile int last_err = 0;
+// Variables de statut bas niveau
+static bool idf_wifi_started = false;
+static bool idf_got_ip = false;
+static int idf_reason = 0;
 
-void WiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
-    if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
-        pending_event = EVENT_CONNECTED;
-    } else if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
-        pending_event = EVENT_DISCONNECTED;
-        last_err = info.wifi_sta_disconnected.reason;
+// Handler d'événements natif ESP-IDF
+static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        esp_wifi_connect();
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        wifi_event_sta_disconnected_t* disconnected = (wifi_event_sta_disconnected_t*) event_data;
+        idf_reason = disconnected->reason;
+        idf_got_ip = false;
+        esp_wifi_connect(); // Auto-reconnect natif
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        idf_got_ip = true;
     }
 }
 
 void load_configuration() {
     memset(&sysCfg, 0, sizeof(Config));
-    // Valeurs par défaut
     strncpy(sysCfg.wifi_ssid, "", 31);
     strncpy(sysCfg.wifi_pass, "", 63);
     sysCfg.static_ip = false;
@@ -63,11 +69,11 @@ bool is_authenticated(AsyncWebServerRequest *request) {
 void setup_network_infrastructure() {
     load_configuration();
     
-    // 1. INITIALISATION STYLE ESPHOME (Direct IDF)
-    WiFi.onEvent(WiFiEvent);
-    WiFi.disconnect(true, true);
-    WiFi.mode(WIFI_OFF);
-    delay(500);
+    // 1. INITIALISATION PURE ESP-IDF (Methodologie ESPHome)
+    // On arrête tout ce qui pourrait être en cours (NVS, cache)
+    esp_wifi_stop();
+    esp_wifi_deinit();
+    delay(200);
 
     if (strlen(sysCfg.wifi_ssid) == 0) {
         is_ap_mode = true;
@@ -76,47 +82,69 @@ void setup_network_infrastructure() {
         log_to_web(1, "Mode AP: 192.168.4.1");
     } else {
         is_ap_mode = false;
-        WiFi.mode(WIFI_STA);
         
-        // --- CONFIGURATION CRITIQUE ESPHOME ---
-        esp_wifi_set_storage(WIFI_STORAGE_RAM); // Ne pas toucher au NVS pour les compteurs CCMP
-        esp_wifi_set_ps(WIFI_PS_NONE);          // Pas de dodo radio
-        
-        wifi_config_t conf;
-        esp_wifi_get_config(WIFI_IF_STA, &conf);
-        
-        // Paramètres de sécurité "Gold Standard"
-        conf.sta.pmf_cfg.capable = true;
-        conf.sta.pmf_cfg.required = false;
-        conf.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
-        
-        // Scan complet avant connexion
-        conf.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
-        conf.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
-        
-        esp_wifi_set_config(WIFI_IF_STA, &conf);
-        // --------------------------------------
+        // Initialisation Netif et Event Loop (Arduino le fait déjà, mais on s'assure de l'interface STA)
+        esp_netif_t *sta_netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        if (sta_netif == NULL) sta_netif = esp_netif_create_default_wifi_sta();
 
+        // Config IP Statique via Netif
         if (sysCfg.static_ip) {
+            esp_netif_dhcpc_stop(sta_netif);
+            esp_netif_ip_info_t ip_info;
             IPAddress ip, gw, sn;
-            if (ip.fromString(sysCfg.local_ip) && gw.fromString(sysCfg.gateway) && sn.fromString(sysCfg.subnet)) {
-                WiFi.config(ip, gw, sn);
-            }
+            ip.fromString(sysCfg.local_ip);
+            gw.fromString(sysCfg.gateway);
+            sn.fromString(sysCfg.subnet);
+            ip_info.ip.addr = ip;
+            ip_info.gw.addr = gw;
+            ip_info.netmask.addr = sn;
+            esp_netif_set_ip_info(sta_netif, &ip_info);
+            log_to_web(1, "IDF: IP Statique %s appliquée.", sysCfg.local_ip);
         }
+
+        // Init WiFi avec config par défaut
+        wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+        esp_wifi_init(&cfg);
         
-        log_to_web(1, "WiFi: Connexion a [%s]...", sysCfg.wifi_ssid);
-        WiFi.begin(sysCfg.wifi_ssid, sysCfg.wifi_pass);
+        // --- FORCE RAM STORAGE (Élimine CCMP Replay) ---
+        esp_wifi_set_storage(WIFI_STORAGE_RAM);
         
+        // Handlers natifs
+        esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL);
+        esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, NULL);
+
+        wifi_config_t wifi_config = {};
+        strncpy((char*)wifi_config.sta.ssid, sysCfg.wifi_ssid, 32);
+        strncpy((char*)wifi_config.sta.password, sysCfg.wifi_pass, 64);
+        
+        // Paramètres PMF ESPHome "Gold Standard"
+        wifi_config.sta.pmf_cfg.capable = true;
+        wifi_config.sta.pmf_cfg.required = false;
+        wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+        wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+        wifi_config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+
+        esp_wifi_set_mode(WIFI_MODE_STA);
+        esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+        
+        // Désactivation Power Save (Antenne full power)
+        esp_wifi_set_ps(WIFI_PS_NONE);
+        
+        log_to_web(1, "IDF: Start WiFi Driver pour [%s]...", sysCfg.wifi_ssid);
+        esp_wifi_start();
+        idf_wifi_started = true;
+        
+        // Attente de l'IP (30s)
         uint32_t start = millis();
-        while (WiFi.status() != WL_CONNECTED && millis() - start < 25000) { 
+        while (!idf_got_ip && millis() - start < 30000) {
             delay(500);
             Serial.print(".");
         }
-        
-        if(WiFi.status() == WL_CONNECTED) {
-            log_to_web(1, "WiFi Connecté ! Signal: %d dBm", (int)WiFi.RSSI());
+
+        if (idf_got_ip) {
+            log_to_web(1, "IDF: WiFi Link UP ! IP: %s", WiFi.localIP().toString().c_str());
         } else {
-            log_to_web(0, "WiFi Echec (Reason: %d). Mode RECOVERY.", last_err);
+            log_to_web(0, "IDF: Echec (Reason: %d). Mode RECOVERY.", idf_reason);
             is_ap_mode = true;
             WiFi.mode(WIFI_AP);
             WiFi.softAP("BACnetMSTP2MQTT_RECOVERY", "admin1234");
@@ -174,19 +202,20 @@ void setup_network_infrastructure() {
         pending_reboot = true; reboot_timer = millis();
     });
 
+    webServer.on("/reboot", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if(!is_authenticated(request)) return;
+        request->send(200, "text/plain", "Reboot...");
+        pending_reboot = true; reboot_timer = millis();
+    });
+
     webServer.on("/update", HTTP_POST, [](AsyncWebServerRequest *request) {
         if(!is_authenticated(request)) return;
         request->send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
         if(!Update.hasError()) { pending_reboot = true; reboot_timer = millis(); }
     }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
-        if (!index) {
-            log_to_web(1, "OTA: Start %s", filename.c_str());
-            Update.begin(UPDATE_SIZE_UNKNOWN);
-        }
+        if (!index) { Update.begin(UPDATE_SIZE_UNKNOWN); }
         if (!Update.hasError()) Update.write(data, len);
-        if (final) {
-            if (Update.end(true)) log_to_web(1, "OTA: Success.");
-        }
+        if (final) { Update.end(true); }
     });
 
     webServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -200,16 +229,6 @@ void setup_network_infrastructure() {
 void handle_network() {
     ArduinoOTA.handle();
     if (pending_reboot && (millis() - reboot_timer > 2000)) ESP.restart();
-
-    // Déport de la gestion d'événements WiFi (ESPHome Style)
-    if (pending_event == EVENT_CONNECTED) {
-        log_to_web(1, "Event: Connecté à l'IP %s", WiFi.localIP().toString().c_str());
-        pending_event = EVENT_NONE;
-    } else if (pending_event == EVENT_DISCONNECTED) {
-        log_to_web(0, "Event: Déconnecté (Raison: %d)", last_err);
-        pending_event = EVENT_NONE;
-    }
-
     if (!is_ap_mode && WiFi.status() == WL_CONNECTED && !mqttClient.connected()) {
         static uint32_t last_mq = 0;
         if (millis() - last_mq > 15000) {
@@ -217,10 +236,4 @@ void handle_network() {
             mqttClient.connect("BACnetNode", sysCfg.mqtt_user, sysCfg.mqtt_pass);
         }
     } else if (mqttClient.connected()) mqttClient.loop();
-    
-    static uint32_t ls = 0;
-    if(millis() - ls > 10000) {
-        ls = millis();
-        if (WiFi.status() == WL_CONNECTED) log_to_web(2, "Signal %d dBm | Heap: %d KB", (int)WiFi.RSSI(), (int)ESP.getFreeHeap() / 1024);
-    }
 }
