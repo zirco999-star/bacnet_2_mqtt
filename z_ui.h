@@ -8,7 +8,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <html lang="fr">
 <head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BACnetMSTP2MQTT v3.1 | Console</title>
+    <title>BACnetMSTP2MQTT v3.2 | Console</title>
     <style>
         :root { 
             --bg: #0a0f14; --card: #141b21; --primary: #f59e0b; --accent: #0ea5e9; 
@@ -66,7 +66,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 </head>
 <body>
     <nav>
-        <div class="logo">BACnetMSTP2MQTT v3.1 <span>by Z1rc0n1um</span></div>
+        <div class="logo">BACnetMSTP2MQTT v3.2 <span>by Z1rc0n1um</span></div>
         <div id="status-tag" class="badge" style="color:var(--error)">Disconnected</div>
     </nav>
     <div class="tabs">
