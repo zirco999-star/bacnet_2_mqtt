@@ -8,7 +8,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <html lang="fr">
 <head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BACnetMSTP2MQTT v3.3.9 | Console</title>
+    <title>BACnetMSTP2MQTT v3.3 | Console</title>
     <style>
         :root { 
             --bg: #0a0f14; --card: #141b21; --primary: #f59e0b; --accent: #0ea5e9; 
@@ -59,13 +59,14 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         #up-progress { height: 4px; background: #000; border-radius: 2px; margin-top: 10px; display: none; overflow: hidden; }
         #up-bar { width: 0%; height: 100%; background: var(--success); transition: width 0.3s; }
         
+        /* Pass Eye Style */
         .pass-group { position: relative; }
         .eye-btn { position: absolute; right: 8px; bottom: 8px; background: transparent; border: none; color: var(--primary); cursor: pointer; padding: 4px; font-size: 1rem; }
     </style>
 </head>
 <body>
     <nav>
-        <div class="logo">BACnetMSTP2MQTT v3.3.9 <span>by Z1rc0n1um</span></div>
+        <div class="logo">BACnetMSTP2MQTT v3.3 <span>by Z1rc0n1um</span></div>
         <div id="status-tag" class="badge" style="color:var(--error)">Disconnected</div>
     </nav>
     <div class="tabs">
@@ -84,8 +85,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     <div id="s-rssi" class="stat-value">-- dBm</div>
                     <div class="wifi-bar-container"><div id="wifi-bar-fill"></div></div>
                 </div>
-                <div class="stat-item"><div class="stat-label">Bus Activity</div><div id="s-mstp-rb" class="stat-value">0 bytes</div></div>
-                <div class="stat-item"><div class="stat-label">MSTP Frames</div><div id="s-mstp-f" class="stat-value">0 OK / 0 ERR</div></div>
+                <div class="stat-item"><div class="stat-label">Local IP</div><div id="s-ip" class="stat-value">0.0.0.0</div></div>
+                <div class="stat-item"><div class="stat-label">Uptime</div><div id="s-upt" class="stat-value">--:--</div></div>
                 <div class="stat-item"><div class="stat-label">MQTT Node</div><div id="s-mq" class="stat-value" style="color:var(--error)">OFFLINE</div></div>
             </div>
             <div class="card" style="margin-top: 0.75rem;">
@@ -204,8 +205,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             fetch('/api/status').then(r=>r.json()).then(d=>{
                 document.getElementById('s-rssi').innerText=d.rssi+" dBm"; 
                 updateWiFiBar(d.rssi);
-                document.getElementById('s-mstp-rb').innerText = d.mstp_rb + " bytes";
-                document.getElementById('s-mstp-f').innerText = d.mstp_f + " OK / " + d.mstp_e + " ERR";
+                document.getElementById('s-ip').innerText=d.ip;
                 const m=document.getElementById('s-mq'); m.innerText=d.mqtt?"ONLINE":"OFFLINE"; m.style.color=d.mqtt?"var(--success)":"var(--error)";
                 document.getElementById('status-tag').style.color="var(--success)"; document.getElementById('status-tag').innerText="Connected";
             }).catch(()=>{document.getElementById('status-tag').style.color="var(--error)"; document.getElementById('status-tag').innerText="Disconnected";});

@@ -56,3 +56,9 @@ L'environnement WiFi est désormais bétonné. Le travail en autonomie va se con
 - Fix : Réécriture complète de z_mstp.cpp, instanciation sécurisée de la queue dans setup_mstp.
 - Ajout de vérifications (mstp_tx_queue != NULL) avant xQueueReceive/Send.
 - Prêt pour flashage USB (OTA impossible car bootloop).
+
+### [11:35] Phase 2.4 : Safe Start & Diagnostic (v3.4.0)
+- Correction : Déplacement de Serial.begin au début de setup().
+- Sécurisation : Ajout de vTaskDelay(1) dans la boucle MSTP UART timeout.
+- Protection : Vérification systématique du pointeur mstp_tx_queue.
+- Prêt pour flashage USB v3.4.0.

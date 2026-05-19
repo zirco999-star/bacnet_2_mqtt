@@ -29,7 +29,7 @@ uint16_t calc_mstp_data_crc(uint8_t *data, size_t len) {
 // --- EMISSION BAS NIVEAU ---
 void uart_send_frame(uint8_t *buffer, uint16_t length) {
     uart_write_bytes(RS485_UART_PORT, (const char*)buffer, length);
-    uart_wait_tx_done(RS485_UART_PORT, pdMS_TO_TICKS(100));
+    uart_wait_tx_done(RS485_UART_PORT, pdMS_TO_TICKS(50));
 }
 
 void send_pfm(uint8_t target_mac) {
@@ -50,9 +50,9 @@ void send_token(uint8_t target_mac) {
     uart_send_frame(f, 8);
 }
 
-// --- SERVICES APPLICATION ---
+// --- SERVICES APPLICATION (Push to Queue) ---
 void send_who_is() {
-    if (!mstp_tx_queue) return;
+    if (mstp_tx_queue == NULL) return;
     MSTP_TxFrame tx;
     tx.length = 18;
     tx.expect_reply = false;
@@ -68,7 +68,7 @@ void send_who_is() {
 }
 
 void send_write_property(uint8_t target_mac, uint16_t obj_type, uint32_t obj_inst, float value) {
-    if (!mstp_tx_queue) return;
+    if (mstp_tx_queue == NULL) return;
     MSTP_TxFrame tx;
     tx.expect_reply = true;
     int p = 0;
@@ -100,14 +100,12 @@ void mstp_rt_task(void *pvParameters) {
     uint8_t rx_byte;
     uint8_t header[6];
     uint8_t header_idx = 0;
-    uint8_t *data_buf = (uint8_t *)malloc(2048);
+    uint8_t *data_buf = (uint8_t *)malloc(1024);
     uint16_t data_len = 0, data_idx = 0, received_crc16 = 0;
     enum { RX_IDLE, RX_PREAMBLE_55, RX_PREAMBLE_FF, RX_HEADER, RX_DATA, RX_CRC16_L, RX_CRC16_H } state = RX_IDLE;
     uint32_t last_rx_time = millis();
     uint8_t next_station = sysCfg.mac_address;
     uint8_t poll_station = (sysCfg.mac_address + 1) % (sysCfg.max_master + 1);
-
-    Serial.println("[MSTP] Task Started on Core 1");
 
     for (;;) {
         if (uart_read_bytes(RS485_UART_PORT, &rx_byte, 1, pdMS_TO_TICKS(1)) > 0) {
@@ -135,7 +133,7 @@ void mstp_rt_task(void *pvParameters) {
                                 if (ftype == 0x01 && dest == sysCfg.mac_address) send_reply_to_pfm(src);
                                 else if (ftype == 0x02 && dest == sysCfg.mac_address) next_station = src;
                             }
-                            if (data_len > 0 && data_len <= 2000) { state = RX_DATA; data_idx = 0; } else state = RX_IDLE;
+                            if (data_len > 0 && data_len <= 1000) { state = RX_DATA; data_idx = 0; } else state = RX_IDLE;
                         } else { mstpStats.crc_header_errors++; state = RX_IDLE; }
                     }
                     break;
@@ -149,19 +147,18 @@ void mstp_rt_task(void *pvParameters) {
                     break;
             }
         } else {
-            if (millis() - last_rx_time > 500) {
+            if (millis() - last_rx_time > 1000) {
                 last_rx_time = millis();
                 poll_station = (poll_station + 1) % (sysCfg.max_master + 1);
                 if (poll_station == sysCfg.mac_address) poll_station = (poll_station + 1) % (sysCfg.max_master + 1);
                 send_pfm(poll_station);
             }
-            vTaskDelay(pdMS_TO_TICKS(1)); // Anti-Watchdog
+            vTaskDelay(pdMS_TO_TICKS(1));
         }
     }
 }
 
 void setup_mstp() {
-    Serial.println("[MSTP] Configuring GPIO and UART...");
     gpio_reset_pin(GPIO_NUM_47);
     gpio_set_direction(GPIO_NUM_47, GPIO_MODE_OUTPUT);
     gpio_set_level(GPIO_NUM_47, 1); 
@@ -171,9 +168,8 @@ void setup_mstp() {
     uart_set_pin(RS485_UART_PORT, TX_PIN, RX_PIN, RTS_PIN, UART_PIN_NO_CHANGE);
     uart_set_mode(RS485_UART_PORT, UART_MODE_RS485_HALF_DUPLEX);
     
-    Serial.println("[MSTP] Creating TX Queue...");
-    mstp_tx_queue = xQueueCreate(10, sizeof(MSTP_TxFrame));
-    
-    Serial.println("[MSTP] Starting RT Task...");
-    xTaskCreatePinnedToCore(mstp_rt_task, "MSTP_FSM", 8192, NULL, 10, NULL, 1);
+    if (mstp_tx_queue == NULL) {
+        mstp_tx_queue = xQueueCreate(10, sizeof(MSTP_TxFrame));
+    }
+    xTaskCreatePinnedToCore(mstp_rt_task, "MSTP_FSM", 4096, NULL, 10, NULL, 1);
 }

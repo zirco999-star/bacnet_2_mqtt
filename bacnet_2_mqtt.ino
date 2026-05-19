@@ -1,6 +1,6 @@
 /******************************************************************************
 *  PROJET BACnetMSTP2MQTT - by Z1rc0n1um
-*  Version 3.4 - SAFE START & DIAGNOSTIC
+*  Version 3.1 - ATOMIC WIPE & UI REFINEMENT (Eye Toggle)
 *****************************************************************************/
 #include "z_config.h"
 #include "z_logger.h"
@@ -21,29 +21,22 @@ bool pending_reboot = false;
 uint32_t reboot_timer = 0;
 
 void setup() {
-    Serial.begin(115200);
-    delay(2000); // Laisser le temps à l'USB JTAG de se stabiliser
-    
-    Serial.println("\n\n#########################################");
-    Serial.println("# BACnetMSTP2MQTT v3.4 Starting...      #");
-    Serial.println("#########################################");
-    
-    // Initialisation sécurisée du WiFi (après Serial)
+    // KILL AUTO-CONNECT IMMEDIAT (Antidote CCMP Replay)
     WiFi.persistent(false);
-    WiFi.mode(WIFI_OFF);
     WiFi.disconnect(true, true);
     
-    Serial.println("[BOOT] Initialisation Log system...");
+    Serial.begin(115200);
+    delay(1000); 
+    
+    Serial.println("\n\n#########################################");
+    Serial.println("# BACnetMSTP2MQTT v3.3 Starting...      #");
+    Serial.println("#########################################");
+    
     init_log_system();
-    
-    Serial.println("[BOOT] Initialisation Network...");
     setup_network_infrastructure();
-    
-    Serial.println("[BOOT] Initialisation MS/TP...");
     setup_mstp();
     
-    log_to_web(1, "BACnetMSTP2MQTT v3.4 pret.");
-    Serial.println("[BOOT] System Ready.");
+    log_to_web(1, "BACnetMSTP2MQTT v3.3 pret.");
 }
 
 void loop() {
