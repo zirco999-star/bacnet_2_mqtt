@@ -25,3 +25,17 @@ L'environnement WiFi est désormais bétonné. Le travail en autonomie va se con
 1. Toujours utiliser `curl` pour vérifier l'état de l'ESP32 avant et après un flash OTA.
 2. Garder le niveau de log à DEBUG (3) pour la Phase 1.
 3. Ne jamais modifier la config WiFi (SSID/Pass) sauf demande explicite.
+
+## 📅 Travail en Autonomie - Début de Nuit
+- **Objectif** : Phase 1 - Moteur de Capture MS/TP (v3.3.x).
+- **Status** : En cours.
+- **Dernier Check** : IP 192.168.1.50 stable.
+### [04:25] Phase 1.1 : Raffinement CRC et FSM
+- Analyse des traces Wireshark ECB203 : Validation des types de trames (5, 6, 7).
+- Extraction des constantes temporelles : T_NO_TOKEN (500ms), T_USAGE (15ms), T_REPLY (250ms).
+- Mise à jour de z_mstp.cpp avec les algorithmes CRC prouvés du projet legacy.
+- Ajout d'une protection PSRAM pour le buffer de données (2048 bytes).
+### [04:35] Diagnostic Sniffer (v3.3.2)
+- Constat : mstp_f = 0. Le bus ne semble pas décodé.
+- Hypothèse : Mauvais baudrate ou UART non réactif.
+- Action : Ajout d'un compteur de "Raw Bytes" pour vérifier l'activité électrique du bus RS485.
