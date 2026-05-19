@@ -23,7 +23,7 @@ void load_configuration() {
     sysCfg.target_mac = 4;
     sysCfg.max_master = 127;
     sysCfg.polling_interval = 5000;
-    sysCfg.log_level = 2;
+    sysCfg.log_level = 3; // DEBUG VERBOSE
     strncpy(sysCfg.admin_user, "admin", 31);
     strncpy(sysCfg.admin_pass, "admin1234", 63);
 
@@ -53,7 +53,10 @@ bool is_authenticated(AsyncWebServerRequest *request) {
 void setup_network_infrastructure() {
     load_configuration();
     
-    // RESET HARD (Nettoyage NVS pour tuer le CCMP Replay)
+    // ACTIVE LE DEBUG IDF POUR LE WIFI
+    esp_log_level_set("wifi", ESP_LOG_DEBUG);
+    esp_log_level_set("esp_netif", ESP_LOG_DEBUG);
+
     WiFi.persistent(false);
     WiFi.disconnect(true, true);
     WiFi.mode(WIFI_OFF);
@@ -68,16 +71,14 @@ void setup_network_infrastructure() {
         is_ap_mode = false;
         WiFi.mode(WIFI_STA);
         
-        // --- CONFIGURATION STRICTE WPA2 (No PMF) ---
         esp_wifi_set_storage(WIFI_STORAGE_RAM);
         esp_wifi_set_ps(WIFI_PS_NONE);
         
         wifi_config_t conf;
         esp_wifi_get_config(WIFI_IF_STA, &conf);
-        conf.sta.pmf_cfg.capable = false;  // ON REFUSE LE PMF (Cure contre le CCMP Replay)
+        conf.sta.pmf_cfg.capable = false; 
         conf.sta.pmf_cfg.required = false;
         esp_wifi_set_config(WIFI_IF_STA, &conf);
-        // -------------------------------------------
 
         if (sysCfg.static_ip) {
             IPAddress ip, gw, sn;
@@ -86,17 +87,17 @@ void setup_network_infrastructure() {
             }
         }
         
-        log_to_web(1, "WiFi: Lancement connexion a [%s]...", sysCfg.wifi_ssid);
+        log_to_web(3, "WiFi DEBUG: SSID=%s, Pass=%s", sysCfg.wifi_ssid, sysCfg.wifi_pass);
+        log_to_web(1, "WiFi: Lancement connexion asynchrone...");
         WiFi.begin(sysCfg.wifi_ssid, sysCfg.wifi_pass);
         
-        // Démarrage du monitoring asynchrone
         connection_start_ms = millis();
         connection_active = true;
     }
 
     ArduinoOTA.begin();
 
-    // API
+    // ROUTES API
     webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         JsonDocument doc;
         doc["rssi"] = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
@@ -113,13 +114,7 @@ void setup_network_infrastructure() {
         doc["ssid"] = String(sysCfg.wifi_ssid);
         doc["static_ip"] = sysCfg.static_ip;
         doc["local_ip"] = String(sysCfg.local_ip);
-        doc["gateway"] = String(sysCfg.gateway);
-        doc["subnet"] = String(sysCfg.subnet);
         doc["mac"] = sysCfg.mac_address;
-        doc["target"] = sysCfg.target_mac;
-        doc["mq_host"] = String(sysCfg.mqtt_server);
-        doc["mq_port"] = sysCfg.mqtt_port;
-        doc["mq_pref"] = String(sysCfg.mqtt_prefix);
         doc["log_lvl"] = sysCfg.log_level;
         String res; serializeJson(doc, res);
         request->send(200, "application/json", res);
@@ -131,8 +126,7 @@ void setup_network_infrastructure() {
         if(request->hasParam("pass", true)) strncpy(sysCfg.wifi_pass, request->getParam("pass", true)->value().c_str(), 63);
         sysCfg.static_ip = request->hasParam("static_ip", true);
         if(request->hasParam("local_ip", true)) strncpy(sysCfg.local_ip, request->getParam("local_ip", true)->value().c_str(), 15);
-        if(request->hasParam("gateway", true)) strncpy(sysCfg.gateway, request->getParam("gateway", true)->value().c_str(), 15);
-        if(request->hasParam("subnet", true)) strncpy(sysCfg.subnet, request->getParam("subnet", true)->value().c_str(), 15);
+        if(request->hasParam("log_lvl", true)) sysCfg.log_level = request->getParam("log_lvl", true)->value().toInt();
         save_configuration();
         request->send(200, "text/plain", "OK. Reboot...");
         pending_reboot = true; reboot_timer = millis();
@@ -142,16 +136,6 @@ void setup_network_infrastructure() {
         if(!is_authenticated(request)) return;
         request->send(200, "text/plain", "Rebooting...");
         pending_reboot = true; reboot_timer = millis();
-    });
-
-    webServer.on("/update", HTTP_POST, [](AsyncWebServerRequest *request) {
-        if(!is_authenticated(request)) return;
-        request->send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
-        if(!Update.hasError()) { pending_reboot = true; reboot_timer = millis(); }
-    }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
-        if (!index) Update.begin(UPDATE_SIZE_UNKNOWN);
-        if (!Update.hasError()) Update.write(data, len);
-        if (final) Update.end(true);
     });
 
     webServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -166,15 +150,13 @@ void handle_network() {
     ArduinoOTA.handle();
     if (pending_reboot && (millis() - reboot_timer > 2000)) ESP.restart();
 
-    // Surveillance asynchrone de la connexion WiFi
     if (connection_active) {
         int status = WiFi.status();
-        
         if (status == WL_CONNECTED) {
             log_to_web(1, "WiFi Connecté ! IP: %s (Signal: %d dBm)", WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
             connection_active = false;
-        } else if (millis() - connection_start_ms > 40000) { // Timeout 40s
-            log_to_web(0, "WiFi Timeout. Activation Mode RECOVERY.");
+        } else if (millis() - connection_start_ms > 40000) {
+            log_to_web(0, "WiFi Timeout (40s). Mode RECOVERY.");
             is_ap_mode = true;
             WiFi.mode(WIFI_AP);
             WiFi.softAP("BACnetMSTP2MQTT_RECOVERY", "admin1234");
@@ -183,7 +165,7 @@ void handle_network() {
         
         if (status != last_wifi_status) {
             last_wifi_status = status;
-            Serial.printf("[WiFi] Status change: %d\n", status);
+            log_to_web(3, "WiFi Status: %d", status);
         }
     }
 
