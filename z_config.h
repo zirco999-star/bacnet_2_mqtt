@@ -22,7 +22,7 @@ struct Config {
     char wifi_pass[64] = "";
     bool static_ip = false;
     char local_ip[16] = "192.168.1.50";
-    char gateway[16] = "192.168.1.1";
+    char gateway[16] = "192.168.1.254";
     char subnet[16] = "255.255.255.0";
     char mqtt_server[32] = "";
     uint16_t mqtt_port = 1883;
@@ -33,7 +33,7 @@ struct Config {
     uint8_t target_mac = 4;
     uint8_t max_master = 127;
     uint32_t polling_interval = 5000;
-    uint8_t log_level = 3; // FORCE DEBUG PAR DÉFAUT
+    uint8_t log_level = 3; 
     char admin_user[32] = "admin";
     char admin_pass[64] = "admin1234";
 };

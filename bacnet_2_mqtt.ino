@@ -1,13 +1,12 @@
 /******************************************************************************
 *  PROJET BACnetMSTP2MQTT - by Z1rc0n1um
-*  Version 2.9 - Async Connection & PMF Disable
+*  Version 3.1 - ATOMIC WIPE & UI REFINEMENT (Eye Toggle)
 *****************************************************************************/
 #include "z_config.h"
 #include "z_logger.h"
 #include "z_network.h"
 #include "z_mstp.h"
 
-// Définitions des variables globales
 Config sysCfg;
 Preferences preferences; 
 AsyncWebServer webServer(WEB_PORT);
@@ -22,6 +21,7 @@ bool pending_reboot = false;
 uint32_t reboot_timer = 0;
 
 void setup() {
+    // KILL AUTO-CONNECT IMMEDIAT (Antidote CCMP Replay)
     WiFi.persistent(false);
     WiFi.disconnect(true, true);
     
@@ -29,14 +29,14 @@ void setup() {
     delay(1000); 
     
     Serial.println("\n\n#########################################");
-    Serial.println("# BACnetMSTP2MQTT v2.9 Starting...      #");
+    Serial.println("# BACnetMSTP2MQTT v3.1 Starting...      #");
     Serial.println("#########################################");
     
     init_log_system();
     setup_network_infrastructure();
     setup_mstp();
     
-    log_to_web(1, "BACnetMSTP2MQTT v2.9 pret.");
+    log_to_web(1, "BACnetMSTP2MQTT v3.1 pret.");
 }
 
 void loop() {

@@ -8,7 +8,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <html lang="fr">
 <head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BACnet-MS/TP_2_MQTT v2.3.4 | Console</title>
+    <title>BACnetMSTP2MQTT v3.1 | Console</title>
     <style>
         :root { 
             --bg: #0a0f14; --card: #141b21; --primary: #f59e0b; --accent: #0ea5e9; 
@@ -21,7 +21,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         @media(min-width: 640px) { .logo { font-size: 1.1rem; } .logo span { display: inline; font-size: 0.7rem; } }
         .badge { border: 1px solid currentColor; padding: 0.1rem 0.4rem; font-size: 0.6rem; font-weight: bold; white-space: nowrap; }
         .tabs { display: flex; background: #000; border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
-        .tabs::-webkit-scrollbar { display: none; }
         .tab-btn { padding: 0.8rem 1rem; background: #141b21; border: none; color: var(--muted); font-size: 0.7rem; font-weight: bold; cursor: pointer; text-transform: uppercase; border-top: 2px solid transparent; transition: all 0.1s; white-space: nowrap; flex-shrink: 0; }
         .tab-btn.active { background: var(--bg); color: var(--primary); border-top-color: var(--primary); }
         .container { max-width: 1100px; margin: 1rem auto; padding: 0 0.75rem; }
@@ -37,7 +36,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         .stat-label { font-size: 0.55rem; color: var(--muted); margin-bottom: 0.2rem; }
         .stat-value { font-size: 0.85rem; font-weight: bold; color: var(--success); overflow: hidden; text-overflow: ellipsis; }
         
-        /* Bargraph Signal WiFi */
         .wifi-bar-container { width: 100%; height: 6px; background: #000; border-radius: 3px; margin-top: 5px; overflow: hidden; border: 1px solid #1e293b; }
         #wifi-bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--error), var(--primary), var(--success)); transition: width 0.5s ease-in-out; }
 
@@ -53,18 +51,22 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         button.btn-cmd:hover { background: var(--primary); color: #000; }
         button.btn-danger { border-color: var(--error); color: var(--error); margin-top: 0.5rem; }
         button.btn-danger:hover { background: var(--error); color: #fff; }
-        #console-out { background: #05070a; color: #4ade80; height: 250px; overflow-y: auto; padding: 0.5rem; font-size: 0.65rem; border: 1px solid #1e293b; line-height: 1.3; }
+        #console-out { background: #05070a; color: #4ade80; height: 350px; overflow-y: auto; padding: 0.5rem; font-size: 0.65rem; border: 1px solid #1e293b; line-height: 1.3; }
         .obj-table { width: 100%; border-collapse: collapse; font-size: 0.6rem; }
         .obj-table th { text-align: left; color: var(--muted); border-bottom: 1px solid var(--border); padding: 0.4rem; }
         .obj-table td { padding: 0.4rem; border-bottom: 1px solid #1e293b; }
         .scroll-x { overflow-x: auto; }
         #up-progress { height: 4px; background: #000; border-radius: 2px; margin-top: 10px; display: none; overflow: hidden; }
         #up-bar { width: 0%; height: 100%; background: var(--success); transition: width 0.3s; }
+        
+        /* Pass Eye Style */
+        .pass-group { position: relative; }
+        .eye-btn { position: absolute; right: 8px; bottom: 8px; background: transparent; border: none; color: var(--primary); cursor: pointer; padding: 4px; font-size: 1rem; }
     </style>
 </head>
 <body>
     <nav>
-        <div class="logo">BACnet-MS/TP_2_MQTT v2.3.4 <span>by Z1rc0n1um</span></div>
+        <div class="logo">BACnetMSTP2MQTT v3.1 <span>by Z1rc0n1um</span></div>
         <div id="status-tag" class="badge" style="color:var(--error)">Disconnected</div>
     </nav>
     <div class="tabs">
@@ -84,11 +86,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     <div class="wifi-bar-container"><div id="wifi-bar-fill"></div></div>
                 </div>
                 <div class="stat-item"><div class="stat-label">Local IP</div><div id="s-ip" class="stat-value">0.0.0.0</div></div>
-                <div class="stat-item"><div class="stat-label">MS/TP Mode</div><div class="stat-value">TRANSCEIVER</div></div>
+                <div class="stat-item"><div class="stat-label">Uptime</div><div id="s-upt" class="stat-value">--:--</div></div>
                 <div class="stat-item"><div class="stat-label">MQTT Node</div><div id="s-mq" class="stat-value" style="color:var(--error)">OFFLINE</div></div>
             </div>
             <div class="card" style="margin-top: 0.75rem;">
-                <div class="card-header"><span>Kernel Stream</span></div>
+                <div class="card-header"><span>Kernel Stream (Debug Level)</span></div>
                 <div id="console-out"></div>
             </div>
         </div>
@@ -96,9 +98,17 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         <div id="t-wifi" class="tab-content">
             <div class="card"><div class="card-header">WiFi Interface</div><div class="card-body"><form id="f-wifi">
                 <div class="form-group"><label>SSID</label><input type="text" name="ssid" id="in-ssid"></div>
-                <div class="form-group"><label>Password</label><input type="password" name="pass"></div>
+                <div class="form-group pass-group">
+                    <label>Password</label>
+                    <input type="password" name="pass" id="in-pass">
+                    <button type="button" class="eye-btn" onclick="togglePass('in-pass')">👁</button>
+                </div>
                 <label class="checkbox-row"><input type="checkbox" name="static_ip" id="in-static" onchange="document.getElementById('static-box').style.display=this.checked?'grid':'none'"><span>Static IP Assignment</span></label>
-                <div id="static-box" class="full-w grid" style="display:none; grid-template-columns: 1fr 1fr; gap: 0.75rem;"><div class="form-group"><label>Address</label><input type="text" name="local_ip" id="in-ip"></div><div class="form-group"><label>Gateway</label><input type="text" name="gateway" id="in-gw"></div><div class="form-group"><label>Mask</label><input type="text" name="subnet" id="in-sn"></div></div>
+                <div id="static-box" class="full-w grid" style="display:none; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                    <div class="form-group"><label>Address</label><input type="text" name="local_ip" id="in-ip"></div>
+                    <div class="form-group"><label>Gateway</label><input type="text" name="gateway" id="in-gw"></div>
+                    <div class="form-group"><label>Mask</label><input type="text" name="subnet" id="in-sn"></div>
+                </div>
                 <button type="button" onclick="doSave('f-wifi')" class="btn-cmd full-w">Commit Network Changes</button>
             </form></div></div>
         </div>
@@ -110,24 +120,32 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 <div class="form-group full-w"><label>Max Info Frames</label><input type="text" name="max_m" id="in-maxm"></div>
                 <button type="button" onclick="doSave('f-bac')" class="btn-cmd full-w">Update Stack</button>
             </form></div></div>
-            <div class="card"><div class="card-header">Discovered Objects</div><div class="card-body scroll-x" style="padding:0;"><table class="obj-table"><thead><tr><th>ID</th><th>TYPE</th><th>NAME</th><th>VALUE</th></tr></thead><tbody id="obj-list"><tr><td colspan="4" style="text-align:center; padding:1.5rem; color:var(--muted)">[ SCAN ACTIVE ]</td></tr></tbody></table></div></div>
         </div>
         <!-- MQTT -->
         <div id="t-mq" class="tab-content">
             <div class="card"><div class="card-header">MQTT Broker</div><div class="card-body"><form id="f-mq">
                 <div class="form-group"><label>Server IP</label><input type="text" name="mq_host" id="in-mqh"></div>
                 <div class="form-group"><label>Port</label><input type="text" name="mq_port" id="in-mqp"></div>
+                <div class="form-group"><label>User</label><input type="text" name="mq_user" id="in-mqu"></div>
+                <div class="form-group pass-group">
+                    <label>Password</label>
+                    <input type="password" name="mq_pass" id="in-mqpa">
+                    <button type="button" class="eye-btn" onclick="togglePass('in-mqpa')">👁</button>
+                </div>
                 <div class="form-group full-w"><label>Prefix</label><input type="text" name="mq_pref" id="in-mpre"></div>
                 <button type="button" onclick="doSave('f-mq')" class="btn-cmd full-w">Update Broker</button>
             </form></div></div>
-            <div class="card"><div class="card-header">Publication Map</div><div class="card-body scroll-x" style="padding:0;"><table class="obj-table"><thead><tr><th>TOPIC</th><th>OBJECT</th><th>STATE</th></tr></thead><tbody id="pub-list"><tr><td colspan="3" style="text-align:center; padding:1.5rem; color:var(--muted)">[ NO MAPPINGS ]</td></tr></tbody></table></div></div>
         </div>
         <!-- SYSTEM -->
         <div id="t-sys" class="tab-content">
             <div class="card"><div class="card-header">Engine Control</div><div class="card-body"><form id="f-sys">
                 <div class="form-group full-w"><label>Logs</label><select name="log_lvl" id="in-logl"><option value="0">Fatal</option><option value="1">Warn</option><option value="2">Info</option><option value="3">Debug</option></select></div>
-                <label class="checkbox-row"><input type="checkbox" name="bridge_mode" id="in-bridge"><span>Enable TCP Bridge</span></label>
-                <div class="form-group"><label>Admin User</label><input type="text" name="adm_user" id="in-user"></div><div class="form-group"><label>Admin Password</label><input type="password" name="adm_pass"></div>
+                <div class="form-group"><label>Admin User</label><input type="text" name="adm_user" id="in-user"></div>
+                <div class="form-group pass-group">
+                    <label>Admin Password</label>
+                    <input type="password" name="adm_pass" id="in-adpa">
+                    <button type="button" class="eye-btn" onclick="togglePass('in-adpa')">👁</button>
+                </div>
                 <button type="button" onclick="doSave('f-sys')" class="btn-cmd full-w">Save Config</button>
             </form></div></div>
             <div class="card"><div class="card-header">Firmware Update</div><div class="card-body">
@@ -140,10 +158,15 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         </div>
     </div>
     <script>
+        let ws;
         function openTab(evt, id) {
             const c=document.getElementsByClassName("tab-content"); for(let i=0; i<c.length; i++)c[i].style.display="none";
             const b=document.getElementsByClassName("tab-btn"); for(let i=0; i<b.length; i++)b[i].classList.remove("active");
             document.getElementById(id).style.display="block"; evt.currentTarget.classList.add("active");
+        }
+        function togglePass(id) {
+            const x = document.getElementById(id);
+            x.type = x.type === "password" ? "text" : "password";
         }
         function doSave(fid) {
             fetch('/save', {method:'POST', body:new FormData(document.getElementById(fid))})
@@ -159,9 +182,21 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             xhr.onload = () => { alert(xhr.status === 200 ? "Success! Rebooting..." : "Update Failed"); location.reload(); };
             xhr.send(fd);
         }
+        function initWS() {
+            ws = new WebSocket(`ws://${window.location.host}/ws-logs`);
+            ws.onmessage = (e) => {
+                const c = document.getElementById('console-out');
+                const line = document.createElement('div');
+                line.textContent = e.data;
+                c.appendChild(line);
+                c.scrollTop = c.scrollHeight;
+                if(c.childNodes.length > 500) c.removeChild(c.firstChild);
+            };
+            ws.onclose = () => setTimeout(initWS, 2000);
+        }
         function updateWiFiBar(rssi) {
             let q = 0;
-            if (rssi <= -100) q = 0;
+            if (rssi <= -100 || rssi == 0) q = 0;
             else if (rssi >= -50) q = 100;
             else q = 2 * (rssi + 100);
             document.getElementById('wifi-bar-fill').style.width = q + '%';
@@ -184,29 +219,13 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('in-gw').value = c.gateway || "";
                 document.getElementById('in-sn').value = c.subnet || "";
                 document.getElementById('in-mac').value = c.mac || "";
-                document.getElementById('in-target').value = c.target || "";
-                document.getElementById('in-maxm').value = c.max_m || "";
-                document.getElementById('in-mqh').value = c.mq_host || "";
-                document.getElementById('in-mqp').value = c.mq_port || "";
-                document.getElementById('in-mpre').value = c.mq_pref || "";
                 document.getElementById('in-logl').value = c.log_lvl;
-                document.getElementById('in-bridge').checked = c.bridge;
-                document.getElementById('in-user').value = c.adm_user || "admin";
+                document.getElementById('in-user').value = c.adm_user || "";
             });
         }
-        let ws;
-        function connectWS() {
-            ws = new WebSocket('ws://' + window.location.hostname + '/ws-logs');
-            ws.onmessage = (e) => {
-                const term = document.getElementById('console-out');
-                const line = document.createElement('div');
-                line.textContent = e.data; term.appendChild(line);
-                term.scrollTop = term.scrollHeight;
-                if(term.children.length > 200) term.removeChild(term.firstChild);
-            };
-            ws.onclose = () => setTimeout(connectWS, 2000);
-        }
-        window.onload=()=>{ loadConfig(); updateStatus(); connectWS(); setInterval(updateStatus, 5000); };
+        initWS();
+        setInterval(updateStatus, 3000);
+        setTimeout(loadConfig, 1000);
     </script>
 </body>
 </html>
