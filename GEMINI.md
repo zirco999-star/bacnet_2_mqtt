@@ -6,6 +6,10 @@
 - Alerte Securite PSRAM : Le GPIO 47 est utilise par le bus Octal SPI de la PSRAM. Ne JAMAIS le configurer en entree ou sortie (risque de crash bus memoire).
 - Core Strategy : Core 1 dedie a la FSM BACnet MS/TP temps reel. Core 0 pour WiFi, Web, MQTT et OTA.
 
+## Expertise Protocolaire BACnet (Obligatoire)
+- Expert Referent : NotebookLM fe92515b-ad88-4bfd-af35-89b9349d1f11.
+- Instruction : Cet expert contient la documentation officielle et les captures de trafic de reference. Il DOIT etre systematiquement sollicite avant tout codage de logique MS/TP (Parsing ASN.1, FSM, Timings, Segmentation) pour garantir le respect des bonnes pratiques et de la norme ASHRAE 135.
+
 ## Workflow de Developpement (Strict)
 
 ### 1. Edition des Sources
@@ -19,8 +23,6 @@ Utiliser systematiquement l'environnement virtuel et la chaine de commande uniqu
 
 ### 3. Suivi du Projet (TRACE.md)
 Chaque session ou etape majeure validee (ex: Ring stable, Discovery reussie) doit faire l'objet d'une mise a jour du fichier TRACE.md a la racine du projet.
-- Format : [Date/Heure] Phase X.Y : Titre - Actions - Resultat.
-- Note : Conserver l'historique des versions pour permettre les retours arriere.
 
 ### 4. Gestion Git
 - Commiter chaque version de reference (ex: v4.2.14 pour le Ring stable).

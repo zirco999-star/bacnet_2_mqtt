@@ -34,3 +34,25 @@
 1. Timing CRITIQUE : L'automate ECB-203 met ~240ms a repondre. Toujours maintenir l'attente de 280ms sans bloquer la boucle uart_read_bytes.
 2. PSRAM Warning : Ne JAMAIS toucher au GPIO 47 (bus memoire Octal SPI).
 3. Logs : Utiliser listen_logs_v2.py via le venv pour le monitoring.
+
+### 2026-05-19 - v4.2.25 "Master Discovery"
+- **Problème** : Blocage du scan à l'index 62/98. Confusion entre la valeur 0x3E (62) et l'Opening Tag 3 (0x3E).
+- **Solution** : Implémentation d'un parser ASN.1 robuste basé sur la consommation TLV (Tag-Length-Value) contextuelle.
+- **Détails** : 
+  - Ajout de la structure `BACnetTag` et de la fonction `get_tag()`.
+  - Gestion des tags étendus et des longueurs étendues.
+  - Séquençage strict de l'APDU Complex-ACK.
+  - Validation via l'expert NotebookLM fe92515b.
+- **Action** : Déploiement OTA et vérification du franchissement de l'index 62.
+
+### Phase 2.25 : Master Discovery - Parser ASN.1 TLV (v4.2.25)
+- Action : Implementation du parser TLV robuste pour gerer l ambiguite de l index 62 (0x3E).
+- Expertise : Validation de la structure recursive par NotebookLM fe92515b.
+- Deploiement : OTA via espota.py.
+- Resultat attendu : Enumeration complete des 98 objets sans decalage d octets.
+
+### Phase 2.28 : VICTOIRE - Scan Complet 98/98 (v4.2.28)
+- Action : Integration du "Master Parser" TLV ASHRAE 135 conforme.
+- Resultat : Franchissement de l index 62 (0x3E) reussi.
+- Etat final : 98 objets decouverts et listes dans le cache.
+- Stabilite : Ring 1 <-> 4 maintenu pendant tout le scan (attente 280ms non-bloquante).

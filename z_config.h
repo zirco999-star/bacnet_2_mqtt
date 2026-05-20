@@ -10,7 +10,7 @@
 #include <PubSubClient.h>
 #include <ArduinoOTA.h>
 
-#define VERSION_GLOBAL "v4.2.24.1"
+#define VERSION_GLOBAL "v4.2.28"
 
 #define RX_PIN 18
 #define TX_PIN 17
