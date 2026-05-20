@@ -1,0 +1,8 @@
+profiles:
+  zircon1um_esp32s3:
+    fqbn: esp32:esp32:esp32s3:UploadSpeed=921600,USBMode=hwcdc,CDCOnBoot=cdc,MSCOnBoot=default,DFUOnBoot=default,UploadMode=default,CPUFreq=240,FlashMode=qio,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,DebugLevel=debug,PSRAM=opi,LoopCore=1,EventsCore=1,EraseFlash=all,JTAGAdapter=builtin,ZigbeeMode=default
+    port: /dev/ttyACM0
+    build-properties:
+      build.extra_flags: "-mfix-esp32-psram-cache-issue -DESP32 -DCORE_DEBUG_LEVEL=3"
+
+default-profile: zircon1um_esp32s3

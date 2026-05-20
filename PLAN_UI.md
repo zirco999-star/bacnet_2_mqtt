@@ -1,32 +1,34 @@
-# Plan d'implémentation : Phase 0.1 - Enrichissement UI & Persistance
+# Plan de Refonte de l'Interface Utilisateur (UI v4.4.0+)
 
 ## Objectif
-Améliorer l'expérience utilisateur et la fiabilité de la configuration en assurant une remontée d'information précise et une persistance visuelle des réglages.
+Créer une interface web "Produit Fini", moderne, responsive et intuitive pour superviser la passerelle BACnet.
 
-## 1. Backend (Logiciel ESP32)
-*   **API de Configuration (`/api/config`)** :
-    *   Créer un endpoint JSON renvoyant la structure `sysCfg` actuelle (masquage du mot de passe pour la sécurité).
-    *   Permettre au frontend de pré-remplir les champs (SSID, IP Statique, etc.).
-*   **API de Statut (`/api/status`)** :
-    *   Créer un endpoint JSON (ou message WS structuré) pour le RSSI, l'IP réelle, le Heap et l'Uptime.
-*   **Route `/save` enrichie** :
-    *   Réintégrer la capture des champs `gateway` et `subnet`.
-    *   Ajouter une validation de format IP avant sauvegarde.
+## 1. Architecture & Design (Look & Feel)
+- **Style Industriel Sombre** : Conserver la palette actuelle (#0b1120, #1e293b, #f59e0b) mais améliorer l'espacement et la hiérarchie.
+- **Design Adaptatif** : Utilisation de Flexbox/Grid pour une lisibilité parfaite sur smartphone (mobile-first).
+- **Zéro Dépendance** : CSS pur (pas de Bootstrap/Tailwind externe) pour garantir le fonctionnement en mode AP.
 
-## 2. Frontend (Interface Web v2.2)
-*   **Chargement Dynamique** :
-    *   Au chargement de la page, appeler `/api/config` pour remplir le formulaire.
-*   **Correction du Dashboard** :
-    *   Remplacer l'extraction par Regex (fragile) par la consommation du JSON `/api/status`.
-*   **Formulaire Complet** :
-    *   Restaurer les champs : Passerelle, Masque, Préfixe MQTT, et Intervalle de Polling.
-    *   Ajouter un indicateur visuel de "Sauvegarde en cours".
+## 2. Fonctionnalités de Gestion des Objets
+- **Tableau Dynamique** :
+    - Remplissage par API JSON `/api/objects`.
+    - Colonnes : Activation (Checkbox), Nom (Éditable), Type, Valeur actuelle.
+- **Persistance** : 
+    - Le flag `enabled` (sauvegardé en NVS) contrôle si l'objet est pollé par le Core 1.
+    - Édition des noms : Enregistrement dans une nouvelle structure NVS (ou concaténation dans la structure actuelle).
+- **Contrôle Global** :
+    - Switch global "MQTT Enable" en header pour activer/désactiver le pont sans redémarrage.
 
-## 3. Robustesse WiFi
-*   **Validation de l'IP Statique** :
-    *   S'assurer que si `static_ip` est activé mais que les champs sont vides, le système retombe proprement en DHCP au lieu de 0.0.0.0.
+## 3. Maintenance Système
+- **Bouton RESET CACHE** : 
+    - Action sécurisée par `confirm()` JavaScript.
+    - endpoint `/api/reset_cache` (POST).
+    - Redémarrage automatique du système.
+- **Export EDE (CSV)** : 
+    - Bouton "Export" téléchargeant la liste des objets découverts au format EDE.
+    - endpoint `/api/export_ede` (GET).
 
-## Prochaines étapes (après validation) :
-1.  Mise à jour de `z_config.h` (si champs manquants).
-2.  Mise à jour de `z_network.cpp` (API JSON + Route Save).
-3.  Mise à jour de `z_ui.h` (Formulaire complet + Logic JS).
+## 4. Roadmap de Développement
+1. **Implémentation Backend** : Finaliser l'API JSON (Vérifier la mémoire stack de `JsonDocument`).
+2. **Implémentation Frontend** : Remplacer `z_ui.h` par le nouveau template HTML/JS.
+3. **Tests UI** : Valider l'édition des noms et la réactivité du tableau sur mobile.
+4. **Validation Finale** : Test de l'export EDE avec un outil comme YABE pour vérifier la structure CSV.
