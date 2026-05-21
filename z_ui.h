@@ -291,7 +291,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 }
                 document.getElementById('s-ip').innerText=d.ip;
                 document.getElementById('s-sn').innerText="M: " + (d.sn || "255.255.255.0");
-                document.getElementById('s-tokens').innerHTML=d.mstp_t + ' <span style="font-size:0.6rem; opacity:0.5">TOKENS</span>';
+                document.getElementById('s-tokens').innerHTML=(d.mstp_cnt || 0) + ' <span style="font-size:0.6rem; opacity:0.5">TOKENS</span>';
                 document.getElementById('s-mqtt-host').innerText = d.mqh || "UNDEFINED";
                 const mqS = document.getElementById('s-mqtt-status');
                 mqS.innerText = d.mqtt ? "SYNC" : "OFFLINE";
@@ -300,7 +300,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 
                 const bTag = document.getElementById('b-tag');
                 const mTag = document.getElementById('m-tag');
-                bTag.className = 'badge ' + (d.mstp_t > 0 ? 'badge-ok' : 'badge-fail');
+                bTag.className = 'badge ' + (d.mstp_t ? 'badge-ok' : 'badge-fail');
                 mTag.className = 'badge ' + (d.mqtt ? 'badge-ok' : 'badge-fail');
             });
         }

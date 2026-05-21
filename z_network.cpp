@@ -13,6 +13,7 @@ extern AsyncWebSocket ws;
 static uint32_t wifi_connect_start = 0;
 static bool wifi_fallback_active = false;
 
+// FIX v4.5.25: Envoi WebSocket systématique si client connecté
 void z_log(const char* format, ...) {
     char loc_buf[256];
     va_list arg;
@@ -20,7 +21,7 @@ void z_log(const char* format, ...) {
     vsnprintf(loc_buf, sizeof(loc_buf), format, arg);
     va_end(arg);
     printf("%s", loc_buf); 
-    if (WiFi.status() == WL_CONNECTED && !is_ap_mode && ws.count() > 0) {
+    if (ws.count() > 0) {
         ws.textAll(loc_buf);
     }
 }
@@ -153,6 +154,7 @@ void setup_network_infrastructure() {
     if (strlen(sysCfg.wifi_ssid) == 0) {
         is_ap_mode = true; WiFi.mode(WIFI_AP);
         WiFi.softAP("ZIRCON-GW-CONFIG", "admin1234");
+        z_log("[WIFI] Mode AP: ZIRCON-GW-CONFIG\n");
     } else {
         is_ap_mode = false; WiFi.mode(WIFI_STA);
         esp_wifi_set_ps(WIFI_PS_NONE);
@@ -160,6 +162,7 @@ void setup_network_infrastructure() {
             IPAddress ip, gw, sn;
             if (ip.fromString(sysCfg.local_ip) && gw.fromString(sysCfg.gateway) && sn.fromString(sysCfg.subnet)) {
                 WiFi.config(ip, gw, sn);
+                z_log("[WIFI] Static IP applied: %s\n", sysCfg.local_ip);
             }
         }
         WiFi.begin(sysCfg.wifi_ssid, sysCfg.wifi_pass);
@@ -197,9 +200,11 @@ void setup_network_infrastructure() {
         doc["rssi"] = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
         doc["ip"] = is_ap_mode ? "192.168.4.1" : WiFi.localIP().toString();
         doc["mqtt"] = is_mqtt_connected();
-        doc["heap"] = ESP.getHeapSize() / 1024;
+        doc["heap"] = ESP.getFreeHeap() / 1024;
         doc["mac_id"] = sysCfg.mac_address;
-        doc["mstp_t"] = bacnetStats.tokens_seen;
+        // BACNET Badge OK if tokens OR RX packets seen
+        doc["mstp_t"] = (bacnetStats.tokens_seen > 0 || bacnetStats.ms_msgs_rx > 0); 
+        doc["mstp_cnt"] = bacnetStats.tokens_seen;
         doc["ssid"] = sysCfg.wifi_ssid;
         doc["static"] = sysCfg.static_ip;
         doc["gw"] = sysCfg.gateway; doc["sn"] = sysCfg.subnet;
@@ -222,13 +227,11 @@ void setup_network_infrastructure() {
     webServer.on("/api/reset_cache", HTTP_POST, [](AsyncWebServerRequest *request) {
         if(!is_authenticated(request)) return;
         z_log("[NVS] Manual cache reset requested\n");
-        // Reset device IDs found in cache
         for (auto& dev : bacnet_network_cache) {
             char ns[16]; snprintf(ns, sizeof(ns), "dev_%lu", (unsigned long)dev.device_id);
             Preferences prefs;
             if (prefs.begin(ns, false)) { prefs.clear(); prefs.end(); }
         }
-        // Force reset the default/current device ID as well
         char ns[16]; snprintf(ns, sizeof(ns), "dev_%lu", (unsigned long)sysCfg.device_id);
         Preferences prefs;
         if (prefs.begin(ns, false)) { prefs.clear(); prefs.end(); }

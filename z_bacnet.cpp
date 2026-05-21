@@ -80,6 +80,7 @@ static bool decode_next_tag(const uint8_t *data, uint16_t *pos, uint16_t max_len
 
 static void uart_tx(const uint8_t *buffer, uint16_t length) {
     uart_write_bytes(RS485_UART_PORT, (const char*)buffer, length);
+    bacnetStats.ms_msgs_tx++;
 }
 
 static void send_mstp_frame(uint8_t target_mac, uint8_t type, const uint8_t* apdu, uint16_t len) {
@@ -108,7 +109,7 @@ static void bacnet_task(void *pv) {
     uint8_t total_objects = 0, current_scan_index = 0, current_invoke_id = 10, current_poll_idx = 0;
     uart_event_t event;
 
-    z_log("[BACNET] Engine v4.5.24 - Platinum Final\n");
+    z_log("[BACNET] Engine v4.5.25 - Platinum Final\n");
 
     for (;;) {
         if (xQueueReceive(uart_evt_queue, (void *)&event, 0) == pdTRUE) {
@@ -122,7 +123,7 @@ static void bacnet_task(void *pv) {
                 if (job.type == JOB_WHO_IS) {
                     scan_done = false; current_scan_index = 0;
                     bacnet_network_cache.clear();
-                    z_log("[BACNET] Manual Scan Triggered\n");
+                    z_log("[BACNET] Manual Scan Triggered (Who-Is)\n");
                 } else if (job.type == JOB_WRITE_PROP) {
                     uint8_t apdu[] = { 0x01, 0x00, 0x00, 0x0F, current_invoke_id++, 0x01, 0x0C, 
                         (uint8_t)((job.obj_type>>2)&0xFF), (uint8_t)((job.obj_type<<6)|(job.obj_instance>>16)), (uint8_t)(job.obj_instance>>8), (uint8_t)job.obj_instance,
@@ -135,10 +136,9 @@ static void bacnet_task(void *pv) {
             }
         }
 
-        // FIX: Polling non-bloquant du registre de statut UART (universel Core 3.x)
         if (state == MSTP_WAIT_TX_DONE) {
             if (uart_wait_tx_done(RS485_UART_PORT, 0) == ESP_OK) {
-                last_req_time = millis(); // T_reply démarre EXACTEMENT maintenant
+                last_req_time = millis();
                 state = IDLE;
             }
         }
@@ -152,6 +152,7 @@ static void bacnet_task(void *pv) {
                     header[header_idx++] = rx_byte;
                     if (header_idx == 6) {
                         if (calc_header_crc(header, 5) == header[5]) {
+                            bacnetStats.ms_msgs_rx++;
                             uint8_t type = header[0], dest = header[1], src = header[2];
                             data_len = (header[3] << 8) | header[4];
                             if (type == 0x00 && dest == sysCfg.mac_address) { has_token = true; token_acquired_time = millis(); }
@@ -161,7 +162,7 @@ static void bacnet_task(void *pv) {
                                 state = MSTP_WAIT_TX_DONE;
                             }
                             if (data_len > 0 && data_len <= 512) { state = DATA; data_idx = 0; } else if(state != MSTP_WAIT_TX_DONE) state = IDLE;
-                        } else state = IDLE;
+                        } else { bacnetStats.errors_crc++; state = IDLE; }
                     }
                     break;
                 case DATA: data_buf[data_idx++] = rx_byte; if (data_idx == data_len) state = CRC16_L; break;
@@ -178,19 +179,24 @@ static void bacnet_task(void *pv) {
                                         if (current_scan_index == 0) {
                                             total_objects = data_buf[pos+1]; bacnetStats.total_objects = total_objects;
                                             current_scan_index = 1; bacnetStats.current_index = 1;
-                                            BACnetDevice d; d.mac_address = 4; d.device_id = 0; d.discovery_done = false; d.enabled = true;
+                                            z_log("[BACNET] Discovery: Found controller at MAC %d with %d objects\n", header[2], total_objects);
+                                            BACnetDevice d; d.mac_address = header[2]; d.device_id = 0; d.discovery_done = false; d.enabled = true;
                                             d.name = "ECB-203"; d.vendor = "Distech Controls";
                                             bacnet_network_cache.push_back(d);
                                         } else {
                                             uint16_t ot = (data_buf[pos+1] << 2) | (data_buf[pos+2] >> 6);
                                             uint32_t oi = ((uint32_t)(data_buf[pos+2] & 0x3F) << 16) | (data_buf[pos+3] << 8) | data_buf[pos+4];
-                                            if (current_scan_index == 1) { target_device_id = oi; bacnet_network_cache[0].device_id = oi; }
+                                            if (current_scan_index == 1) { 
+                                                target_device_id = oi; bacnet_network_cache[0].device_id = oi; 
+                                                z_log("[BACNET] Discovery: Target Device ID identified as %lu\n", (unsigned long)oi);
+                                            }
                                             BACnetObject obj; obj.type = ot; obj.instance = oi; obj.present_value = 0; obj.last_update = 0; obj.enabled = true;
                                             obj.name = "Point_" + String(oi); 
                                             bacnet_network_cache[0].objects.push_back(obj);
                                             current_scan_index++; bacnetStats.current_index = current_scan_index;
                                             if (current_scan_index > total_objects) { 
                                                 scan_done = true; 
+                                                z_log("[BACNET] Discovery: Scan Complete. Persisting %d objects.\n", total_objects);
                                                 extern void save_device_objects(uint32_t device_id);
                                                 save_device_objects(target_device_id); 
                                             }
@@ -255,7 +261,7 @@ static void bacnet_task(void *pv) {
         vTaskDelay(1);
     }
 }
-
+// ... rest of file ...
 void setup_bacnet_engine() {
     bacnet_job_queue = xQueueCreate(10, sizeof(BACnetJob));
     mqtt_publish_queue = xQueueCreate(30, sizeof(MQTTPublishJob));
