@@ -108,7 +108,7 @@ static void bacnet_task(void *pv) {
     uint8_t total_objects = 0, current_scan_index = 0, current_invoke_id = 10, current_poll_idx = 0;
     uart_event_t event;
 
-    z_log("[BACNET] Engine v4.5.23 - Platinum Final\n");
+    z_log("[BACNET] Engine v4.5.24 - Platinum Final\n");
 
     for (;;) {
         if (xQueueReceive(uart_evt_queue, (void *)&event, 0) == pdTRUE) {

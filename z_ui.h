@@ -226,20 +226,13 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         function doSaveMqtt() { fetch('/save', {method:'POST', body:new FormData(document.getElementById('f-mqtt'))}).then(()=>alert("MQTT Saved.")); }
         function doResetCache() { if(confirm("Clear BACnet Cache?")) fetch('/api/reset_cache', {method:'POST'}).then(()=>alert("Cache cleared. Rebooting...")); }
         function doResetFactory() { if(confirm("DANGER: Factory Reset?")) fetch('/api/factory_reset', {method:'POST'}).then(()=>alert("Factory Reset OK. Rebooting to AP mode...")); }
-        function downloadEDE(id) { window.open(`/api/ede?id=${id}`, '_blank'); }
-        function saveDeviceChanges(id) {
-             const block = document.querySelector(`[data-dev="${id}"]`);
-             const rows = block.querySelectorAll('tbody tr');
-             const data = { device_id: id, objects: [] };
-             rows.forEach(r => {
-                 data.objects.push({
-                     inst: parseInt(r.dataset.inst),
-                     type: parseInt(r.dataset.type),
-                     name: r.querySelector('.in-edit').value,
-                     poll: r.querySelector('.poll-sw')?.checked || false
-                 });
-             });
-             fetch('/api/save_objects', {method:'POST', body:JSON.stringify(data), headers:{'Content-Type':'application/json'}}).then(()=>alert("Changes Persisted."));
+        function toggleDevice(id, enabled) {
+            const data = { device_id: id, enabled: enabled, objects: [] };
+            fetch('/api/save_objects', {method:'POST', body:JSON.stringify(data), headers:{'Content-Type':'application/json'}}).then(() => {
+                const block = document.querySelector(`[data-dev="${id}"] table`);
+                if(block) block.style.opacity = enabled ? '1' : '0.4';
+                if(block) block.style.pointerEvents = enabled ? 'auto' : 'none';
+            });
         }
 
         function refreshDiscovery() {
@@ -257,12 +250,12 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                             <div class="header-actions">
                                 <button class="btn btn-s btn-lg" onclick="downloadEDE(${c.device_id})">EDE</button>
                                 <button class="btn btn-p btn-lg" onclick="saveDeviceChanges(${c.device_id})">SAVE</button>
-                                <label class="switch"><input type="checkbox" ${c.enabled?'checked':''}><span class="slider"></span></label>
+                                <label class="switch"><input type="checkbox" ${c.enabled?'checked':''} onchange="toggleDevice(${c.device_id}, this.checked)"><span class="slider"></span></label>
                             </div>
                         </div>
                         <table style="${c.enabled?'':'opacity:0.4;pointer-events:none'}"><thead><tr><th>OBJ</th><th>NAME</th><th>VALUE</th><th>UNIT</th><th>POLL</th></tr></thead><tbody>`;
                     c.objects.forEach(o => {
-                        if(o.type === 8) return; // Skip Device Object
+                        if (o.type === 8) return; // Skip Device Object
                         let tStr = o.type == 0 ? "AI" : o.type == 1 ? "AO" : o.type == 2 ? "AV" : o.type == 3 ? "BI" : o.type == 4 ? "BO" : o.type == 5 ? "BV" : o.type == 13 ? "MSI" : o.type == 14 ? "MSO" : o.type == 19 ? "MSV" : "OBJ";
                         let valStr = (o.val !== null && o.val !== undefined) ? o.val.toFixed(2) : "---";
                         html += `<tr data-inst="${o.inst}" data-type="${o.type}">

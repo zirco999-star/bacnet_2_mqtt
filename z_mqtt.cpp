@@ -113,7 +113,7 @@ void setup_mqtt() {
     if (mqtt_client) {
         esp_mqtt_client_register_event(mqtt_client, (esp_mqtt_event_id_t)ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
         esp_mqtt_client_start(mqtt_client);
-        z_log("[MQTT] Client task initiated (v4.5.22)\n");
+        z_log("[MQTT] Client task initiated (v4.5.24)\n");
     }
 }
 

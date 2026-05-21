@@ -13,16 +13,13 @@ extern AsyncWebSocket ws;
 static uint32_t wifi_connect_start = 0;
 static bool wifi_fallback_active = false;
 
-// FIX v4.5.22: Utilisation de printf() pour un log brut identique à Serial.print
 void z_log(const char* format, ...) {
     char loc_buf[256];
     va_list arg;
     va_start(arg, format);
     vsnprintf(loc_buf, sizeof(loc_buf), format, arg);
     va_end(arg);
-    
-    printf("%s", loc_buf); // Standard C Print (Raw output to Serial)
-    
+    printf("%s", loc_buf); 
     if (WiFi.status() == WL_CONNECTED && !is_ap_mode && ws.count() > 0) {
         ws.textAll(loc_buf);
     }
@@ -156,7 +153,6 @@ void setup_network_infrastructure() {
     if (strlen(sysCfg.wifi_ssid) == 0) {
         is_ap_mode = true; WiFi.mode(WIFI_AP);
         WiFi.softAP("ZIRCON-GW-CONFIG", "admin1234");
-        z_log("[WIFI] Mode AP: ZIRCON-GW-CONFIG\n");
     } else {
         is_ap_mode = false; WiFi.mode(WIFI_STA);
         esp_wifi_set_ps(WIFI_PS_NONE);
@@ -164,7 +160,6 @@ void setup_network_infrastructure() {
             IPAddress ip, gw, sn;
             if (ip.fromString(sysCfg.local_ip) && gw.fromString(sysCfg.gateway) && sn.fromString(sysCfg.subnet)) {
                 WiFi.config(ip, gw, sn);
-                z_log("[WIFI] Static IP applied: %s\n", sysCfg.local_ip);
             }
         }
         WiFi.begin(sysCfg.wifi_ssid, sysCfg.wifi_pass);
@@ -195,51 +190,53 @@ void setup_network_infrastructure() {
         String response; serializeJson(doc, response);
         request->send(200, "application/json", response);
     });
-webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
-    JsonDocument doc;
-    doc["ver"] = VERSION_GLOBAL;
-    doc["rssi"] = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
-    doc["ip"] = is_ap_mode ? "192.168.4.1" : WiFi.localIP().toString();
-    doc["mqtt"] = is_mqtt_connected();
-    doc["heap"] = ESP.getFreeHeap() / 1024;    doc["mac_id"] = sysCfg.mac_address;
-    doc["mstp_t"] = bacnetStats.tokens_seen;
-    doc["ssid"] = sysCfg.wifi_ssid;
-    doc["static"] = sysCfg.static_ip;
-    doc["gw"] = sysCfg.gateway; doc["sn"] = sysCfg.subnet;
-    doc["mqh"] = sysCfg.mqtt_server;
-    doc["mm"] = sysCfg.max_master;
-    doc["did"] = sysCfg.device_id;
-    doc["to"] = sysCfg.apdu_timeout;
-    doc["ret"] = sysCfg.max_retries;
-    String res; serializeJson(doc, res);
-    request->send(200, "application/json", res);
-});
 
-webServer.on("/api/whois", HTTP_POST, [](AsyncWebServerRequest *request) {
-    if(!is_authenticated(request)) return;
-    BACnetJob job; job.type = JOB_WHO_IS;
-    enqueue_bacnet_job(job);
-    request->send(200, "text/plain", "WHO-IS ENQUEUED");
-});
+    webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
+        JsonDocument doc;
+        doc["ver"] = VERSION_GLOBAL;
+        doc["rssi"] = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
+        doc["ip"] = is_ap_mode ? "192.168.4.1" : WiFi.localIP().toString();
+        doc["mqtt"] = is_mqtt_connected();
+        doc["heap"] = ESP.getHeapSize() / 1024;
+        doc["mac_id"] = sysCfg.mac_address;
+        doc["mstp_t"] = bacnetStats.tokens_seen;
+        doc["ssid"] = sysCfg.wifi_ssid;
+        doc["static"] = sysCfg.static_ip;
+        doc["gw"] = sysCfg.gateway; doc["sn"] = sysCfg.subnet;
+        doc["mqh"] = sysCfg.mqtt_server;
+        doc["mm"] = sysCfg.max_master;
+        doc["did"] = sysCfg.device_id;
+        doc["to"] = sysCfg.apdu_timeout;
+        doc["ret"] = sysCfg.max_retries;
+        String res; serializeJson(doc, res);
+        request->send(200, "application/json", res);
+    });
 
-webServer.on("/api/iam", HTTP_POST, [](AsyncWebServerRequest *request) {
-    if(!is_authenticated(request)) return;
-    request->send(200, "text/plain", "I-AM ENQUEUED");
-});
+    webServer.on("/api/whois", HTTP_POST, [](AsyncWebServerRequest *request) {
+        if(!is_authenticated(request)) return;
+        BACnetJob job; job.type = JOB_WHO_IS;
+        enqueue_bacnet_job(job);
+        request->send(200, "text/plain", "WHO-IS ENQUEUED");
+    });
 
-webServer.on("/api/reset_cache", HTTP_POST, [](AsyncWebServerRequest *request) {
-    if(!is_authenticated(request)) return;
-    z_log("[NVS] Manual cache reset requested\n");
-    for (auto& dev : bacnet_network_cache) {
-        char ns[16]; snprintf(ns, sizeof(ns), "dev_%lu", (unsigned long)dev.device_id);
+    webServer.on("/api/reset_cache", HTTP_POST, [](AsyncWebServerRequest *request) {
+        if(!is_authenticated(request)) return;
+        z_log("[NVS] Manual cache reset requested\n");
+        // Reset device IDs found in cache
+        for (auto& dev : bacnet_network_cache) {
+            char ns[16]; snprintf(ns, sizeof(ns), "dev_%lu", (unsigned long)dev.device_id);
+            Preferences prefs;
+            if (prefs.begin(ns, false)) { prefs.clear(); prefs.end(); }
+        }
+        // Force reset the default/current device ID as well
+        char ns[16]; snprintf(ns, sizeof(ns), "dev_%lu", (unsigned long)sysCfg.device_id);
         Preferences prefs;
         if (prefs.begin(ns, false)) { prefs.clear(); prefs.end(); }
-    }
-    bacnet_network_cache.clear();
-    request->send(200, "text/plain", "CACHE CLEARED");
-    pending_reboot = true; reboot_timer = millis();
-});
-
+        
+        bacnet_network_cache.clear();
+        request->send(200, "text/plain", "CACHE CLEARED");
+        pending_reboot = true; reboot_timer = millis();
+    });
 
     webServer.on("/api/save_objects", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
         if(!is_authenticated(request)) return;
@@ -249,6 +246,7 @@ webServer.on("/api/reset_cache", HTTP_POST, [](AsyncWebServerRequest *request) {
             JsonArray objects = doc["objects"];
             for (auto& dev : bacnet_network_cache) {
                 if (dev.device_id == device_id) {
+                    if (doc.containsKey("enabled")) dev.enabled = doc["enabled"].as<bool>();
                     for (JsonObject o : objects) {
                         uint32_t inst = o["inst"];
                         uint16_t type = o["type"];

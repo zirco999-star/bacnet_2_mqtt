@@ -10,7 +10,7 @@
 #include <ArduinoOTA.h>
 #include <mqtt_client.h>
 
-#define VERSION_GLOBAL "v4.5.22"
+#define VERSION_GLOBAL "v4.5.24"
 
 #define RX_PIN 18
 #define TX_PIN 17
