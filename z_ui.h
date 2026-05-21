@@ -8,7 +8,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <html lang="fr">
 <head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BACnet Gateway | v4.5.20</title>
+    <title>BACNET2MQTT - v4.5.22</title>
     <style>
         :root { 
             --bg: #09090b; --card: #18181b; --primary: #3b82f6; --accent: #6366f1; 
@@ -96,8 +96,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <body>
     <nav>
         <div class="logo-box">
-            <a href="https://github.com/zirco999-star" target="_blank" class="logo"><span class="b">BACNET</span><span class="n">2</span><span class="m">MQTT</span></a>
-            <div class="credits">by <a href="https://github.com/zirco999-star" target="_blank">Z1rc01um</a></div>
+            <div style="display:flex; align-items:center; gap:0.5rem">
+                <a href="https://github.com/zirco999-star" target="_blank" class="logo"><span class="b">BACNET</span><span class="n">2</span><span class="m">MQTT</span></a>
+                <span style="font-size:0.7rem; font-weight:800; color:var(--muted)">- v4.5.22</span>
+            </div>
+            <div class="credits">by <a href="https://github.com/zirco999-star" target="_blank">Z1rc0n1um</a></div>
         </div>
         <div class="status-group">
             <div id="b-tag" class="badge">BACNET</div>
@@ -212,8 +215,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('in-mac').value = d.mac_id || 1;
                 document.getElementById('in-mm').value = d.mm || 127;
                 document.getElementById('in-mqh').value = d.mqh || "";
-                if(d.to) document.getElementById('in-timeout').value = d.to;
-                if(d.ret) document.getElementById('in-retries').value = d.ret;
                 toggleStatic();
             });
         }
@@ -320,8 +321,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             };
         } catch(err) {}
         setInterval(updateStatus, 3000); updateStatus();
-
-        </script>
+    </script>
 </body>
 </html>
 )rawliteral";
