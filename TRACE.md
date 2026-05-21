@@ -20,3 +20,4 @@
 - [v4.5.8] NVS NOT_FOUND au boot -> Résolu par RW Init v4.5.9.
 - [v4.5.13] Flash Overflow -> Table de partitions corrigée par l'utilisateur (FFAT @ 0x8D0000).
 - [v4.5.16] OTA & MQTT Fix -> Restauration de ArduinoOTA.begin() et implémentation du Circuit Breaker MQTT (stop après 3 échecs).
+- [v4.5.20] Platinum Release -> Fix persistance BACnet (Max Master), validation table partitions 1Mo, et restauration logs UART0.

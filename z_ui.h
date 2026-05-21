@@ -8,7 +8,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <html lang="fr">
 <head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BACnet Gateway | v4.5.19</title>
+    <title>BACnet Gateway | v4.5.20</title>
     <style>
         :root { 
             --bg: #09090b; --card: #18181b; --primary: #3b82f6; --accent: #6366f1; 

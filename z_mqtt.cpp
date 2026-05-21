@@ -11,7 +11,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
     switch ((esp_mqtt_event_id_t)event_id) {
         case MQTT_EVENT_CONNECTED:
-            z_log("[MQTT] Connected to Broker.\n");
+            Serial.println("[MQTT] Connected to Broker.");
             mqtt_conn_fail_count = 0; 
             mqtt_circuit_open = false;
             {
@@ -24,18 +24,17 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         case MQTT_EVENT_DISCONNECTED:
             if (!mqtt_circuit_open) {
                 mqtt_conn_fail_count++;
-                z_log("[MQTT] Disconnected (%d/3)\n", mqtt_conn_fail_count);
+                Serial.printf("[MQTT] Disconnected (%d/3)\n", mqtt_conn_fail_count);
                 
                 if (mqtt_conn_fail_count >= 3) {
-                    z_log("[MQTT] CIRCUIT BREAKER OPEN: Stopping connection attempts.\n");
+                    Serial.println("[MQTT] CIRCUIT BREAKER TRIPPED.");
                     mqtt_circuit_open = true;
-                    esp_mqtt_client_stop(mqtt_client);
                 }
             }
             break;
 
         case MQTT_EVENT_ERROR:
-            z_log("[MQTT] Connection Refused (Check IP/Credentials)\n");
+            Serial.println("[MQTT] Connection Refused.");
             break;
 
         case MQTT_EVENT_DATA:
@@ -103,11 +102,22 @@ void setup_mqtt() {
     if (mqtt_client) {
         esp_mqtt_client_register_event(mqtt_client, (esp_mqtt_event_id_t)ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
         esp_mqtt_client_start(mqtt_client);
-        z_log("[MQTT] Client started\n");
+        Serial.println("[MQTT] Client task started (v4.5.18)");
     }
 }
 
 void handle_mqtt() {
+    static bool is_stopped = false;
+    
+    if (mqtt_circuit_open && !is_stopped && mqtt_client != NULL) {
+        Serial.println("[MQTT] Executing Circuit Breaker Shutdown...");
+        esp_mqtt_client_stop(mqtt_client);
+        is_stopped = true;
+        return;
+    }
+
+    if (!mqtt_circuit_open) is_stopped = false;
+
     if (mqtt_publish_queue != NULL && mqtt_client != NULL && !mqtt_circuit_open) {
         MQTTPublishJob pubJob;
         while (xQueueReceive(mqtt_publish_queue, &pubJob, 0) == pdTRUE) {

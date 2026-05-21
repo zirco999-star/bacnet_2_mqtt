@@ -15,6 +15,29 @@ QueueHandle_t bacnet_job_queue = NULL;
 QueueHandle_t mqtt_publish_queue = NULL;
 QueueHandle_t uart_evt_queue = NULL;
 
+// --- NVS PERSISTENCE (Multi-Device, Thread-Safe) ---
+static void save_cache_to_nvs() {
+    for (auto& dev : bacnet_network_cache) {
+        char ns[16]; snprintf(ns, sizeof(ns), "dev_%lu", (unsigned long)dev.device_id);
+        Preferences prefs;
+        if (prefs.begin(ns, false)) {
+            BACnetPersistenceDev data;
+            data.device_id = dev.device_id;
+            data.enabled = dev.enabled;
+            strlcpy(data.name, dev.name.c_str(), 32);
+            strlcpy(data.vendor, dev.vendor.c_str(), 32);
+            data.count = (uint8_t)std::min((int)dev.objects.size(), 100);
+            for (int i = 0; i < data.count; i++) {
+                data.objects[i].val = ((uint32_t)dev.objects[i].type << 25) | (dev.objects[i].instance & 0x1FFFFFF);
+                strlcpy(data.objects[i].name, dev.objects[i].name.c_str(), 24);
+                data.objects[i].poll = dev.objects[i].enabled;
+            }
+            prefs.putBytes("blob", &data, sizeof(data));
+            prefs.end();
+        }
+    }
+}
+
 // --- CRC UTILS ---
 static uint8_t calc_header_crc(uint8_t *data, size_t len) {
     uint8_t crc = 0xFF;
@@ -85,20 +108,17 @@ static void bacnet_task(void *pv) {
     uint8_t total_objects = 0, current_scan_index = 0, current_invoke_id = 10, current_poll_idx = 0;
     uart_event_t event;
 
-    z_log("[BACNET] Engine v4.5.9 - Async Ready\n");
+    z_log("[BACNET] Engine v4.5.20 - Platinum Ready\n");
 
     for (;;) {
-        // Events matériels (Overflow etc)
         if (xQueueReceive(uart_evt_queue, (void *)&event, 0) == pdTRUE) {
-            if (event.type == UART_FIFO_OVF || event.type == UART_BUFFER_FULL) {
-                uart_flush_input(RS485_UART_PORT);
-            }
+            if (event.type == UART_FIFO_OVF || event.type == UART_BUFFER_FULL) uart_flush_input(RS485_UART_PORT);
         }
 
-        // Sondage non-bloquant du registre TX si on attend la fin d'un envoi
+        // FIX: Polling non-bloquant du registre de statut UART (universel Core 3.x)
         if (state == MSTP_WAIT_TX_DONE) {
             if (uart_wait_tx_done(RS485_UART_PORT, 0) == ESP_OK) {
-                last_req_time = millis();
+                last_req_time = millis(); // T_reply démarre EXACTEMENT maintenant
                 state = IDLE;
             }
         }
@@ -149,7 +169,8 @@ static void bacnet_task(void *pv) {
                                             obj.name = "Point_" + String(oi); 
                                             bacnet_network_cache[0].objects.push_back(obj);
                                             current_scan_index++; bacnetStats.current_index = current_scan_index;
-                                            if (current_scan_index > total_objects) { scan_done = true; 
+                                            if (current_scan_index > total_objects) { 
+                                                scan_done = true; 
                                                 extern void save_device_objects(uint32_t device_id);
                                                 save_device_objects(target_device_id); 
                                             }
