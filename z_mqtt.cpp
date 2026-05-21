@@ -21,7 +21,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             break;
         case MQTT_EVENT_DATA:
             z_log("[MQTT] Message received on topic: %.*s\n", event->topic_len, event->topic);
-            // Parse topic: <prefix>/<mac>/<obj_type>/<instance>/set
             {
                 char topic_buf[128];
                 if (event->topic_len < sizeof(topic_buf)) {
@@ -33,7 +32,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                     memcpy(payload_buf, event->data, plen);
                     payload_buf[plen] = '\0';
                     
-                    // Simple parser
                     String t = String(topic_buf);
                     int p1 = t.indexOf('/');
                     int p2 = t.indexOf('/', p1 + 1);
@@ -48,7 +46,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                         job.type = JOB_WRITE_PROP;
                         job.target_mac = mac_str.toInt();
                         job.obj_instance = inst_str.toInt();
-                        job.prop_id = 85; // Present_Value
+                        job.prop_id = 85;
                         job.priority = 16;
                         job.write_value = String(payload_buf).toFloat();
                         
@@ -58,7 +56,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                         else if (type_str == "binary_value") job.obj_type = OBJ_BINARY_VALUE;
                         else if (type_str == "multi_state_output") job.obj_type = OBJ_MULTI_STATE_OUTPUT;
                         else if (type_str == "multi_state_value") job.obj_type = OBJ_MULTI_STATE_VALUE;
-                        else job.type = JOB_WHO_IS; // Ignore
+                        else job.type = JOB_WHO_IS;
                         
                         if (job.type == JOB_WRITE_PROP) {
                             enqueue_bacnet_job(job);
@@ -93,7 +91,6 @@ void setup_mqtt() {
 }
 
 void handle_mqtt() {
-    // Process mqtt_publish_queue
     if (mqtt_publish_queue != NULL && mqtt_client != NULL) {
         MQTTPublishJob pubJob;
         while (xQueueReceive(mqtt_publish_queue, &pubJob, 0) == pdTRUE) {
@@ -111,17 +108,7 @@ void handle_mqtt() {
                 case OBJ_MULTI_STATE_VALUE: t_str = "multi_state_value"; break;
             }
             snprintf(topic, sizeof(topic), "%s/%lu/%s/%lu/state", sysCfg.mqtt_prefix, (unsigned long)pubJob.device_id, t_str, (unsigned long)pubJob.obj_instance);
-            
-            char payload[64];
-            if (pubJob.data_type == PUB_FLOAT) {
-                snprintf(payload, sizeof(payload), "%.2f", pubJob.value_float);
-            } else if (pubJob.data_type == PUB_INT) {
-                snprintf(payload, sizeof(payload), "%ld", (long)pubJob.value_int);
-            } else {
-                snprintf(payload, sizeof(payload), "%s", pubJob.value_string);
-            }
-            
-            esp_mqtt_client_publish(mqtt_client, topic, payload, 0, 1, 0);
+            esp_mqtt_client_publish(mqtt_client, topic, pubJob.value_string, 0, 1, 0);
         }
     }
 }

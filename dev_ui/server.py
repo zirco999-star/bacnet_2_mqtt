@@ -1,45 +1,42 @@
-from http.server import HTTPServer, SimpleHTTPRequestHandler
 import json
+import random
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+import os
 
 class MockHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
-        if self.path == '/api/config':
+        if self.path == '/' or self.path == '':
+            self.path = '/index.html'
+            return super().do_GET()
+        if self.path == '/api/status':
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
-            config = {
-                "ssid": "MaBox_WiFi",
-                "static_ip": True,
-                "local_ip": "192.168.1.50",
-                "gateway": "192.168.1.1",
-                "subnet": "255.255.255.0"
-            }
-            self.wfile.write(json.dumps(config).encode())
-        elif self.path == '/api/status':
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            status = {
-                "ip": "192.168.1.50",
-                "rssi": -62,
-                "heap": 245000,
-                "uptime": 1234
-            }
+            status = {"ver": "v4.5.6-SIM", "rssi": -62, "ip": "192.168.1.50", "mqtt": True, "heap": 185, "mac_id": 1, "mstp_t": 1250, "mqh": "192.168.1.10"}
             self.wfile.write(json.dumps(status).encode())
+        elif self.path == '/api/objects':
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            controllers = [{
+                "device_id": 364004, "name": "AHU-MAIN-WING", "vendor": "Schneider Electric", "version": "v3.1.2", "enabled": True,
+                "objects": [
+                    {"type": 0, "inst": 1, "name": "Room_Temp", "val": 22.45, "unit": "°C", "poll": True},
+                    {"type": 2, "inst": 10, "name": "SetPoint", "val": 21.0, "unit": "°C", "poll": True}
+                ]
+            }]
+            self.wfile.write(json.dumps(controllers).encode())
         else:
-            return SimpleHTTPRequestHandler.do_GET(self)
+            return super().do_GET()
 
     def do_POST(self):
-        if self.path == '/save':
-            self.send_response(200)
-            self.send_header('Content-type', 'text/plain')
-            self.end_headers()
-            self.wfile.write(b"OK. Simulator saved configuration.")
-        else:
-            self.send_response(404)
-            self.end_headers()
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"OK (SIMULATED SAVE)")
 
-port = 8000
-print(f"🚀 Simulateur UI ZIRCON1UM démarré sur http://localhost:{port}")
-print("Modifie 'index.html' et rafraîchis ton navigateur pour voir les changements.")
-HTTPServer(('localhost', port), MockHandler).serve_forever()
+if __name__ == '__main__':
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    server = HTTPServer(('0.0.0.0', 8000), MockHandler)
+    print(f"🚀 Simulateur UI v4.5.6 (Logic Phase) démarré sur http://localhost:8000")
+    server.serve_forever()

@@ -7,8 +7,8 @@
 #include <atomic>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
-#include <PubSubClient.h>
 #include <ArduinoOTA.h>
+#include <mqtt_client.h>
 
 #define VERSION_GLOBAL "v4.2.28"
 
@@ -41,11 +41,9 @@ struct Config {
 };
 
 extern Config sysCfg;
-extern Preferences preferences;
 extern AsyncWebServer webServer;
 extern AsyncWebSocket ws;
-extern PubSubClient mqttClient;
-extern WiFiClient mqttWifiClient;
+extern esp_mqtt_client_handle_t mqtt_client;
 extern bool is_ap_mode;
 extern bool pending_reboot;
 extern uint32_t reboot_timer;

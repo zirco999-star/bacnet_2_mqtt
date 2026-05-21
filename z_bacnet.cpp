@@ -13,59 +13,7 @@ BACnet_Stats bacnetStats = {0, 0, 0, 0, 0, 0, 0};
 std::vector<BACnetDevice> bacnet_network_cache;
 QueueHandle_t bacnet_job_queue = NULL;
 QueueHandle_t mqtt_publish_queue = NULL;
-
-// --- NVS PERSISTENCE ---
-static void save_cache_to_nvs() {
-    if (bacnet_network_cache.empty()) return;
-    preferences.begin("bac_cache", false);
-    preferences.clear();
-    const auto& dev = bacnet_network_cache[0];
-    preferences.putUInt("dev_id", dev.device_id);
-    preferences.putUChar("mac", dev.mac_address);
-    preferences.putUChar("obj_count", dev.objects.size());
-    for (size_t i = 0; i < dev.objects.size(); i++) {
-        char key[16]; sprintf(key, "o_%d", (int)i);
-        uint32_t packed = ((uint32_t)dev.objects[i].type << 22) | (dev.objects[i].instance & 0x3FFFFF);
-        preferences.putUInt(key, packed);
-        char mkey[16]; sprintf(mkey, "m_%d", (int)i);
-        uint32_t meta = ((uint32_t)dev.objects[i].is_commandable << 16) | dev.objects[i].units;
-        preferences.putUInt(mkey, meta);
-    }
-    preferences.end();
-    z_log("[NVS] Cache saved (%d objects)\n", (int)dev.objects.size());
-}
-
-static void load_cache_from_nvs() {
-    preferences.begin("bac_cache", true);
-    if (preferences.isKey("obj_count")) {
-        BACnetDevice dev;
-        dev.device_id = preferences.getUInt("dev_id", 0);
-        dev.mac_address = preferences.getUChar("mac", 0);
-        uint8_t count = preferences.getUChar("obj_count", 0);
-        for (uint8_t i = 0; i < count; i++) {
-            char key[16]; sprintf(key, "o_%d", (int)i);
-            uint32_t packed = preferences.getUInt(key, 0);
-            char mkey[16]; sprintf(mkey, "m_%d", (int)i);
-            uint32_t meta = preferences.getUInt(mkey, 0);
-            BACnetObject obj;
-            obj.type = packed >> 22;
-            obj.instance = packed & 0x3FFFFF;
-            obj.present_value = 0;
-            obj.last_update = 0;
-            obj.enabled = true; // Default enabled
-            obj.is_commandable = (meta >> 16) & 0x01;
-            obj.units = meta & 0xFFFF;
-            dev.objects.push_back(obj);
-        }
-        dev.discovery_done = true;
-        dev.last_seen = millis();
-        bacnet_network_cache.push_back(dev);
-        bacnetStats.total_objects = 98; 
-        bacnetStats.current_index = 99; // Signal discovery done
-        z_log("[NVS] Cache loaded: %d objects for Device %u\n", count, dev.device_id);
-    }
-    preferences.end();
-}
+QueueHandle_t uart_evt_queue = NULL;
 
 // --- CRC UTILS ---
 static uint8_t calc_header_crc(uint8_t *data, size_t len) {
@@ -109,7 +57,6 @@ static bool decode_next_tag(const uint8_t *data, uint16_t *pos, uint16_t max_len
 
 static void uart_tx(const uint8_t *buffer, uint16_t length) {
     uart_write_bytes(RS485_UART_PORT, (const char*)buffer, length);
-    uart_wait_tx_done(RS485_UART_PORT, pdMS_TO_TICKS(50));
 }
 
 static void send_mstp_frame(uint8_t target_mac, uint8_t type, const uint8_t* apdu, uint16_t len) {
@@ -117,31 +64,45 @@ static void send_mstp_frame(uint8_t target_mac, uint8_t type, const uint8_t* apd
     buffer[0]=0x55; buffer[1]=0xFF; buffer[2]=type; buffer[3]=target_mac; buffer[4]=sysCfg.mac_address;
     buffer[5]=(len>>8)&0xFF; buffer[6]=len&0xFF;
     buffer[7]=calc_header_crc(&buffer[2], 5);
-    memcpy(&buffer[8], apdu, len);
-    uint16_t crc16 = calc_data_crc(&buffer[8], len);
-    buffer[8+len]=crc16&0xFF; buffer[8+len+1]=(crc16>>8)&0xFF;
-    uart_tx(buffer, 8+len+2);
+    if (len > 0) {
+        memcpy(&buffer[8], apdu, len);
+        uint16_t crc16 = calc_data_crc(&buffer[8], len);
+        buffer[8+len]=crc16&0xFF; buffer[8+len+1]=(crc16>>8)&0xFF;
+        uart_tx(buffer, 8+len+2);
+    } else {
+        uart_tx(buffer, 8);
+    }
 }
 
 static void bacnet_task(void *pv) {
     uint8_t rx_byte; uint8_t header[6]; uint8_t header_idx=0; uint8_t data_buf[512]; 
     uint16_t data_len=0, data_idx=0, rx_crc16=0;
-    enum { IDLE, PREAMBLE_55, PREAMBLE_FF, HEADER, DATA, CRC16_L, CRC16_H } state = IDLE;
+    enum { IDLE, PREAMBLE_55, PREAMBLE_FF, HEADER, DATA, CRC16_L, CRC16_H, MSTP_WAIT_TX_DONE } state = IDLE;
     uint8_t next_station = 4; uint32_t last_rx_time = millis(); uint32_t last_heartbeat = 0;
     bool has_token = false, scan_done = false, waiting_for_reply = false;
     uint32_t token_acquired_time = 0, last_req_time = 0;
     uint32_t target_device_id = 0x3FFFFF;
     uint8_t total_objects = 0, current_scan_index = 0, current_invoke_id = 10, current_poll_idx = 0;
-    
-    load_cache_from_nvs();
-    if (!bacnet_network_cache.empty()) {
-        total_objects = 98; current_scan_index = 99; scan_done = true;
-        target_device_id = bacnet_network_cache[0].device_id;
-    }
+    uart_event_t event;
 
-    z_log("[BACNET] Engine v4.3.3 - Stable Monitoring\n");
+    z_log("[BACNET] Engine v4.5.9 - Async Ready\n");
 
     for (;;) {
+        // Events matériels (Overflow etc)
+        if (xQueueReceive(uart_evt_queue, (void *)&event, 0) == pdTRUE) {
+            if (event.type == UART_FIFO_OVF || event.type == UART_BUFFER_FULL) {
+                uart_flush_input(RS485_UART_PORT);
+            }
+        }
+
+        // Sondage non-bloquant du registre TX si on attend la fin d'un envoi
+        if (state == MSTP_WAIT_TX_DONE) {
+            if (uart_wait_tx_done(RS485_UART_PORT, 0) == ESP_OK) {
+                last_req_time = millis();
+                state = IDLE;
+            }
+        }
+
         if (uart_read_bytes(RS485_UART_PORT, &rx_byte, 1, 0) > 0) {
             last_rx_time = millis();
             switch (state) {
@@ -157,8 +118,9 @@ static void bacnet_task(void *pv) {
                             else if (type == 0x01 && dest == sysCfg.mac_address) { vTaskDelay(pdMS_TO_TICKS(2)); 
                                 uint8_t f[8] = { 0x55, 0xFF, 0x02, src, sysCfg.mac_address, 0, 0, 0 };
                                 f[7] = calc_header_crc(&f[2], 5); uart_tx(f, 8);
+                                state = MSTP_WAIT_TX_DONE;
                             }
-                            if (data_len > 0 && data_len <= 512) { state = DATA; data_idx = 0; } else state = IDLE;
+                            if (data_len > 0 && data_len <= 512) { state = DATA; data_idx = 0; } else if(state != MSTP_WAIT_TX_DONE) state = IDLE;
                         } else state = IDLE;
                     }
                     break;
@@ -176,16 +138,21 @@ static void bacnet_task(void *pv) {
                                         if (current_scan_index == 0) {
                                             total_objects = data_buf[pos+1]; bacnetStats.total_objects = total_objects;
                                             current_scan_index = 1; bacnetStats.current_index = 1;
-                                            BACnetDevice d; d.mac_address = 4; d.device_id = 0; d.discovery_done = false;
+                                            BACnetDevice d; d.mac_address = 4; d.device_id = 0; d.discovery_done = false; d.enabled = true;
+                                            d.name = "ECB-203"; d.vendor = "Distech Controls";
                                             bacnet_network_cache.push_back(d);
                                         } else {
                                             uint16_t ot = (data_buf[pos+1] << 2) | (data_buf[pos+2] >> 6);
                                             uint32_t oi = ((uint32_t)(data_buf[pos+2] & 0x3F) << 16) | (data_buf[pos+3] << 8) | data_buf[pos+4];
                                             if (current_scan_index == 1) { target_device_id = oi; bacnet_network_cache[0].device_id = oi; }
                                             BACnetObject obj; obj.type = ot; obj.instance = oi; obj.present_value = 0; obj.last_update = 0; obj.enabled = true;
+                                            obj.name = "Point_" + String(oi); 
                                             bacnet_network_cache[0].objects.push_back(obj);
                                             current_scan_index++; bacnetStats.current_index = current_scan_index;
-                                            if (current_scan_index > total_objects) { scan_done = true; save_cache_to_nvs(); }
+                                            if (current_scan_index > total_objects) { scan_done = true; 
+                                                extern void save_device_objects(uint32_t device_id);
+                                                save_device_objects(target_device_id); 
+                                            }
                                         }
                                     } else {
                                         uint8_t tag = data_buf[pos++];
@@ -208,8 +175,7 @@ static void bacnet_task(void *pv) {
             }
         }
 
-        if (has_token) {
-            // Polling throttling: every 30 tokens to avoid saturating ECB
+        if (has_token && state == IDLE) {
             if (!waiting_for_reply && (bacnetStats.tokens_seen % 30 == 0)) {
                 current_invoke_id++;
                 if (!scan_done) {
@@ -217,24 +183,34 @@ static void bacnet_task(void *pv) {
                     if (target_device_id == 0x3FFFFF) { apdu[8]=0x3F; apdu[9]=0xFF; apdu[10]=0xFF; }
                     else { apdu[8]=(uint8_t)(target_device_id>>16); apdu[9]=(uint8_t)(target_device_id>>8); apdu[10]=(uint8_t)target_device_id; }
                     send_mstp_frame(4, 0x05, apdu, sizeof(apdu));
+                    waiting_for_reply = true; state = MSTP_WAIT_TX_DONE;
                 } else if (!bacnet_network_cache.empty()) {
                     current_poll_idx = (current_poll_idx + 1) % bacnet_network_cache[0].objects.size();
                     auto& o = bacnet_network_cache[0].objects[current_poll_idx];
-                    uint8_t apdu[] = { 0x01, 0x00, 0x00, 0x05, current_invoke_id, 0x0C, 0x0C, (uint8_t)((o.type>>2)&0xFF), (uint8_t)((o.type<<6)|(o.instance>>16)), (uint8_t)(o.instance>>8), (uint8_t)o.instance, 0x19, 0x55 };
-                    send_mstp_frame(4, 0x05, apdu, sizeof(apdu));
+                    if (o.enabled && bacnet_network_cache[0].enabled) {
+                        uint8_t apdu[] = { 0x01, 0x00, 0x00, 0x05, current_invoke_id, 0x0C, 0x0C, (uint8_t)((o.type>>2)&0xFF), (uint8_t)((o.type<<6)|(o.instance>>16)), (uint8_t)(o.instance>>8), (uint8_t)o.instance, 0x19, 0x55 };
+                        send_mstp_frame(4, 0x05, apdu, sizeof(apdu));
+                        waiting_for_reply = true; state = MSTP_WAIT_TX_DONE;
+                    }
                 }
-                waiting_for_reply = true; token_acquired_time = millis(); last_req_time = millis();
+                token_acquired_time = millis();
             }
             uint32_t limit = waiting_for_reply ? 350 : 5;
             if (millis() - token_acquired_time > limit) {
                 if (waiting_for_reply && (millis() - last_req_time > 800)) waiting_for_reply = false;
-                uint8_t f[8] = { 0x55, 0xFF, 0x00, next_station, sysCfg.mac_address, 0, 0, 0 };
-                f[7] = calc_header_crc(&f[2], 5); uart_tx(f, 8);
-                has_token = false; bacnetStats.tokens_seen++;
+                if (!waiting_for_reply) {
+                    uint8_t f[8] = { 0x55, 0xFF, 0x00, next_station, sysCfg.mac_address, 0, 0, 0 };
+                    f[7] = calc_header_crc(&f[2], 5); uart_tx(f, 8);
+                    has_token = false; bacnetStats.tokens_seen++;
+                    state = MSTP_WAIT_TX_DONE;
+                }
             }
         }
-        if (millis() - last_rx_time > 1000) { last_rx_time = millis(); uint8_t f[8]={0x55,0xFF,0x01,4,sysCfg.mac_address,0,0,0}; f[7]=calc_header_crc(&f[2],5); uart_tx(f,8); }
-        if (millis() - last_heartbeat > 10000) { last_heartbeat = millis(); z_log("[STATS] T:%u Mode:%s Polling:%d/98\n", (unsigned int)bacnetStats.tokens_seen, scan_done ? "MONITOR":"SCAN", current_poll_idx); }
+        if (millis() - last_rx_time > 1000) { 
+            last_rx_time = millis(); 
+            uint8_t f[8]={0x55,0xFF,0x01,4,sysCfg.mac_address,0,0,0}; f[7]=calc_header_crc(&f[2],5); 
+            uart_tx(f,8); state = MSTP_WAIT_TX_DONE;
+        }
         vTaskDelay(1);
     }
 }
@@ -243,7 +219,7 @@ void setup_bacnet_engine() {
     bacnet_job_queue = xQueueCreate(10, sizeof(BACnetJob));
     mqtt_publish_queue = xQueueCreate(30, sizeof(MQTTPublishJob));
     const uart_config_t uc = { .baud_rate = 38400, .data_bits = UART_DATA_8_BITS, .parity = UART_PARITY_DISABLE, .stop_bits = UART_STOP_BITS_1, .flow_ctrl = UART_HW_FLOWCTRL_DISABLE, .rx_flow_ctrl_thresh = 122, .source_clk = UART_SCLK_APB };
-    uart_driver_install(RS485_UART_PORT, 2048, 2048, 20, NULL, 0);
+    uart_driver_install(RS485_UART_PORT, 2048, 2048, 20, &uart_evt_queue, 0);
     uart_param_config(RS485_UART_PORT, &uc);
     uart_set_pin(RS485_UART_PORT, TX_PIN, RX_PIN, RTS_PIN, UART_PIN_NO_CHANGE);
     uart_set_mode(RS485_UART_PORT, UART_MODE_RS485_HALF_DUPLEX);
@@ -253,7 +229,6 @@ bool enqueue_bacnet_job(BACnetJob job) {
     if (bacnet_job_queue == NULL) return false;
     return xQueueSend(bacnet_job_queue, &job, 0) == pdTRUE;
 }
-
 bool enqueue_mqtt_publish(MQTTPublishJob pubJob) {
     if (mqtt_publish_queue == NULL) return false;
     return xQueueSend(mqtt_publish_queue, &pubJob, 0) == pdTRUE;
