@@ -179,16 +179,19 @@ void setup_network_infrastructure() {
     webServer.on("/api/objects", HTTP_GET, [](AsyncWebServerRequest *request) {
         if(!is_authenticated(request)) return;
         JsonDocument doc; JsonArray controllers = doc.to<JsonArray>();
-        for (auto& dev : bacnet_network_cache) {
-            JsonObject c = controllers.add<JsonObject>();
-            c["device_id"] = dev.device_id;
-            c["name"] = dev.name; c["vendor"] = dev.vendor; c["enabled"] = dev.enabled;
-            JsonArray objs_arr = c["objects"].to<JsonArray>();
-            for (auto& o : dev.objects) {
-                JsonObject obj = objs_arr.add<JsonObject>();
-                obj["type"] = o.type; obj["inst"] = o.instance; obj["name"] = o.name;
-                obj["val"] = o.present_value; obj["poll"] = o.enabled;
+        if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
+            for (auto& dev : bacnet_network_cache) {
+                JsonObject c = controllers.add<JsonObject>();
+                c["device_id"] = dev.device_id;
+                c["name"] = dev.name; c["vendor"] = dev.vendor; c["enabled"] = dev.enabled;
+                JsonArray objs_arr = c["objects"].to<JsonArray>();
+                for (auto& o : dev.objects) {
+                    JsonObject obj = objs_arr.add<JsonObject>();
+                    obj["type"] = o.type; obj["inst"] = o.instance; obj["name"] = o.name;
+                    obj["val"] = o.present_value; obj["poll"] = o.enabled;
+                }
             }
+            xSemaphoreGive(cache_mutex);
         }
         String response; serializeJson(doc, response);
         request->send(200, "application/json", response);

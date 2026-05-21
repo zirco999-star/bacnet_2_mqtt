@@ -67,6 +67,7 @@ struct BACnetDevice {
 };
 
 extern std::vector<BACnetDevice> bacnet_network_cache;
+extern SemaphoreHandle_t cache_mutex;
 
 enum BACnetJobType { JOB_WHO_IS, JOB_READ_PROP, JOB_WRITE_PROP, JOB_READ_UNITS, JOB_CHECK_COMMANDABLE, JOB_READ_STATE_TEXT };
 struct BACnetJob {
