@@ -6,10 +6,7 @@
 #include <ESPmDNS.h>
 #include "esp_wifi.h"
 #include <stdarg.h>
-
-extern "C" {
 #include "nvs_flash.h"
-}
 
 extern AsyncWebSocket ws;
 static uint32_t wifi_connect_start = 0;
@@ -30,7 +27,8 @@ void z_log(const char* format, ...) {
 void load_device_objects(uint32_t device_id) {
     char ns[16]; snprintf(ns, sizeof(ns), "dev_%lu", (unsigned long)device_id);
     Preferences prefs;
-    if (prefs.begin(ns, true)) {
+    // Utilisation de false (RW) pour éviter le NOT_FOUND si le namespace n'existe pas
+    if (prefs.begin(ns, false)) {
         BACnetPersistenceDev data;
         if (prefs.getBytes("blob", &data, sizeof(data)) > 0) {
             bool found = false;
@@ -54,7 +52,7 @@ void load_device_objects(uint32_t device_id) {
                 dev.discovery_done = true;
                 dev.last_seen = millis();
                 bacnet_network_cache.push_back(dev);
-                z_log("[NVS] Blob restored: %d objects for %lu\n", data.count, (unsigned long)device_id);
+                z_log("[NVS] Blob restored for %lu\n", (unsigned long)device_id);
             }
         }
         prefs.end();
@@ -75,7 +73,12 @@ void load_configuration() {
     strlcpy(sysCfg.admin_pass, "admin1234", 64);
 
     Preferences prefs;
+    // On force l'ouverture en RW pour garantir l'existence
     if (prefs.begin("system", false)) {
+        if (!prefs.isKey("init")) {
+            prefs.putBool("init", true);
+            z_log("[NVS] Bootstrap: Created 'system' namespace\n");
+        }
         if (prefs.isKey("ssid")) prefs.getString("ssid", sysCfg.wifi_ssid, 32);
         if (prefs.isKey("pass")) prefs.getString("pass", sysCfg.wifi_pass, 64);
         if (prefs.isKey("static")) sysCfg.static_ip = prefs.getBool("static", true);
@@ -104,6 +107,7 @@ void save_configuration() {
         prefs.putUInt("did", sysCfg.device_id);
         prefs.putString("mqh", sysCfg.mqtt_server);
         prefs.end();
+        z_log("[NVS] Configuration saved\n");
     }
 }
 
@@ -141,6 +145,7 @@ void setup_network_infrastructure() {
     if (strlen(sysCfg.wifi_ssid) == 0) {
         is_ap_mode = true; WiFi.mode(WIFI_AP);
         WiFi.softAP("ZIRCON-GW-CONFIG", "admin1234");
+        z_log("[WIFI] Mode AP: ZIRCON-GW-CONFIG\n");
     } else {
         is_ap_mode = false; WiFi.mode(WIFI_STA);
         esp_wifi_set_ps(WIFI_PS_NONE);
@@ -148,10 +153,12 @@ void setup_network_infrastructure() {
             IPAddress ip, gw, sn;
             if (ip.fromString(sysCfg.local_ip) && gw.fromString(sysCfg.gateway) && sn.fromString(sysCfg.subnet)) {
                 WiFi.config(ip, gw, sn);
+                z_log("[WIFI] Static IP applied: %s\n", sysCfg.local_ip);
             }
         }
         WiFi.begin(sysCfg.wifi_ssid, sysCfg.wifi_pass);
         wifi_connect_start = millis();
+        z_log("[WIFI] Connecting to %s...\n", sysCfg.wifi_ssid);
     }
 
     webServer.addHandler(&ws);
@@ -180,7 +187,7 @@ void setup_network_infrastructure() {
 
     webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         JsonDocument doc;
-        doc["ver"] = "v4.5.9";
+        doc["ver"] = "v4.5.13";
         doc["rssi"] = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
         doc["ip"] = is_ap_mode ? "192.168.4.1" : WiFi.localIP().toString();
         doc["mqtt"] = (mqtt_client != NULL);
@@ -249,12 +256,14 @@ void setup_network_infrastructure() {
 
     webServer.begin();
     MDNS.begin("bacnet-gateway");
+    ArduinoOTA.begin();
+    z_log("[WIFI] OTA Service Started (Port 3232)\n");
 }
 
 void handle_network() {
     ArduinoOTA.handle();
     if (!is_ap_mode && !wifi_fallback_active && WiFi.status() != WL_CONNECTED) {
-        if (millis() - wifi_connect_start > 30000) {
+        if (millis() - wifi_connect_start > 45000) {
             WiFi.mode(WIFI_AP); WiFi.softAP("ZIRCON-RECOVERY", "admin1234");
             wifi_fallback_active = true; is_ap_mode = true;
         }
