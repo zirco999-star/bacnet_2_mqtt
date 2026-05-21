@@ -8,15 +8,15 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <html lang="fr">
 <head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BACnet Gateway | v4.5.6</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <title>BACnet Gateway | v4.5.19</title>
     <style>
         :root { 
             --bg: #09090b; --card: #18181b; --primary: #3b82f6; --accent: #6366f1; 
             --text: #fafafa; --muted: #a1a1aa; --border: #27272a; --success: #22c55e; --error: #ef4444; --warning: #f59e0b;
             --glass: rgba(24, 24, 27, 0.8);
         }
-        body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; margin: 0; line-height: 1.2; -webkit-tap-highlight-color: transparent; }
+        /* Suppression de Google Fonts pour rapidité en mode AP */
+        body { background: var(--bg); color: var(--text); font-family: -apple-system, system-ui, sans-serif; margin: 0; line-height: 1.2; -webkit-tap-highlight-color: transparent; }
         
         nav { background: var(--glass); backdrop-filter: blur(12px); padding: 0.5rem 1rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 100; }
         .logo-box { display: flex; flex-direction: column; }
@@ -43,7 +43,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
         .stat-card { background: var(--card); border: 1px solid var(--border); padding: 0.5rem 0.6rem; border-radius: 8px; display: flex; flex-direction: column; min-height: 60px; justify-content: center; }
         .stat-label { font-size: 0.5rem; color: var(--muted); text-transform: uppercase; font-weight: 800; letter-spacing: 0.04em; margin-bottom: 1px; }
-        .stat-value { font-size: 0.8rem; font-weight: 700; color: var(--text); font-family: 'JetBrains Mono', monospace; }
+        .stat-value { font-size: 0.8rem; font-weight: 700; color: var(--text); font-family: monospace; }
         
         .echo-radar { display: flex; gap: 2px; height: 5px; align-items: center; margin-top: 4px; width: 100%; }
         .echo-segment { flex: 1; height: 100%; background: #27272a; border-radius: 1px; transition: all 0.3s ease; }
@@ -51,7 +51,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
         .full-banner { background: linear-gradient(90deg, #1e1e1e, #111); border: 1px solid var(--border); padding: 0.5rem 0.75rem; border-radius: 8px; margin-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: center; }
         .banner-label { font-size: 0.5rem; color: var(--muted); font-weight: 800; text-transform: uppercase; }
-        .banner-value { font-size: 0.9rem; font-weight: 800; color: var(--primary); font-family: 'JetBrains Mono', monospace; }
+        .banner-value { font-size: 0.9rem; font-weight: 800; color: var(--primary); font-family: monospace; }
 
         .cmd-group { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; margin-bottom: 0.75rem; }
         .btn { padding: 0.5rem; border-radius: 5px; font-weight: 800; cursor: pointer; font-size: 0.65rem; border: none; text-transform: uppercase; transition: filter 0.2s; }
@@ -74,11 +74,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         th { text-align: left; color: var(--muted); background: #141416; padding: 0.5rem; font-weight: 700; }
         td { padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
         
-        .tag-obj { font-family: 'JetBrains Mono', monospace; background: #27272a; padding: 1px 3px; border-radius: 3px; font-weight: 700; color: var(--primary); font-size: 0.6rem; }
+        .tag-obj { font-family: monospace; background: #27272a; padding: 1px 3px; border-radius: 3px; font-weight: 700; color: var(--primary); font-size: 0.6rem; }
         .in-edit { background: transparent; border: 1px solid transparent; color: var(--text); font-size: 0.7rem; width: 100%; padding: 2px; border-radius: 3px; }
         .in-edit:focus { background: #000; border-color: var(--primary); outline: none; }
 
-        #console-out { background: #000; color: #a1a1aa; height: 220px; overflow-y: auto; padding: 0.5rem; font-size: 0.65rem; font-family: 'JetBrains Mono', monospace; }
+        #console-out { background: #000; color: #a1a1aa; height: 220px; overflow-y: auto; padding: 0.5rem; font-size: 0.65rem; font-family: monospace; }
         
         .switch { position: relative; display: inline-block; width: 28px; height: 16px; }
         .switch input { opacity: 0; width: 0; height: 0; }
@@ -97,7 +97,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     <nav>
         <div class="logo-box">
             <a href="https://github.com/zirco999-star" target="_blank" class="logo"><span class="b">BACNET</span><span class="n">2</span><span class="m">MQTT</span></a>
-            <div class="credits">by <a href="https://github.com/zirco999-star" target="_blank">Z1rc0n1um</a></div>
+            <div class="credits">by <a href="https://github.com/zirco999-star" target="_blank">Z1rc01um</a></div>
         </div>
         <div class="status-group">
             <div id="b-tag" class="badge">BACNET</div>
@@ -123,7 +123,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 <div class="stat-card">
                     <div class="stat-label">Node Network</div>
                     <div id="s-ip" class="stat-value" style="color:var(--primary)">0.0.0.0</div>
-                    <div id="s-sn" style="font-size:0.45rem; color:var(--muted); font-family:'JetBrains Mono'; margin-top:1px">M: 0.0.0.0</div>
+                    <div id="s-sn" style="font-size:0.45rem; color:var(--muted); font-family:monospace; margin-top:1px">M: 0.0.0.0</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">MQTT Broker</div>
@@ -132,13 +132,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 </div>
             </div>
 
-            <!-- MSTP BANNER (BELOW CARDS) -->
             <div class="full-banner">
                 <div class="banner-label">MS/TP Traffic Observation</div>
                 <div class="banner-value" id="s-tokens">0 <span style="font-size:0.6rem; opacity:0.5">TOKENS</span></div>
             </div>
 
-            <!-- NETWORK COMMANDS -->
             <div class="cmd-group">
                 <button class="btn btn-p" onclick="sendWhoIs()">Send Who-is</button>
                 <button class="btn btn-s" onclick="sendIAm()">Send I-am</button>
@@ -160,6 +158,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             <div class="card">
                 <div class="card-header"><div class="card-title">Network Configuration</div><button class="btn btn-p" onclick="doSaveNet()">Save</button></div>
                 <form id="f-net" class="grid-form">
+                    <input type="hidden" name="form_type" value="wifi">
                     <div class="form-group"><label>WiFi SSID</label><input type="text" name="ssid" id="in-ssid"></div>
                     <div class="form-group"><label>WiFi Password</label><input type="password" name="pass" id="in-pass"></div>
                     <div class="full-w"><label class="checkbox-row" style="background:#000; border-radius:6px; padding:0.5rem; display:flex; align-items:center; gap:0.5rem; cursor:pointer"><input type="checkbox" name="static_ip" id="in-static" onchange="toggleStatic()"><span style="font-size:0.65rem; font-weight:700">STATIC IP MODE</span></label></div>
@@ -213,6 +212,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('in-mac').value = d.mac_id || 1;
                 document.getElementById('in-mm').value = d.mm || 127;
                 document.getElementById('in-mqh').value = d.mqh || "";
+                if(d.to) document.getElementById('in-timeout').value = d.to;
+                if(d.ret) document.getElementById('in-retries').value = d.ret;
                 toggleStatic();
             });
         }
@@ -222,9 +223,22 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         function doSaveBac() { fetch('/save', {method:'POST', body:new FormData(document.getElementById('f-bac'))}).then(()=>alert("BACnet Saved.")); }
         function doSaveMqtt() { fetch('/save', {method:'POST', body:new FormData(document.getElementById('f-mqtt'))}).then(()=>alert("MQTT Saved.")); }
         function doResetCache() { if(confirm("Clear BACnet Cache?")) fetch('/api/reset_cache', {method:'POST'}).then(()=>alert("Cache cleared. Rebooting...")); }
-        function doResetFactory() { if(confirm("DANGER: This will erase ALL settings (WiFi, BACnet, MQTT). Are you sure?")) fetch('/api/factory_reset', {method:'POST'}).then(()=>alert("Factory Reset OK. Rebooting to AP mode...")); }
+        function doResetFactory() { if(confirm("DANGER: Factory Reset?")) fetch('/api/factory_reset', {method:'POST'}).then(()=>alert("Factory Reset OK. Rebooting to AP mode...")); }
         function downloadEDE(id) { window.open(`/api/ede?id=${id}`, '_blank'); }
-        function saveDeviceChanges(id) { alert("Saving changes for " + id); }
+        function saveDeviceChanges(id) {
+             const block = document.querySelector(`[data-dev="${id}"]`);
+             const rows = block.querySelectorAll('tbody tr');
+             const data = { device_id: id, objects: [] };
+             rows.forEach(r => {
+                 data.objects.push({
+                     inst: parseInt(r.dataset.inst),
+                     type: parseInt(r.dataset.type),
+                     name: r.querySelector('.in-edit').value,
+                     poll: r.querySelector('.poll-sw')?.checked || false
+                 });
+             });
+             fetch('/api/save_objects', {method:'POST', body:JSON.stringify(data), headers:{'Content-Type':'application/json'}}).then(()=>alert("Changes Persisted."));
+        }
 
         function refreshDiscovery() {
             fetch('/api/objects').then(r=>r.json()).then(controllers=>{
@@ -240,7 +254,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                             </div>
                             <div class="header-actions">
                                 <button class="btn btn-s btn-lg" onclick="downloadEDE(${c.device_id})">EDE</button>
-                                <button class="btn btn-p btn-lg" onclick="saveDeviceChanges(${c.device_id})">SAVE CHANGES</button>
+                                <button class="btn btn-p btn-lg" onclick="saveDeviceChanges(${c.device_id})">SAVE</button>
                                 <label class="switch"><input type="checkbox" ${c.enabled?'checked':''}><span class="slider"></span></label>
                             </div>
                         </div>
@@ -248,12 +262,12 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     c.objects.forEach(o => {
                         let tStr = o.type == 0 ? "AI" : o.type == 1 ? "AO" : o.type == 2 ? "AV" : o.type == 3 ? "BI" : o.type == 4 ? "BO" : o.type == 5 ? "BV" : o.type == 13 ? "MSI" : o.type == 14 ? "MSO" : o.type == 19 ? "MSV" : "OBJ";
                         let valStr = (o.val !== null && o.val !== undefined) ? o.val.toFixed(2) : "---";
-                        html += `<tr>
+                        html += `<tr data-inst="${o.inst}" data-type="${o.type}">
                             <td><span class="tag-obj">${tStr}:${o.inst}</span></td>
                             <td><input type="text" class="in-edit" value="${o.name}"></td>
-                            <td style="color:var(--success); font-weight:700; font-family:'JetBrains Mono'">${valStr}</td>
+                            <td style="color:var(--success); font-weight:700; font-family:monospace">${valStr}</td>
                             <td><span class="badge">${o.unit || "---"}</span></td>
-                            <td><label class="switch"><input type="checkbox" ${o.poll?'checked':''}><span class="slider"></span></label></td>
+                            <td><label class="switch"><input type="checkbox" class="poll-sw" ${o.poll?'checked':''}><span class="slider"></span></label></td>
                         </tr>`;
                     });
                     html += `</tbody></table>
@@ -294,15 +308,20 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 mTag.className = 'badge ' + (d.mqtt ? 'badge-ok' : 'badge-fail');
             });
         }
-        let ws = new WebSocket(`ws://${window.location.host}/ws-logs`);
-        ws.onmessage = (e) => {
-            const c = document.getElementById('console-out');
-            const line = document.createElement('div'); line.className = 'log-entry';
-            line.textContent = e.data; c.appendChild(line); c.scrollTop = c.scrollHeight;
-            if(c.childNodes.length > 500) c.removeChild(c.firstChild);
-        };
+        let ws_url = `ws://${window.location.host}/ws-logs`;
+        try {
+            let ws = new WebSocket(ws_url);
+            ws.onmessage = (e) => {
+                const c = document.getElementById('console-out');
+                if(!c) return;
+                const line = document.createElement('div');
+                line.textContent = e.data; c.appendChild(line); c.scrollTop = c.scrollHeight;
+                if(c.childNodes.length > 300) c.removeChild(c.firstChild);
+            };
+        } catch(err) {}
         setInterval(updateStatus, 3000); updateStatus();
-    </script>
+
+        </script>
 </body>
 </html>
 )rawliteral";

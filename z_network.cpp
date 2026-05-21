@@ -29,30 +29,32 @@ void load_device_objects(uint32_t device_id) {
     Preferences prefs;
     // Utilisation de false (RW) pour éviter le NOT_FOUND si le namespace n'existe pas
     if (prefs.begin(ns, false)) {
-        BACnetPersistenceDev data;
-        if (prefs.getBytes("blob", &data, sizeof(data)) > 0) {
-            bool found = false;
-            for(auto& d : bacnet_network_cache) if(d.device_id == device_id) found = true;
-            if (!found) {
-                BACnetDevice dev;
-                dev.device_id = data.device_id;
-                dev.enabled = data.enabled;
-                dev.name = String(data.name);
-                dev.vendor = String(data.vendor);
-                for (int i = 0; i < data.count; i++) {
-                    BACnetObject obj;
-                    obj.type = data.objects[i].val >> 25;
-                    obj.instance = data.objects[i].val & 0x1FFFFFF;
-                    obj.name = String(data.objects[i].name);
-                    obj.enabled = data.objects[i].poll;
-                    obj.present_value = 0;
-                    obj.last_update = 0;
-                    dev.objects.push_back(obj);
+        if (prefs.isKey("blob")) {
+            BACnetPersistenceDev data;
+            if (prefs.getBytes("blob", &data, sizeof(data)) > 0) {
+                bool found = false;
+                for(auto& d : bacnet_network_cache) if(d.device_id == device_id) found = true;
+                if (!found) {
+                    BACnetDevice dev;
+                    dev.device_id = data.device_id;
+                    dev.enabled = data.enabled;
+                    dev.name = String(data.name);
+                    dev.vendor = String(data.vendor);
+                    for (int i = 0; i < data.count; i++) {
+                        BACnetObject obj;
+                        obj.type = data.objects[i].val >> 25;
+                        obj.instance = data.objects[i].val & 0x1FFFFFF;
+                        obj.name = String(data.objects[i].name);
+                        obj.enabled = data.objects[i].poll;
+                        obj.present_value = 0;
+                        obj.last_update = 0;
+                        dev.objects.push_back(obj);
+                    }
+                    dev.discovery_done = true;
+                    dev.last_seen = millis();
+                    bacnet_network_cache.push_back(dev);
+                    z_log("[NVS] Blob restored for %lu\n", (unsigned long)device_id);
                 }
-                dev.discovery_done = true;
-                dev.last_seen = millis();
-                bacnet_network_cache.push_back(dev);
-                z_log("[NVS] Blob restored for %lu\n", (unsigned long)device_id);
             }
         }
         prefs.end();
@@ -67,6 +69,7 @@ void load_configuration() {
     strlcpy(sysCfg.gateway, "192.168.1.254", 16);
     strlcpy(sysCfg.subnet, "255.255.255.0", 16);
     sysCfg.mac_address = 1; sysCfg.max_master = 127; sysCfg.device_id = 1234;
+    sysCfg.apdu_timeout = 1000; sysCfg.max_retries = 3;
     strlcpy(sysCfg.mqtt_server, "192.168.1.11", 32);
     sysCfg.mqtt_port = 1883;
     strlcpy(sysCfg.admin_user, "admin", 32);
@@ -87,7 +90,10 @@ void load_configuration() {
         if (prefs.isKey("sn")) prefs.getString("sn", sysCfg.subnet, 16);
         if (prefs.isKey("mqh")) prefs.getString("mqh", sysCfg.mqtt_server, 32);
         if (prefs.isKey("mac")) sysCfg.mac_address = prefs.getUChar("mac", 1);
+        if (prefs.isKey("mm")) sysCfg.max_master = prefs.getUChar("mm", 127);
         if (prefs.isKey("did")) sysCfg.device_id = prefs.getUInt("did", 1234);
+        if (prefs.isKey("to")) sysCfg.apdu_timeout = prefs.getUShort("to", 1000);
+        if (prefs.isKey("ret")) sysCfg.max_retries = prefs.getUChar("ret", 3);
         prefs.end();
         z_log("[NVS] System config loaded\n");
     }
@@ -104,7 +110,10 @@ void save_configuration() {
         prefs.putString("gw", sysCfg.gateway);
         prefs.putString("sn", sysCfg.subnet);
         prefs.putUChar("mac", sysCfg.mac_address);
+        prefs.putUChar("mm", sysCfg.max_master);
         prefs.putUInt("did", sysCfg.device_id);
+        prefs.putUShort("to", sysCfg.apdu_timeout);
+        prefs.putUChar("ret", sysCfg.max_retries);
         prefs.putString("mqh", sysCfg.mqtt_server);
         prefs.end();
         z_log("[NVS] Configuration saved\n");
@@ -187,7 +196,7 @@ void setup_network_infrastructure() {
 
     webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         JsonDocument doc;
-        doc["ver"] = "v4.5.13";
+        doc["ver"] = "v4.5.19";
         doc["rssi"] = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
         doc["ip"] = is_ap_mode ? "192.168.4.1" : WiFi.localIP().toString();
         doc["mqtt"] = (mqtt_client != NULL);
@@ -198,6 +207,11 @@ void setup_network_infrastructure() {
         doc["static"] = sysCfg.static_ip;
         doc["gw"] = sysCfg.gateway; doc["sn"] = sysCfg.subnet;
         doc["mqh"] = sysCfg.mqtt_server;
+        // Include new BACnet fields
+        doc["mm"] = sysCfg.max_master;
+        doc["did"] = sysCfg.device_id;
+        doc["to"] = sysCfg.apdu_timeout;
+        doc["ret"] = sysCfg.max_retries;
         String res; serializeJson(doc, res);
         request->send(200, "application/json", res);
     });
@@ -241,7 +255,15 @@ void setup_network_infrastructure() {
         check("local_ip", sysCfg.local_ip, 16); check("gateway", sysCfg.gateway, 16);
         check("subnet", sysCfg.subnet, 16); check("mqh", sysCfg.mqtt_server, 32);
         if(request->hasParam("static_ip", true)) sysCfg.static_ip = true; 
-        else if(request->hasParam("ssid", true)) sysCfg.static_ip = false;
+        else if(request->hasParam("form_type", true) && request->getParam("form_type", true)->value() == "wifi") sysCfg.static_ip = false;
+
+        // Extract BACnet fields
+        if(request->hasParam("mac", true)) sysCfg.mac_address = request->getParam("mac", true)->value().toInt();
+        if(request->hasParam("mm", true)) sysCfg.max_master = request->getParam("mm", true)->value().toInt();
+        if(request->hasParam("did", true)) sysCfg.device_id = request->getParam("did", true)->value().toInt();
+        if(request->hasParam("timeout", true)) sysCfg.apdu_timeout = request->getParam("timeout", true)->value().toInt();
+        if(request->hasParam("retries", true)) sysCfg.max_retries = request->getParam("retries", true)->value().toInt();
+
         save_configuration();
         request->send(200, "text/plain", "OK");
         pending_reboot = true; reboot_timer = millis();
