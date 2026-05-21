@@ -12,13 +12,16 @@ extern AsyncWebSocket ws;
 static uint32_t wifi_connect_start = 0;
 static bool wifi_fallback_active = false;
 
+// FIX v4.5.22: Utilisation de printf() pour un log brut identique à Serial.print
 void z_log(const char* format, ...) {
     char loc_buf[256];
     va_list arg;
     va_start(arg, format);
     vsnprintf(loc_buf, sizeof(loc_buf), format, arg);
     va_end(arg);
-    Serial.print(loc_buf);
+    
+    printf("%s", loc_buf); // Standard C Print (Raw output to Serial)
+    
     if (WiFi.status() == WL_CONNECTED && !is_ap_mode && ws.count() > 0) {
         ws.textAll(loc_buf);
     }
@@ -27,7 +30,6 @@ void z_log(const char* format, ...) {
 void load_device_objects(uint32_t device_id) {
     char ns[16]; snprintf(ns, sizeof(ns), "dev_%lu", (unsigned long)device_id);
     Preferences prefs;
-    // Utilisation de false (RW) pour éviter le NOT_FOUND si le namespace n'existe pas
     if (prefs.begin(ns, false)) {
         if (prefs.isKey("blob")) {
             BACnetPersistenceDev data;
@@ -76,7 +78,6 @@ void load_configuration() {
     strlcpy(sysCfg.admin_pass, "admin1234", 64);
 
     Preferences prefs;
-    // On force l'ouverture en RW pour garantir l'existence
     if (prefs.begin("system", false)) {
         if (!prefs.isKey("init")) {
             prefs.putBool("init", true);
@@ -196,7 +197,7 @@ void setup_network_infrastructure() {
 
     webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         JsonDocument doc;
-        doc["ver"] = "v4.5.19";
+        doc["ver"] = VERSION_GLOBAL;
         doc["rssi"] = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
         doc["ip"] = is_ap_mode ? "192.168.4.1" : WiFi.localIP().toString();
         doc["mqtt"] = (mqtt_client != NULL);
@@ -207,7 +208,6 @@ void setup_network_infrastructure() {
         doc["static"] = sysCfg.static_ip;
         doc["gw"] = sysCfg.gateway; doc["sn"] = sysCfg.subnet;
         doc["mqh"] = sysCfg.mqtt_server;
-        // Include new BACnet fields
         doc["mm"] = sysCfg.max_master;
         doc["did"] = sysCfg.device_id;
         doc["to"] = sysCfg.apdu_timeout;
@@ -257,7 +257,6 @@ void setup_network_infrastructure() {
         if(request->hasParam("static_ip", true)) sysCfg.static_ip = true; 
         else if(request->hasParam("form_type", true) && request->getParam("form_type", true)->value() == "wifi") sysCfg.static_ip = false;
 
-        // Extract BACnet fields
         if(request->hasParam("mac", true)) sysCfg.mac_address = request->getParam("mac", true)->value().toInt();
         if(request->hasParam("mm", true)) sysCfg.max_master = request->getParam("mm", true)->value().toInt();
         if(request->hasParam("did", true)) sysCfg.device_id = request->getParam("did", true)->value().toInt();

@@ -11,7 +11,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
     switch ((esp_mqtt_event_id_t)event_id) {
         case MQTT_EVENT_CONNECTED:
-            Serial.println("[MQTT] Connected to Broker.");
+            z_log("[MQTT] Connected to Broker.\n");
             mqtt_conn_fail_count = 0; 
             mqtt_circuit_open = false;
             {
@@ -24,17 +24,24 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         case MQTT_EVENT_DISCONNECTED:
             if (!mqtt_circuit_open) {
                 mqtt_conn_fail_count++;
-                Serial.printf("[MQTT] Disconnected (%d/3)\n", mqtt_conn_fail_count);
-                
+                z_log("[MQTT] Disconnected (%d/3)\n", mqtt_conn_fail_count);
                 if (mqtt_conn_fail_count >= 3) {
-                    Serial.println("[MQTT] CIRCUIT BREAKER TRIPPED.");
+                    z_log("[MQTT] CIRCUIT BREAKER TRIPPED: Scheduled for shutdown.\n");
                     mqtt_circuit_open = true;
                 }
             }
             break;
 
         case MQTT_EVENT_ERROR:
-            Serial.println("[MQTT] Connection Refused.");
+            z_log("[MQTT] Protocol/Network Error\n");
+            // v4.5.22: On incrémente aussi sur erreur réseau pour déclencher le breaker
+            if (!mqtt_circuit_open) {
+                mqtt_conn_fail_count++;
+                if (mqtt_conn_fail_count >= 3) {
+                    z_log("[MQTT] CIRCUIT BREAKER TRIPPED (Error).\n");
+                    mqtt_circuit_open = true;
+                }
+            }
             break;
 
         case MQTT_EVENT_DATA:
@@ -102,7 +109,7 @@ void setup_mqtt() {
     if (mqtt_client) {
         esp_mqtt_client_register_event(mqtt_client, (esp_mqtt_event_id_t)ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
         esp_mqtt_client_start(mqtt_client);
-        Serial.println("[MQTT] Client task started (v4.5.18)");
+        z_log("[MQTT] Client task initiated (v4.5.22)\n");
     }
 }
 
@@ -110,7 +117,7 @@ void handle_mqtt() {
     static bool is_stopped = false;
     
     if (mqtt_circuit_open && !is_stopped && mqtt_client != NULL) {
-        Serial.println("[MQTT] Executing Circuit Breaker Shutdown...");
+        z_log("[MQTT] Executing Circuit Breaker Shutdown...\n");
         esp_mqtt_client_stop(mqtt_client);
         is_stopped = true;
         return;
