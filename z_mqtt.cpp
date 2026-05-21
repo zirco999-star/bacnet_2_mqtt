@@ -6,6 +6,7 @@ extern void z_log(const char* format, ...);
 
 static int mqtt_conn_fail_count = 0;
 static bool mqtt_circuit_open = false;
+static bool mqtt_is_connected = false;
 
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
     esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
@@ -14,6 +15,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             z_log("[MQTT] Connected to Broker.\n");
             mqtt_conn_fail_count = 0; 
             mqtt_circuit_open = false;
+            mqtt_is_connected = true;
             {
                 char sub_topic[128];
                 snprintf(sub_topic, sizeof(sub_topic), "%s/+/+/+/set", sysCfg.mqtt_prefix);
@@ -22,6 +24,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             break;
 
         case MQTT_EVENT_DISCONNECTED:
+            mqtt_is_connected = false;
             if (!mqtt_circuit_open) {
                 mqtt_conn_fail_count++;
                 z_log("[MQTT] Disconnected (%d/3)\n", mqtt_conn_fail_count);
@@ -33,6 +36,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             break;
 
         case MQTT_EVENT_ERROR:
+            mqtt_is_connected = false;
             z_log("[MQTT] Protocol/Network Error\n");
             // v4.5.22: On incrémente aussi sur erreur réseau pour déclencher le breaker
             if (!mqtt_circuit_open) {
@@ -112,6 +116,8 @@ void setup_mqtt() {
         z_log("[MQTT] Client task initiated (v4.5.22)\n");
     }
 }
+
+bool is_mqtt_connected() { return mqtt_is_connected; }
 
 void handle_mqtt() {
     static bool is_stopped = false;

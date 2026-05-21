@@ -3,4 +3,5 @@
 #include "z_config.h"
 void setup_mqtt();
 void handle_mqtt();
+bool is_mqtt_connected();
 #endif

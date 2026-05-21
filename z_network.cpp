@@ -1,6 +1,7 @@
 #include "z_network.h"
 #include "z_ui.h"
 #include "z_bacnet.h"
+#include "z_mqtt.h"
 #include <ArduinoJson.h>
 #include <Update.h>
 #include <ESPmDNS.h>
@@ -194,27 +195,51 @@ void setup_network_infrastructure() {
         String response; serializeJson(doc, response);
         request->send(200, "application/json", response);
     });
+webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
+    JsonDocument doc;
+    doc["ver"] = VERSION_GLOBAL;
+    doc["rssi"] = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
+    doc["ip"] = is_ap_mode ? "192.168.4.1" : WiFi.localIP().toString();
+    doc["mqtt"] = is_mqtt_connected();
+    doc["heap"] = ESP.getFreeHeap() / 1024;    doc["mac_id"] = sysCfg.mac_address;
+    doc["mstp_t"] = bacnetStats.tokens_seen;
+    doc["ssid"] = sysCfg.wifi_ssid;
+    doc["static"] = sysCfg.static_ip;
+    doc["gw"] = sysCfg.gateway; doc["sn"] = sysCfg.subnet;
+    doc["mqh"] = sysCfg.mqtt_server;
+    doc["mm"] = sysCfg.max_master;
+    doc["did"] = sysCfg.device_id;
+    doc["to"] = sysCfg.apdu_timeout;
+    doc["ret"] = sysCfg.max_retries;
+    String res; serializeJson(doc, res);
+    request->send(200, "application/json", res);
+});
 
-    webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
-        JsonDocument doc;
-        doc["ver"] = VERSION_GLOBAL;
-        doc["rssi"] = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
-        doc["ip"] = is_ap_mode ? "192.168.4.1" : WiFi.localIP().toString();
-        doc["mqtt"] = (mqtt_client != NULL);
-        doc["heap"] = ESP.getFreeHeap() / 1024;
-        doc["mac_id"] = sysCfg.mac_address;
-        doc["mstp_t"] = bacnetStats.tokens_seen;
-        doc["ssid"] = sysCfg.wifi_ssid;
-        doc["static"] = sysCfg.static_ip;
-        doc["gw"] = sysCfg.gateway; doc["sn"] = sysCfg.subnet;
-        doc["mqh"] = sysCfg.mqtt_server;
-        doc["mm"] = sysCfg.max_master;
-        doc["did"] = sysCfg.device_id;
-        doc["to"] = sysCfg.apdu_timeout;
-        doc["ret"] = sysCfg.max_retries;
-        String res; serializeJson(doc, res);
-        request->send(200, "application/json", res);
-    });
+webServer.on("/api/whois", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if(!is_authenticated(request)) return;
+    BACnetJob job; job.type = JOB_WHO_IS;
+    enqueue_bacnet_job(job);
+    request->send(200, "text/plain", "WHO-IS ENQUEUED");
+});
+
+webServer.on("/api/iam", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if(!is_authenticated(request)) return;
+    request->send(200, "text/plain", "I-AM ENQUEUED");
+});
+
+webServer.on("/api/reset_cache", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if(!is_authenticated(request)) return;
+    z_log("[NVS] Manual cache reset requested\n");
+    for (auto& dev : bacnet_network_cache) {
+        char ns[16]; snprintf(ns, sizeof(ns), "dev_%lu", (unsigned long)dev.device_id);
+        Preferences prefs;
+        if (prefs.begin(ns, false)) { prefs.clear(); prefs.end(); }
+    }
+    bacnet_network_cache.clear();
+    request->send(200, "text/plain", "CACHE CLEARED");
+    pending_reboot = true; reboot_timer = millis();
+});
+
 
     webServer.on("/api/save_objects", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
         if(!is_authenticated(request)) return;

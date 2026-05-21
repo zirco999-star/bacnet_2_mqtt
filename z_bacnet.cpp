@@ -108,11 +108,31 @@ static void bacnet_task(void *pv) {
     uint8_t total_objects = 0, current_scan_index = 0, current_invoke_id = 10, current_poll_idx = 0;
     uart_event_t event;
 
-    z_log("[BACNET] Engine v4.5.22 - Platinum Ready\n");
+    z_log("[BACNET] Engine v4.5.23 - Platinum Final\n");
 
     for (;;) {
         if (xQueueReceive(uart_evt_queue, (void *)&event, 0) == pdTRUE) {
             if (event.type == UART_FIFO_OVF || event.type == UART_BUFFER_FULL) uart_flush_input(RS485_UART_PORT);
+        }
+
+        // --- JOB QUEUE PROCESSING ---
+        if (has_token && state == IDLE && !waiting_for_reply) {
+            BACnetJob job;
+            if (xQueueReceive(bacnet_job_queue, &job, 0) == pdTRUE) {
+                if (job.type == JOB_WHO_IS) {
+                    scan_done = false; current_scan_index = 0;
+                    bacnet_network_cache.clear();
+                    z_log("[BACNET] Manual Scan Triggered\n");
+                } else if (job.type == JOB_WRITE_PROP) {
+                    uint8_t apdu[] = { 0x01, 0x00, 0x00, 0x0F, current_invoke_id++, 0x01, 0x0C, 
+                        (uint8_t)((job.obj_type>>2)&0xFF), (uint8_t)((job.obj_type<<6)|(job.obj_instance>>16)), (uint8_t)(job.obj_instance>>8), (uint8_t)job.obj_instance,
+                        0x19, 0x55, 0x3E, 0x44, 0x00, 0x00, 0x00, 0x00, 0x3F, 0x49, job.priority };
+                    union { uint32_t i; float f; } u; u.f = job.write_value;
+                    apdu[15] = (u.i >> 24) & 0xFF; apdu[16] = (u.i >> 16) & 0xFF; apdu[17] = (u.i >> 8) & 0xFF; apdu[18] = u.i & 0xFF;
+                    send_mstp_frame(job.target_mac, 0x05, apdu, sizeof(apdu));
+                    state = MSTP_WAIT_TX_DONE;
+                }
+            }
         }
 
         // FIX: Polling non-bloquant du registre de statut UART (universel Core 3.x)

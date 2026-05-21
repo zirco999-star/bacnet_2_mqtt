@@ -2,13 +2,14 @@
 #define Z_UI_H
 
 #include <Arduino.h>
+#include "z_config.h"
 
 const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BACNET2MQTT - v4.5.22</title>
+    <title>BACNET2MQTT - )rawliteral" VERSION_GLOBAL R"rawliteral(</title>
     <style>
         :root { 
             --bg: #09090b; --card: #18181b; --primary: #3b82f6; --accent: #6366f1; 
@@ -98,7 +99,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         <div class="logo-box">
             <div style="display:flex; align-items:center; gap:0.5rem">
                 <a href="https://github.com/zirco999-star" target="_blank" class="logo"><span class="b">BACNET</span><span class="n">2</span><span class="m">MQTT</span></a>
-                <span style="font-size:0.7rem; font-weight:800; color:var(--muted)">- v4.5.22</span>
+                <span style="font-size:0.7rem; font-weight:800; color:var(--muted)">- )rawliteral" VERSION_GLOBAL R"rawliteral(</span>
             </div>
             <div class="credits">by <a href="https://github.com/zirco999-star" target="_blank">Z1rc0n1um</a></div>
         </div>
@@ -259,8 +260,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                                 <label class="switch"><input type="checkbox" ${c.enabled?'checked':''}><span class="slider"></span></label>
                             </div>
                         </div>
-                        <table><thead><tr><th>OBJ</th><th>NAME</th><th>VALUE</th><th>UNIT</th><th>POLL</th></tr></thead><tbody>`;
+                        <table style="${c.enabled?'':'opacity:0.4;pointer-events:none'}"><thead><tr><th>OBJ</th><th>NAME</th><th>VALUE</th><th>UNIT</th><th>POLL</th></tr></thead><tbody>`;
                     c.objects.forEach(o => {
+                        if(o.type === 8) return; // Skip Device Object
                         let tStr = o.type == 0 ? "AI" : o.type == 1 ? "AO" : o.type == 2 ? "AV" : o.type == 3 ? "BI" : o.type == 4 ? "BO" : o.type == 5 ? "BV" : o.type == 13 ? "MSI" : o.type == 14 ? "MSO" : o.type == 19 ? "MSV" : "OBJ";
                         let valStr = (o.val !== null && o.val !== undefined) ? o.val.toFixed(2) : "---";
                         html += `<tr data-inst="${o.inst}" data-type="${o.type}">
@@ -296,7 +298,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 }
                 document.getElementById('s-ip').innerText=d.ip;
                 document.getElementById('s-sn').innerText="M: " + (d.sn || "255.255.255.0");
-                document.getElementById('s-tokens').innerText=d.mstp_t;
+                document.getElementById('s-tokens').innerHTML=d.mstp_t + ' <span style="font-size:0.6rem; opacity:0.5">TOKENS</span>';
                 document.getElementById('s-mqtt-host').innerText = d.mqh || "UNDEFINED";
                 const mqS = document.getElementById('s-mqtt-status');
                 mqS.innerText = d.mqtt ? "SYNC" : "OFFLINE";
