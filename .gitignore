@@ -1,3 +1,6 @@
+extract/
+.vscode/
+.theia/
 build/
 .pio/
 *.bin

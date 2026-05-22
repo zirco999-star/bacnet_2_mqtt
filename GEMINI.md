@@ -1,5 +1,12 @@
 # Suivi Technique et Directives : BACnet2MQTT (v2026)
 
+## Architecture du Projet
+- `/bacnet_2_mqtt.ino` : Point d'entrée principal (doit rester à la racine).
+- `src/` : Fichiers sources `.cpp` et `.h`.
+- `utils/` : Scripts de compilation (`compil.sh`) et de flash (`flashOTA.sh`).
+- `plans/` : Documents de conception et plans de remédiation.
+- `extract/` : Logs, extractions et exports de données.
+
 ## Architecture Materielle et Logicielle
 - Materiel : Waveshare ESP32-S3-RS485-CAN (8MB Flash, 8MB OPI PSRAM).
 - Pins Critiques : TX=17, RX=18, RTS/DE=21.
@@ -18,8 +25,9 @@ Le repertoire /home/dev/bacnet_2_mqtt etant un lien symbolique vers /mnt/save, l
 2. Copier vers la cible : cp /home/dev/z_bacnet_edit.cpp /home/dev/bacnet_2_mqtt/z_bacnet.cpp.
 
 ### 2. Compilation et Deploiement OTA
-Utiliser systematiquement l'environnement virtuel et la chaine de commande unique pour garantir la coherence :
-- Commande : export PATH=/home/dev/venv/bin:$PATH && arduino-cli compile ... && python3 espota.py ... && python3 listen_logs_v2.py.
+Utiliser impérativement les scripts du dossier `utils` :
+- Compilation : `./utils/compil.sh`
+- Flash OTA : `./utils/flashOTA.sh [IP] [PORT]` (Défaut: 192.168.1.50:3232)
 
 ### 3. Suivi du Projet (TRACE.md)
 Chaque session ou etape majeure validee (ex: Ring stable, Discovery reussie) doit faire l'objet d'une mise a jour du fichier TRACE.md a la racine du projet.
@@ -29,6 +37,8 @@ Chaque session ou etape majeure validee (ex: Ring stable, Discovery reussie) doi
 - Message de commit explicite : vX.Y.Z: Description technique courte.
 
 ## Specificites BACnet MS/TP (Lecons apprises)
-- Timing YABE : L'automate ECB-203 est lent (~240ms). Toujours maintenir une attente non-bloquante de 280ms apres une requete Data-Expecting-Reply.
-- Auto-RTS : Utiliser UART_MODE_RS485_HALF_DUPLEX natif sur le port UART_NUM_1.
-- Polling : Ne pas depasser 1 requete tous les 20 jetons pour garantir la fluidite du bus.
+- **Deadlock UART (ESP-IDF v5)** : L'événement `UART_TX_DONE` est absent. Utiliser `uart_wait_tx_done(RS485_UART_PORT, 0) == ESP_OK` pour le polling matériel.
+- **FSM Transition** : Après transmission, si `waiting_for_reply` est vrai, basculer impérativement en `MSTP_AWAIT_REPLY` (pas `IDLE`) pour respecter le `T_reply_delay` ASHRAE 135.
+- **Timing YABE** : L'automate ECB-203 est lent (~240ms). Toujours maintenir une attente non-bloquante de 280ms apres une requete Data-Expecting-Reply.
+- **Auto-RTS** : Utiliser UART_MODE_RS485_HALF_DUPLEX natif sur le port UART_NUM_1.
+- **Polling** : Ne pas depasser 1 requete tous les 20 jetons pour garantir la fluidite du bus.
