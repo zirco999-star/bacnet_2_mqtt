@@ -46,24 +46,14 @@ static bool decode_next_tag(const uint8_t *data, uint16_t *pos, uint16_t max_len
     tag->number = b >> 4;
     tag->isContext = (b & 0x08) != 0;
     uint8_t lvt = b & 0x07;
-    if (tag->number == 0x0F) {
-        if (*pos >= max_len) return false;
-        tag->number = data[(*pos)++];
-    }
+    if (tag->number == 0x0F) tag->number = data[(*pos)++];
     tag->isOpening = (lvt == 6);
     tag->isClosing = (lvt == 7);
     if (lvt <= 4) tag->len = lvt;
     else if (lvt == 5) {
-        if (*pos >= max_len) return false;
         tag->len = data[(*pos)++];
-        if (tag->len == 254) { 
-            if (*pos + 1 >= max_len) return false;
-            tag->len = (data[*pos] << 8) | data[*pos+1]; *pos += 2; 
-        }
-        else if (tag->len == 255) { 
-            if (*pos + 3 >= max_len) return false;
-            tag->len = ((uint32_t)data[*pos] << 24) | ((uint32_t)data[*pos+1] << 16) | ((uint32_t)data[*pos+2] << 8) | data[*pos+3]; *pos += 4; 
-        }
+        if (tag->len == 254) { tag->len = (data[*pos] << 8) | data[*pos+1]; *pos += 2; }
+        else if (tag->len == 255) { tag->len = ((uint32_t)data[*pos] << 24) | ((uint32_t)data[*pos+1] << 16) | ((uint32_t)data[*pos+2] << 8) | data[*pos+3]; *pos += 4; }
     } else tag->len = 0;
     return true;
 }
@@ -104,9 +94,10 @@ static void bacnet_task(void *pv) {
     uint8_t disc_obj_ptr = 0;
 
     uart_event_t event;
-    z_log("[BACNET] Engine v4.5.31 - Aggressive Discovery\n");
+    z_log("[BACNET] Engine v4.5.32 - Expert Async FSM\n");
 
     for (;;) {
+        // --- UART EVENT HANDLING ---
         if (xQueueReceive(uart_evt_queue, (void *)&event, 0) == pdTRUE) {
             if (event.type == UART_FIFO_OVF || event.type == UART_BUFFER_FULL) {
                 uart_flush_input(RS485_UART_PORT);
@@ -114,8 +105,7 @@ static void bacnet_task(void *pv) {
         }
 
         if (millis() - heartbeat_timer > 10000) {
-            z_log("[BACNET] Heartbeat - Tokens: %lu, RX: %lu, TX: %lu, Next: %d\n", 
-                bacnetStats.tokens_seen, bacnetStats.ms_msgs_rx, bacnetStats.ms_msgs_tx, next_station);
+            z_log("[BACNET] Heartbeat - Tokens: %lu, RX: %lu, TX: %lu\n", bacnetStats.tokens_seen, bacnetStats.ms_msgs_rx, bacnetStats.ms_msgs_tx);
             heartbeat_timer = millis();
         }
 
@@ -129,7 +119,12 @@ static void bacnet_task(void *pv) {
                         bacnet_network_cache.clear();
                         xSemaphoreGive(cache_mutex);
                     }
-                    z_log("[BACNET] Manual Scan Triggered\n");
+                    // Expert WHO-IS (Global Broadcast)
+                    uint8_t payload[] = { 0x01, 0x20, 0xFF, 0xFF, 0x00, 0xFF, 0x10, 0x08 };
+                    send_mstp_frame(0xFF, 0x06, payload, sizeof(payload));
+                    waiting_for_reply = false;
+                    state = MSTP_WAIT_TX_DONE;
+                    z_log("[BACNET] Who-Is Global Broadcast Sent\n");
                 } else if (job.type == JOB_WRITE_PROP) {
                     uint8_t apdu[] = { 0x01, 0x00, 0x00, 0x0F, current_invoke_id++, 0x01, 0x0C, 
                         (uint8_t)((job.obj_type>>2)&0xFF), (uint8_t)((job.obj_type<<6)|(job.obj_instance>>16)), (uint8_t)(job.obj_instance>>8), (uint8_t)job.obj_instance,
@@ -137,6 +132,7 @@ static void bacnet_task(void *pv) {
                     union { uint32_t i; float f; } u; u.f = job.write_value;
                     apdu[15] = (u.i >> 24) & 0xFF; apdu[16] = (u.i >> 16) & 0xFF; apdu[17] = (u.i >> 8) & 0xFF; apdu[18] = u.i & 0xFF;
                     send_mstp_frame(job.target_mac, 0x05, apdu, sizeof(apdu));
+                    waiting_for_reply = true;
                     state = MSTP_WAIT_TX_DONE;
                 }
             }
@@ -144,56 +140,55 @@ static void bacnet_task(void *pv) {
 
         if (state == MSTP_WAIT_TX_DONE) {
             if (uart_wait_tx_done(RS485_UART_PORT, 0) == ESP_OK) {
-                last_req_time = millis();
-                state = IDLE;
+                if (waiting_for_reply) {
+                    last_req_time = millis();
+                    state = IDLE;
+                } else {
+                    // Pass token directly if not waiting for reply
+                    if (has_token) {
+                        uint8_t f[8] = { 0x55, 0xFF, 0x00, next_station, sysCfg.mac_address, 0, 0, 0 };
+                        f[7] = calc_header_crc(&f[2], 5); uart_tx(f, 8);
+                        has_token = false;
+                    }
+                    state = IDLE;
+                }
             }
         }
 
+        // --- UART RECEIVE ---
         while (uart_read_bytes(RS485_UART_PORT, &rx_byte, 1, 0) > 0) {
             last_rx_time = millis();
             switch (state) {
                 case IDLE: if (rx_byte == 0x55) state = PREAMBLE_55; break;
-                case PREAMBLE_55: if (rx_byte == 0xFF) { state = HEADER; header_idx = 0; } else if (rx_byte == 0x55) state = PREAMBLE_55; else state = IDLE; break;
+                case PREAMBLE_55: if (rx_byte == 0xFF) { state = HEADER; header_idx = 0; } else state = IDLE; break;
                 case HEADER:
                     header[header_idx++] = rx_byte;
                     if (header_idx == 6) {
                         if (calc_header_crc(header, 5) == header[5]) {
                             bacnetStats.ms_msgs_rx++;
-                            uint8_t type = header[0], dest = header[1], src = header[2];
+                            uint8_t type = header[0], dest = header[1], src_mac = header[2];
                             data_len = (header[3] << 8) | header[4];
-                            
-                            if (type == 0x00 && dest == sysCfg.mac_address) { 
-                                has_token = true; token_acquired_time = millis(); 
-                                bacnetStats.tokens_seen++;
-                                next_station = src; // Dynamically set next master as the one who sent us the token
-                            }
+                            if (type == 0x00 && dest == sysCfg.mac_address) { has_token = true; token_acquired_time = millis(); bacnetStats.tokens_seen++; next_station = src_mac; }
                             else if (type == 0x01 && dest == sysCfg.mac_address) { 
-                                vTaskDelay(pdMS_TO_TICKS(15)); 
-                                uint8_t f[8] = { 0x55, 0xFF, 0x02, src, sysCfg.mac_address, 0, 0, 0 };
+                                vTaskDelay(pdMS_TO_TICKS(15));
+                                uint8_t f[8] = { 0x55, 0xFF, 0x02, src_mac, sysCfg.mac_address, 0, 0, 0 };
                                 f[7] = calc_header_crc(&f[2], 5); uart_tx(f, 8);
                                 state = MSTP_WAIT_TX_DONE;
-                                next_station = src; // The one polling us is likely our token target
                             }
-                            
-                            if (data_len > 0 && data_len <= 512) { state = DATA; data_idx = 0; } 
-                            else if(state != MSTP_WAIT_TX_DONE) state = IDLE;
-                        } else { bacnetStats.errors_crc++; state = IDLE; }
+                            if (data_len > 0 && data_len <= 512) { state = DATA; data_idx = 0; } else if(state != MSTP_WAIT_TX_DONE) state = IDLE;
+                        } else state = IDLE;
                     }
                     break;
-                case DATA: 
-                    data_buf[data_idx++] = rx_byte; 
-                    if (data_idx == data_len) state = CRC16_L; 
-                    break;
+                case DATA: data_buf[data_idx++] = rx_byte; if (data_idx == data_len) state = CRC16_L; break;
                 case CRC16_L: rx_crc16 = rx_byte; state = CRC16_H; break;
                 case CRC16_H: 
                     rx_crc16 |= (rx_byte << 8);
                     if (calc_data_crc(data_buf, data_len) == rx_crc16) {
                         uint16_t pos = 0;
-                        if (data_len > 2 && data_buf[0] == 0x01) { // NPDU
+                        if (data_len > 2 && data_buf[0] == 0x01) { // NPDU Local
                             pos += (data_buf[1] & 0x20) ? 2 : 2; 
                             if (pos + 3 < data_len && data_buf[pos] == 0x30) { // Complex Ack
-                                pos += 3;
-                                BACnetTag t;
+                                pos += 3; BACnetTag t;
                                 while (decode_next_tag(data_buf, &pos, data_len, &t)) {
                                     if (t.isOpening && t.number == 3) {
                                         if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(50))) {
@@ -205,24 +200,21 @@ static void bacnet_task(void *pv) {
                                                         BACnetDevice d; d.mac_address = header[2]; d.device_id = 0; d.discovery_done = false; d.enabled = true;
                                                         d.name = "ECB-203"; d.vendor = "Distech Controls";
                                                         bacnet_network_cache.push_back(d);
-                                                        z_log("[BACNET] Found MAC %d (%d points)\n", header[2], total_objects);
                                                     } else if (!bacnet_network_cache.empty()) {
                                                         uint16_t ot = (data_buf[pos+1] << 2) | (data_buf[pos+2] >> 6);
                                                         uint32_t oi = ((uint32_t)(data_buf[pos+2] & 0x3F) << 16) | (data_buf[pos+3] << 8) | data_buf[pos+4];
                                                         if (current_scan_index == 1) { target_device_id = oi; bacnet_network_cache[0].device_id = oi; }
                                                         BACnetObject obj; obj.type = ot; obj.instance = oi; obj.present_value = 0; obj.last_update = 0; obj.enabled = true;
-                                                        obj.name = "Point_" + String(oi); 
-                                                        bacnet_network_cache[0].objects.push_back(obj);
-                                                        current_scan_index++; 
-                                                        if (current_scan_index > total_objects) { disc_step = DISC_NAME; disc_obj_ptr = 0; }
+                                                        obj.name = "Point_" + String(oi); bacnet_network_cache[0].objects.push_back(obj);
+                                                        current_scan_index++; if (current_scan_index > total_objects) { disc_step = DISC_NAME; disc_obj_ptr = 0; }
                                                     }
                                                 } else if (!bacnet_network_cache.empty() && disc_obj_ptr < bacnet_network_cache[0].objects.size()) {
                                                     auto& o = bacnet_network_cache[0].objects[disc_obj_ptr];
                                                     BACnetTag val_tag;
                                                     if (decode_next_tag(data_buf, &pos, data_len, &val_tag)) {
                                                         if (disc_step == DISC_NAME && val_tag.number == 7) {
-                                                            uint16_t slen = std::min((int)val_tag.len - 1, 32);
-                                                            char n[33]; memcpy(n, &data_buf[pos+1], slen); n[slen] = '\0';
+                                                            char n[33]; uint16_t slen = std::min((int)val_tag.len - 1, 32);
+                                                            memcpy(n, &data_buf[pos+1], slen); n[slen] = '\0';
                                                             o.name = String(n); disc_step = DISC_VALUE;
                                                             z_log("[BACNET] Point %lu Name: %s\n", (unsigned long)o.instance, n);
                                                         } else if (disc_step == DISC_VALUE && val_tag.number == 4) {
@@ -256,18 +248,15 @@ static void bacnet_task(void *pv) {
                                 }
                             }
                         }
-                    } else bacnetStats.errors_crc++;
-                    state = IDLE; 
-                    break;
+                    }
+                    state = IDLE; break;
             }
         }
 
+        // --- TOKEN PASSING ---
         if (has_token && state == IDLE) {
             bool req_sent = false;
-            // FIX v4.5.31: Remove token modulo for discovery phase
-            bool should_check = (!scan_done) ? true : (bacnetStats.tokens_seen % 25 == 0);
-            
-            if (!waiting_for_reply && should_check) {
+            if (!waiting_for_reply && (bacnetStats.tokens_seen % 35 == 0 || !scan_done)) {
                 current_invoke_id++;
                 if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(20))) {
                     if (!scan_done) {
@@ -275,36 +264,29 @@ static void bacnet_task(void *pv) {
                             uint8_t apdu[] = { 0x01, 0x00, 0x00, 0x05, current_invoke_id, 0x0C, 0x0C, 0x02, 0x00, 0x00, 0x00, 0x19, 0x4C, 0x29, current_scan_index };
                             if (target_device_id != 0x3FFFFF) { apdu[8]=(target_device_id>>16)&0xFF; apdu[9]=(target_device_id>>8)&0xFF; apdu[10]=target_device_id&0xFF; }
                             send_mstp_frame(4, 0x05, apdu, sizeof(apdu));
-                            z_log("[BACNET TX] Requesting Object List index %d\n", current_scan_index);
-                            req_sent = true;
-                        } else if (!bacnet_network_cache.empty() && disc_obj_ptr < bacnet_network_cache[0].objects.size()) {
+                        } else if (!bacnet_network_cache.empty()) {
                             auto& o = bacnet_network_cache[0].objects[disc_obj_ptr];
                             uint8_t pid = (disc_step == DISC_NAME) ? 77 : 85;
                             uint8_t apdu[] = { 0x01, 0x00, 0x00, 0x05, current_invoke_id, 0x0C, 0x0C, (uint8_t)((o.type>>2)&0xFF), (uint8_t)((o.type<<6)|(o.instance>>16)), (uint8_t)(o.instance>>8), (uint8_t)o.instance, 0x19, pid };
                             send_mstp_frame(4, 0x05, apdu, sizeof(apdu));
-                            z_log("[BACNET TX] Requesting Prop %d for Object %lu\n", pid, (unsigned long)o.instance);
-                            req_sent = true;
                         }
+                        req_sent = true; waiting_for_reply = true;
                     } else if (!bacnet_network_cache.empty()) {
                         current_poll_idx = (current_poll_idx + 1) % bacnet_network_cache[0].objects.size();
                         auto& o = bacnet_network_cache[0].objects[current_poll_idx];
                         if (o.enabled && bacnet_network_cache[0].enabled && o.type != 8) {
                             uint8_t apdu[] = { 0x01, 0x00, 0x00, 0x05, current_invoke_id, 0x0C, 0x0C, (uint8_t)((o.type>>2)&0xFF), (uint8_t)((o.type<<6)|(o.instance>>16)), (uint8_t)(o.instance>>8), (uint8_t)o.instance, 0x19, 0x55 };
                             send_mstp_frame(4, 0x05, apdu, sizeof(apdu));
-                            req_sent = true;
+                            req_sent = true; waiting_for_reply = true;
                         }
                     }
                     xSemaphoreGive(cache_mutex);
                 }
-                if (req_sent) { waiting_for_reply = true; state = MSTP_WAIT_TX_DONE; }
             }
             
-            uint32_t limit = waiting_for_reply ? 500 : 10;
+            uint32_t limit = waiting_for_reply ? 400 : 10;
             if (millis() - token_acquired_time > limit) {
-                if (waiting_for_reply && (millis() - last_req_time > 1500)) {
-                    waiting_for_reply = false;
-                    z_log("[BACNET] Reply Timeout\n");
-                }
+                if (waiting_for_reply && (millis() - last_req_time > 1200)) waiting_for_reply = false;
                 if (!waiting_for_reply) {
                     uint8_t f[8] = { 0x55, 0xFF, 0x00, next_station, sysCfg.mac_address, 0, 0, 0 };
                     f[7] = calc_header_crc(&f[2], 5); uart_tx(f, 8);
@@ -318,7 +300,7 @@ static void bacnet_task(void *pv) {
             last_rx_time = millis(); 
             uint8_t f[8]={0x55,0xFF,0x01,4,sysCfg.mac_address,0,0,0}; f[7]=calc_header_crc(&f[2],5); 
             uart_tx(f,8); state = MSTP_WAIT_TX_DONE;
-            z_log("[BACNET] Token Regeneration (Next: %d)\n", next_station);
+            z_log("[BACNET] Token Regeneration\n");
         }
         vTaskDelay(1);
     }
@@ -334,7 +316,7 @@ void setup_bacnet_engine() {
     uart_set_pin(RS485_UART_PORT, TX_PIN, RX_PIN, RTS_PIN, UART_PIN_NO_CHANGE);
     uart_set_mode(RS485_UART_PORT, UART_MODE_RS485_HALF_DUPLEX);
     xTaskCreatePinnedToCore(bacnet_task, "BACnet", 16384, NULL, 15, NULL, 1);
-    z_log("[BACNET] Engine v4.5.31 Initialized\n");
+    z_log("[BACNET] Engine v4.5.32 Initialized\n");
 }
 bool enqueue_bacnet_job(BACnetJob job) { if (bacnet_job_queue == NULL) return false; return xQueueSend(bacnet_job_queue, &job, 0) == pdTRUE; }
 bool enqueue_mqtt_publish(MQTTPublishJob pubJob) { if (mqtt_publish_queue == NULL) return false; return xQueueSend(mqtt_publish_queue, &pubJob, 0) == pdTRUE; }
