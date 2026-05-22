@@ -73,6 +73,8 @@ void load_configuration() {
     sysCfg.apdu_timeout = 1000; sysCfg.max_retries = 3;
     strlcpy(sysCfg.mqtt_server, "192.168.1.11", 32);
     sysCfg.mqtt_port = 1883;
+    strlcpy(sysCfg.mqtt_user, "", 32);
+    strlcpy(sysCfg.mqtt_pass, "", 32);
     strlcpy(sysCfg.admin_user, "admin", 32);
     strlcpy(sysCfg.admin_pass, "admin1234", 64);
 
@@ -89,6 +91,8 @@ void load_configuration() {
         if (prefs.isKey("gw")) prefs.getString("gw", sysCfg.gateway, 16);
         if (prefs.isKey("sn")) prefs.getString("sn", sysCfg.subnet, 16);
         if (prefs.isKey("mqh")) prefs.getString("mqh", sysCfg.mqtt_server, 32);
+        if (prefs.isKey("mqu")) prefs.getString("mqu", sysCfg.mqtt_user, 32);
+        if (prefs.isKey("mqp")) prefs.getString("mqp", sysCfg.mqtt_pass, 32);
         if (prefs.isKey("mac")) sysCfg.mac_address = prefs.getUChar("mac", 1);
         if (prefs.isKey("mm")) sysCfg.max_master = prefs.getUChar("mm", 127);
         if (prefs.isKey("did")) sysCfg.device_id = prefs.getUInt("did", 1234);
@@ -115,6 +119,8 @@ void save_configuration() {
         prefs.putUShort("to", sysCfg.apdu_timeout);
         prefs.putUChar("ret", sysCfg.max_retries);
         prefs.putString("mqh", sysCfg.mqtt_server);
+        prefs.putString("mqu", sysCfg.mqtt_user);
+        prefs.putString("mqp", sysCfg.mqtt_pass);
         prefs.end();
         z_log("[NVS] Configuration saved\n");
     }
@@ -283,6 +289,7 @@ void setup_network_infrastructure() {
         check("ssid", sysCfg.wifi_ssid, 32); check("pass", sysCfg.wifi_pass, 64);
         check("local_ip", sysCfg.local_ip, 16); check("gateway", sysCfg.gateway, 16);
         check("subnet", sysCfg.subnet, 16); check("mqh", sysCfg.mqtt_server, 32);
+        check("mqu", sysCfg.mqtt_user, 32); check("mqp", sysCfg.mqtt_pass, 32);
         if(request->hasParam("static_ip", true)) sysCfg.static_ip = true; 
         else if(request->hasParam("form_type", true) && request->getParam("form_type", true)->value() == "wifi") sysCfg.static_ip = false;
 
