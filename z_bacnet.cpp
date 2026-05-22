@@ -92,33 +92,34 @@ static void bacnet_task(void *pv) {
     uint8_t rx_byte; uint8_t header[6]; uint8_t header_idx=0; uint8_t data_buf[512]; 
     uint16_t data_len=0, data_idx=0, rx_crc16=0;
     enum { IDLE, PREAMBLE_55, PREAMBLE_FF, HEADER, DATA, CRC16_L, CRC16_H, MSTP_WAIT_TX_DONE } state = IDLE;
-    uint8_t next_station = 4; uint32_t last_rx_time = millis(); 
+    uint32_t last_rx_time = millis(); 
     bool has_token = false, scan_done = false, waiting_for_reply = false;
     uint32_t token_acquired_time = 0, last_req_time = 0;
     uint32_t target_device_id = 0x3FFFFF;
     uint8_t total_objects = 0, current_scan_index = 0, current_invoke_id = 10, current_poll_idx = 0;
     uint32_t heartbeat_timer = 0;
+    uint8_t next_station = (sysCfg.mac_address + 1) % 128;
     
-    enum { DISC_LIST, DISC_NAME, DISC_VALUE, DISC_UNITS } disc_step = DISC_LIST;
+    enum { DISC_LIST, DISC_NAME, DISC_VALUE } disc_step = DISC_LIST;
     uint8_t disc_obj_ptr = 0;
 
     uart_event_t event;
-    z_log("[BACNET] Engine v4.5.29 - Deep Diagnostic Mode\n");
+    z_log("[BACNET] Engine v4.5.30 - Token & Mutex Stable\n");
 
     for (;;) {
         if (xQueueReceive(uart_evt_queue, (void *)&event, 0) == pdTRUE) {
             if (event.type == UART_FIFO_OVF || event.type == UART_BUFFER_FULL) {
-                z_log("[BACNET] UART Overflow/Full Event detected\n");
                 uart_flush_input(RS485_UART_PORT);
             }
         }
 
         if (millis() - heartbeat_timer > 10000) {
-            z_log("[BACNET] Task Heartbeat (Tokens: %lu, RX: %lu, TX: %lu)\n", 
-                bacnetStats.tokens_seen, bacnetStats.ms_msgs_rx, bacnetStats.ms_msgs_tx);
+            z_log("[BACNET] Heartbeat - Tokens: %lu, RX: %lu, TX: %lu, Scan: %s\n", 
+                bacnetStats.tokens_seen, bacnetStats.ms_msgs_rx, bacnetStats.ms_msgs_tx, scan_done ? "Done" : "Pending");
             heartbeat_timer = millis();
         }
 
+        // --- JOB QUEUE ---
         if (has_token && state == IDLE && !waiting_for_reply) {
             BACnetJob job;
             if (xQueueReceive(bacnet_job_queue, &job, 0) == pdTRUE) {
@@ -128,7 +129,7 @@ static void bacnet_task(void *pv) {
                         bacnet_network_cache.clear();
                         xSemaphoreGive(cache_mutex);
                     }
-                    z_log("[BACNET] Manual Scan Triggered (Who-Is)\n");
+                    z_log("[BACNET] Manual Scan Triggered\n");
                 } else if (job.type == JOB_WRITE_PROP) {
                     uint8_t apdu[] = { 0x01, 0x00, 0x00, 0x0F, current_invoke_id++, 0x01, 0x0C, 
                         (uint8_t)((job.obj_type>>2)&0xFF), (uint8_t)((job.obj_type<<6)|(job.obj_instance>>16)), (uint8_t)(job.obj_instance>>8), (uint8_t)job.obj_instance,
@@ -151,14 +152,8 @@ static void bacnet_task(void *pv) {
         while (uart_read_bytes(RS485_UART_PORT, &rx_byte, 1, 0) > 0) {
             last_rx_time = millis();
             switch (state) {
-                case IDLE: 
-                    if (rx_byte == 0x55) state = PREAMBLE_55; 
-                    break;
-                case PREAMBLE_55: 
-                    if (rx_byte == 0xFF) { state = HEADER; header_idx = 0; } 
-                    else if (rx_byte == 0x55) state = PREAMBLE_55;
-                    else state = IDLE; 
-                    break;
+                case IDLE: if (rx_byte == 0x55) state = PREAMBLE_55; break;
+                case PREAMBLE_55: if (rx_byte == 0xFF) { state = HEADER; header_idx = 0; } else if (rx_byte == 0x55) state = PREAMBLE_55; else state = IDLE; break;
                 case HEADER:
                     header[header_idx++] = rx_byte;
                     if (header_idx == 6) {
@@ -169,23 +164,19 @@ static void bacnet_task(void *pv) {
                             
                             if (type == 0x00 && dest == sysCfg.mac_address) { 
                                 has_token = true; token_acquired_time = millis(); 
-                                // z_log("[BACNET] Token Received from MAC %d\n", src);
+                                bacnetStats.tokens_seen++; // Increment at acquisition for UI
                             }
                             else if (type == 0x01 && dest == sysCfg.mac_address) { 
-                                vTaskDelay(pdMS_TO_TICKS(2)); 
+                                vTaskDelay(pdMS_TO_TICKS(15)); // T_reply_delay (ASHRAE 135: 10-250ms)
                                 uint8_t f[8] = { 0x55, 0xFF, 0x02, src, sysCfg.mac_address, 0, 0, 0 };
                                 f[7] = calc_header_crc(&f[2], 5); uart_tx(f, 8);
                                 state = MSTP_WAIT_TX_DONE;
-                                z_log("[BACNET] Poll-For-Master reply sent to MAC %d\n", src);
+                                z_log("[BACNET] Reply sent to MAC %d\n", src);
                             }
                             
                             if (data_len > 0 && data_len <= 512) { state = DATA; data_idx = 0; } 
                             else if(state != MSTP_WAIT_TX_DONE) state = IDLE;
-                        } else { 
-                            bacnetStats.errors_crc++; 
-                            // z_log("[BACNET] Header CRC Error\n");
-                            state = IDLE; 
-                        }
+                        } else { bacnetStats.errors_crc++; state = IDLE; }
                     }
                     break;
                 case DATA: 
@@ -197,7 +188,7 @@ static void bacnet_task(void *pv) {
                     rx_crc16 |= (rx_byte << 8);
                     if (calc_data_crc(data_buf, data_len) == rx_crc16) {
                         uint16_t pos = 0;
-                        if (data_len > 2 && data_buf[0] == 0x01) { // Valid NPDU
+                        if (data_len > 2 && data_buf[0] == 0x01) { // NPDU
                             pos += (data_buf[1] & 0x20) ? 2 : 2; 
                             if (pos + 3 < data_len && data_buf[pos] == 0x30) { // Complex Ack
                                 pos += 3;
@@ -210,10 +201,10 @@ static void bacnet_task(void *pv) {
                                                     if (current_scan_index == 0) {
                                                         total_objects = data_buf[pos+1]; bacnetStats.total_objects = total_objects;
                                                         current_scan_index = 1; bacnetStats.current_index = 1;
-                                                        z_log("[BACNET] Discovery: Controller MAC %d has %d objects\n", header[2], total_objects);
                                                         BACnetDevice d; d.mac_address = header[2]; d.device_id = 0; d.discovery_done = false; d.enabled = true;
                                                         d.name = "ECB-203"; d.vendor = "Distech Controls";
                                                         bacnet_network_cache.push_back(d);
+                                                        z_log("[BACNET] Found MAC %d (%d points)\n", header[2], total_objects);
                                                     } else if (!bacnet_network_cache.empty()) {
                                                         uint16_t ot = (data_buf[pos+1] << 2) | (data_buf[pos+2] >> 6);
                                                         uint32_t oi = ((uint32_t)(data_buf[pos+2] & 0x3F) << 16) | (data_buf[pos+3] << 8) | data_buf[pos+4];
@@ -221,7 +212,7 @@ static void bacnet_task(void *pv) {
                                                         BACnetObject obj; obj.type = ot; obj.instance = oi; obj.present_value = 0; obj.last_update = 0; obj.enabled = true;
                                                         obj.name = "Point_" + String(oi); 
                                                         bacnet_network_cache[0].objects.push_back(obj);
-                                                        current_scan_index++; bacnetStats.current_index = current_scan_index;
+                                                        current_scan_index++; 
                                                         if (current_scan_index > total_objects) { disc_step = DISC_NAME; disc_obj_ptr = 0; }
                                                     }
                                                 } else if (!bacnet_network_cache.empty() && disc_obj_ptr < bacnet_network_cache[0].objects.size()) {
@@ -232,16 +223,16 @@ static void bacnet_task(void *pv) {
                                                             uint16_t slen = std::min((int)val_tag.len - 1, 32);
                                                             char n[33]; memcpy(n, &data_buf[pos+1], slen); n[slen] = '\0';
                                                             o.name = String(n); disc_step = DISC_VALUE;
-                                                            z_log("[BACNET]  - %d:%lu Name: %s\n", o.type, (unsigned long)o.instance, n);
+                                                            z_log("[BACNET] Point %lu Name: %s\n", (unsigned long)o.instance, n);
                                                         } else if (disc_step == DISC_VALUE && val_tag.number == 4) {
                                                             union { uint32_t i; float f; } u;
                                                             u.i = (data_buf[pos]<<24)|(data_buf[pos+1]<<16)|(data_buf[pos+2]<<8)|data_buf[pos+3];
                                                             o.present_value = u.f; o.last_update = millis();
+                                                            z_log("[BACNET] Point %lu Value: %.2f\n", (unsigned long)o.instance, u.f);
                                                             disc_obj_ptr++; disc_step = DISC_NAME;
-                                                            z_log("[BACNET]  - %d:%lu Value: %.2f\n", o.type, (unsigned long)o.instance, u.f);
                                                             if (disc_obj_ptr >= bacnet_network_cache[0].objects.size()) {
                                                                 scan_done = true; save_device_objects(target_device_id);
-                                                                z_log("[BACNET] Enhanced Discovery Complete.\n");
+                                                                z_log("[BACNET] Discovery Finalized.\n");
                                                             }
                                                         } else { disc_obj_ptr++; disc_step = DISC_NAME; }
                                                     }
@@ -264,10 +255,7 @@ static void bacnet_task(void *pv) {
                                 }
                             }
                         }
-                    } else {
-                        bacnetStats.errors_crc++;
-                        // z_log("[BACNET] Data CRC Error\n");
-                    }
+                    } else bacnetStats.errors_crc++;
                     state = IDLE; 
                     break;
             }
@@ -302,33 +290,26 @@ static void bacnet_task(void *pv) {
                     }
                     xSemaphoreGive(cache_mutex);
                 }
-                if (req_sent) {
-                    waiting_for_reply = true; 
-                    state = MSTP_WAIT_TX_DONE;
-                }
-                token_acquired_time = millis();
+                if (req_sent) { waiting_for_reply = true; state = MSTP_WAIT_TX_DONE; }
             }
             
-            uint32_t limit = waiting_for_reply ? 500 : 10;
+            uint32_t limit = waiting_for_reply ? 400 : 10;
             if (millis() - token_acquired_time > limit) {
-                if (waiting_for_reply && (millis() - last_req_time > 1200)) {
-                    waiting_for_reply = false;
-                    z_log("[BACNET] Timeout waiting for reply\n");
-                }
+                if (waiting_for_reply && (millis() - last_req_time > 1200)) waiting_for_reply = false;
                 if (!waiting_for_reply) {
                     uint8_t f[8] = { 0x55, 0xFF, 0x00, next_station, sysCfg.mac_address, 0, 0, 0 };
                     f[7] = calc_header_crc(&f[2], 5); uart_tx(f, 8);
-                    has_token = false; bacnetStats.tokens_seen++;
+                    has_token = false;
                     state = MSTP_WAIT_TX_DONE;
                 }
             }
         }
         
-        if (millis() - last_rx_time > 3000) { 
+        if (millis() - last_rx_time > 5000) { 
             last_rx_time = millis(); 
             uint8_t f[8]={0x55,0xFF,0x01,4,sysCfg.mac_address,0,0,0}; f[7]=calc_header_crc(&f[2],5); 
             uart_tx(f,8); state = MSTP_WAIT_TX_DONE;
-            z_log("[BACNET] No activity. Regenerating Token to MAC 4\n");
+            z_log("[BACNET] Token Regeneration\n");
         }
         vTaskDelay(1);
     }
@@ -338,39 +319,13 @@ void setup_bacnet_engine() {
     cache_mutex = xSemaphoreCreateMutex();
     bacnet_job_queue = xQueueCreate(10, sizeof(BACnetJob));
     mqtt_publish_queue = xQueueCreate(30, sizeof(MQTTPublishJob));
-    
-    const uart_config_t uc = { 
-        .baud_rate = 38400, 
-        .data_bits = UART_DATA_8_BITS, 
-        .parity = UART_PARITY_DISABLE, 
-        .stop_bits = UART_STOP_BITS_1, 
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE, 
-        .rx_flow_ctrl_thresh = 122, 
-        .source_clk = UART_SCLK_APB 
-    };
-    
-    esp_err_t err = uart_driver_install(RS485_UART_PORT, 2048, 2048, 20, &uart_evt_queue, 0);
-    if (err != ESP_OK) z_log("[BACNET] UART Driver Install Fail: 0x%x\n", err);
-    
-    err = uart_param_config(RS485_UART_PORT, &uc);
-    if (err != ESP_OK) z_log("[BACNET] UART Param Config Fail: 0x%x\n", err);
-    
-    err = uart_set_pin(RS485_UART_PORT, TX_PIN, RX_PIN, RTS_PIN, UART_PIN_NO_CHANGE);
-    if (err != ESP_OK) z_log("[BACNET] UART Set Pin Fail: 0x%x\n", err);
-    
-    err = uart_set_mode(RS485_UART_PORT, UART_MODE_RS485_HALF_DUPLEX);
-    if (err != ESP_OK) z_log("[BACNET] UART Set Mode Fail: 0x%x\n", err);
-    
+    const uart_config_t uc = { .baud_rate = 38400, .data_bits = UART_DATA_8_BITS, .parity = UART_PARITY_DISABLE, .stop_bits = UART_STOP_BITS_1, .flow_ctrl = UART_HW_FLOWCTRL_DISABLE, .rx_flow_ctrl_thresh = 122, .source_clk = UART_SCLK_APB };
+    uart_driver_install(RS485_UART_PORT, 2048, 2048, 20, &uart_evt_queue, 0);
+    uart_param_config(RS485_UART_PORT, &uc);
+    uart_set_pin(RS485_UART_PORT, TX_PIN, RX_PIN, RTS_PIN, UART_PIN_NO_CHANGE);
+    uart_set_mode(RS485_UART_PORT, UART_MODE_RS485_HALF_DUPLEX);
     xTaskCreatePinnedToCore(bacnet_task, "BACnet", 16384, NULL, 15, NULL, 1);
-    z_log("[BACNET] Engine v4.5.29 Initialized on Core 1\n");
+    z_log("[BACNET] Engine v4.5.30 Initialized\n");
 }
-
-bool enqueue_bacnet_job(BACnetJob job) {
-    if (bacnet_job_queue == NULL) return false;
-    return xQueueSend(bacnet_job_queue, &job, 0) == pdTRUE;
-}
-
-bool enqueue_mqtt_publish(MQTTPublishJob pubJob) {
-    if (mqtt_publish_queue == NULL) return false;
-    return xQueueSend(mqtt_publish_queue, &pubJob, 0) == pdTRUE;
-}
+bool enqueue_bacnet_job(BACnetJob job) { if (bacnet_job_queue == NULL) return false; return xQueueSend(bacnet_job_queue, &job, 0) == pdTRUE; }
+bool enqueue_mqtt_publish(MQTTPublishJob pubJob) { if (mqtt_publish_queue == NULL) return false; return xQueueSend(mqtt_publish_queue, &pubJob, 0) == pdTRUE; }
