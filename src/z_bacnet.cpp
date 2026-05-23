@@ -85,6 +85,19 @@ uint16_t build_read_property_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t o
     return len;
 }
 
+static String get_unit_text(uint16_t units) {
+    switch(units) {
+        case 62: return "°C"; case 63: return "°F";
+        case 98: return "%"; case 95: return "kWh";
+        case 19: return "W"; case 47: return "V";
+        case 3: return "A"; case 79: return "Pa";
+        case 20: return "Wh"; case 17: return "kW";
+        case 82: return "l/s"; case 84: return "m³/h";
+        case 255: return "No Unit";
+        default: return "Unit " + String(units);
+    }
+}
+
 static void bacnet_task(void *pv) {
     uint8_t rx_byte; uint8_t header[6]; uint8_t header_idx=0; uint8_t data_buf[512]; 
     uint16_t data_len=0, data_idx=0, rx_crc16=0;
@@ -95,7 +108,7 @@ static void bacnet_task(void *pv) {
     uint8_t current_scan_index = 0, current_invoke_id = 10, current_poll_idx = 0;
     uint32_t heartbeat_timer = 0;
     uint8_t next_station = (sysCfg.mac_address + 1) % 128;
-    enum { DISC_LIST, DISC_NAME, DISC_VALUE } disc_step = DISC_LIST;
+    enum { DISC_DEV_ID, DISC_DEV_NAME, DISC_DEV_VENDOR, DISC_LIST, DISC_NAME, DISC_UNITS, DISC_VALUE } disc_step = DISC_DEV_ID;
     uint8_t disc_obj_ptr = 0;
     uart_event_t event;
 
@@ -175,11 +188,15 @@ static void bacnet_task(void *pv) {
                                     if (xSemaphoreTake(cache_mutex, 0)) {
                                         if (!bacnet_network_cache.empty()) {
                                             if (!scan_done) {
-                                                if (disc_step == DISC_LIST && current_scan_index > 0) current_scan_index++;
-                                                else if (disc_step == DISC_NAME) disc_step = DISC_VALUE;
+                                                if (disc_step == DISC_DEV_ID) disc_step = DISC_DEV_NAME;
+                                                else if (disc_step == DISC_DEV_NAME) disc_step = DISC_DEV_VENDOR;
+                                                else if (disc_step == DISC_DEV_VENDOR) disc_step = DISC_LIST;
+                                                else if (disc_step == DISC_LIST && current_scan_index > 0) current_scan_index++;
+                                                else if (disc_step == DISC_NAME) disc_step = DISC_UNITS;
+                                                else if (disc_step == DISC_UNITS) disc_step = DISC_VALUE;
                                                 else if (disc_step == DISC_VALUE) { disc_obj_ptr++; disc_step = DISC_NAME; }
                                                 if (disc_obj_ptr >= bacnet_network_cache[0].objects.size()) {
-                                                    if (disc_step != DISC_LIST) { scan_done = true; z_log("[BACNET] Scan Finalized (on error)\n"); }
+                                                    if (disc_step != DISC_LIST && disc_step != DISC_DEV_ID && disc_step != DISC_DEV_NAME && disc_step != DISC_DEV_VENDOR && disc_step != DISC_UNITS) { scan_done = true; z_log("[BACNET] Scan Finalized (on error)\n"); }
                                                 }
                                             } else {
                                                 if (current_poll_idx < bacnet_network_cache[0].objects.size()) {
@@ -199,7 +216,26 @@ static void bacnet_task(void *pv) {
                                                 if (!bacnet_network_cache.empty()) {
                                                     BACnetTag val_tag;
                                                     if (decode_next_tag(data_buf, &pos, data_len, &val_tag)) {
-                                                        if (disc_step == DISC_LIST) {
+                                                        if (disc_step == DISC_DEV_ID && val_tag.number == 12) {
+                                                            uint32_t oid = (data_buf[pos]<<24)|(data_buf[pos+1]<<16)|(data_buf[pos+2]<<8)|data_buf[pos+3];
+                                                            bacnet_network_cache[0].device_id = (oid & 0x3FFFFF);
+                                                            z_log("[BACNET] Device ID Updated: %lu\n", (unsigned long)bacnet_network_cache[0].device_id);
+                                                            disc_step = DISC_DEV_NAME;
+                                                        } else if (disc_step == DISC_DEV_NAME && val_tag.number == 7) {
+                                                            uint8_t enc = data_buf[pos]; char n[33]; n[0] = '\0';
+                                                            if (enc == 0x00) { uint16_t slen = std::min((int)val_tag.len - 1, 32); if (slen > 0) memcpy(n, &data_buf[pos+1], slen); n[slen]='\0'; }
+                                                            else if (enc == 0x04) { int slen = 0; for(int i=2; i < val_tag.len && slen < 32; i+=2) n[slen++] = data_buf[pos+i]; n[slen]='\0'; }
+                                                            bacnet_network_cache[0].name = String(n);
+                                                            z_log("[BACNET] Device Name: %s\n", n);
+                                                            disc_step = DISC_DEV_VENDOR;
+                                                        } else if (disc_step == DISC_DEV_VENDOR && val_tag.number == 7) {
+                                                            uint8_t enc = data_buf[pos]; char n[33]; n[0] = '\0';
+                                                            if (enc == 0x00) { uint16_t slen = std::min((int)val_tag.len - 1, 32); if (slen > 0) memcpy(n, &data_buf[pos+1], slen); n[slen]='\0'; }
+                                                            else if (enc == 0x04) { int slen = 0; for(int i=2; i < val_tag.len && slen < 32; i+=2) n[slen++] = data_buf[pos+i]; n[slen]='\0'; }
+                                                            bacnet_network_cache[0].vendor = String(n);
+                                                            z_log("[BACNET] Device Vendor: %s\n", n);
+                                                            disc_step = DISC_LIST;
+                                                        } else if (disc_step == DISC_LIST) {
                                                             if (current_scan_index == 0) {
                                                                 uint16_t count = data_buf[pos];
                                                                 z_log("[BACNET] Device has %u objects\n", count);
@@ -241,8 +277,16 @@ static void bacnet_task(void *pv) {
                                                                 } else if (enc == 0x04) {
                                                                     int slen = 0; for(int i=2; i < val_tag.len && slen < 32; i+=2) n[slen++] = data_buf[pos+i]; n[slen]='\0';
                                                                 }
-                                                                o.name = String(n); disc_step = DISC_VALUE;
+                                                                o.name = String(n); 
+                                                                if (o.type <= 2) disc_step = DISC_UNITS; // AI, AO, AV
+                                                                else disc_step = DISC_VALUE;
                                                                 z_log("[BACNET] Point %lu Name: %s\n", (unsigned long)o.instance, n);
+                                                            } else if (disc_step == DISC_UNITS && val_tag.number == 9) { // Enumerated
+                                                                uint32_t v = 0; for(int i=0; i<val_tag.len; i++) v = (v << 8) | data_buf[pos+i];
+                                                                o.units = (uint16_t)v;
+                                                                o.unit_text = get_unit_text(v);
+                                                                z_log("[BACNET] Point %lu Units: %s\n", (unsigned long)o.instance, o.unit_text.c_str());
+                                                                disc_step = DISC_VALUE;
                                                             } else { 
                                                                 disc_obj_ptr++; disc_step = DISC_NAME; 
                                                                 if (disc_obj_ptr >= bacnet_network_cache[0].objects.size()) { scan_done = true; z_log("[BACNET] Scan Complete\n"); }
@@ -299,14 +343,20 @@ static void bacnet_task(void *pv) {
                     if (!bacnet_network_cache.empty()) {
                         uint8_t apdu[64]; uint16_t apdu_len = 0;
                         if (!scan_done) {
-                            if (disc_step == DISC_LIST) apdu_len = build_read_property_apdu(apdu, current_invoke_id++, 8, 4194303, 76, current_scan_index);
+                            if (disc_step == DISC_DEV_ID) apdu_len = build_read_property_apdu(apdu, current_invoke_id++, 8, 4194303, 75, -1);
+                            else if (disc_step == DISC_DEV_NAME) apdu_len = build_read_property_apdu(apdu, current_invoke_id++, 8, bacnet_network_cache[0].device_id, 77, -1);
+                            else if (disc_step == DISC_DEV_VENDOR) apdu_len = build_read_property_apdu(apdu, current_invoke_id++, 8, bacnet_network_cache[0].device_id, 121, -1);
+                            else if (disc_step == DISC_LIST) apdu_len = build_read_property_apdu(apdu, current_invoke_id++, 8, bacnet_network_cache[0].device_id, 76, current_scan_index);
                             else {
                                 while(disc_obj_ptr < bacnet_network_cache[0].objects.size() && (bacnet_network_cache[0].objects[disc_obj_ptr].type == 8 || !bacnet_network_cache[0].objects[disc_obj_ptr].enabled)) {
                                     disc_obj_ptr++; disc_step = DISC_NAME;
                                 }
                                 if (disc_obj_ptr < bacnet_network_cache[0].objects.size()) {
                                     auto& o = bacnet_network_cache[0].objects[disc_obj_ptr];
-                                    apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, (disc_step == DISC_NAME ? 77 : 85), -1);
+                                    uint8_t pid = 77; // Object_Name
+                                    if (disc_step == DISC_UNITS) pid = 117; // Engineering_Units
+                                    else if (disc_step == DISC_VALUE) pid = 85; // Present_Value
+                                    apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, pid, -1);
                                 } else { scan_done = true; z_log("[BACNET] Scan Finished (all filtered)\n"); }
                             }
                         } else {
@@ -336,11 +386,15 @@ static void bacnet_task(void *pv) {
                     // Progression forcée au timeout
                     if (xSemaphoreTake(cache_mutex, 0)) {
                         if (!bacnet_network_cache.empty() && !scan_done) {
-                            if (disc_step == DISC_LIST && current_scan_index > 0) current_scan_index++;
-                            else if (disc_step == DISC_NAME) disc_step = DISC_VALUE;
+                            if (disc_step == DISC_DEV_ID) disc_step = DISC_DEV_NAME;
+                            else if (disc_step == DISC_DEV_NAME) disc_step = DISC_DEV_VENDOR;
+                            else if (disc_step == DISC_DEV_VENDOR) disc_step = DISC_LIST;
+                            else if (disc_step == DISC_LIST && current_scan_index > 0) current_scan_index++;
+                            else if (disc_step == DISC_NAME) disc_step = DISC_UNITS;
+                            else if (disc_step == DISC_UNITS) disc_step = DISC_VALUE;
                             else if (disc_step == DISC_VALUE) { disc_obj_ptr++; disc_step = DISC_NAME; }
                             if (!bacnet_network_cache.empty() && disc_obj_ptr >= bacnet_network_cache[0].objects.size()) {
-                                if (disc_step != DISC_LIST) { scan_done = true; z_log("[BACNET] Scan Finalized (on timeout)\n"); }
+                                if (disc_step != DISC_LIST && disc_step != DISC_DEV_ID && disc_step != DISC_DEV_NAME && disc_step != DISC_DEV_VENDOR && disc_step != DISC_UNITS) { scan_done = true; z_log("[BACNET] Scan Finalized (on timeout)\n"); }
                             }
                         }
                         xSemaphoreGive(cache_mutex);
