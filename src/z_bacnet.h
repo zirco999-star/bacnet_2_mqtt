@@ -9,14 +9,17 @@ struct BACnetPersistenceObj {
     uint32_t val; // [TYPE:6][INSTANCE:25][UNUSED:1]
     char name[24];
     bool poll;
+    uint16_t units;
 };
 
 struct BACnetPersistenceDev {
     uint32_t device_id;
+    uint8_t mac_address;
     bool enabled;
     char name[32];
     char vendor[32];
     uint8_t count;
+    bool discovery_done;
     BACnetPersistenceObj objects[100]; // Max 100 points
 };
 
@@ -94,5 +97,6 @@ extern QueueHandle_t bacnet_job_queue;
 void setup_bacnet_engine();
 bool enqueue_bacnet_job(BACnetJob job);
 bool enqueue_mqtt_publish(MQTTPublishJob pubJob);
+String get_unit_text(uint16_t units);
 
 #endif

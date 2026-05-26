@@ -27,51 +27,63 @@ void z_log(const char* format, ...) {
 }
 
 void load_device_objects(uint32_t device_id) {
+    if (cache_mutex == NULL) cache_mutex = xSemaphoreCreateMutex(); // FIX CRITICAL CRASH
     char ns[16]; snprintf(ns, sizeof(ns), "dev_%lu", (unsigned long)device_id);
     Preferences prefs;
-    if (prefs.begin(ns, false)) {
+    z_log("[NVS] Attempting restore: %s\n", ns);
+    if (prefs.begin(ns, true)) {
         if (prefs.isKey("blob")) {
             BACnetPersistenceDev data;
             if (prefs.getBytes("blob", &data, sizeof(data)) > 0) {
-                bool found = false;
-                for(auto& d : bacnet_network_cache) if(d.device_id == device_id) found = true;
-                if (!found) {
-                    BACnetDevice dev;
-                    dev.device_id = data.device_id;
-                    dev.enabled = data.enabled;
-                    dev.name = String(data.name);
-                    dev.vendor = String(data.vendor);
-                    for (int i = 0; i < data.count; i++) {
-                        BACnetObject obj;
-                        obj.type = data.objects[i].val >> 25;
-                        obj.instance = data.objects[i].val & 0x1FFFFFF;
-                        obj.name = String(data.objects[i].name);
-                        obj.enabled = data.objects[i].poll;
-                        obj.present_value = 0;
-                        obj.last_update = 0;
-                        dev.objects.push_back(obj);
+                if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
+                    bool found = false;
+                    for(auto& d : bacnet_network_cache) if(d.device_id == device_id) found = true;
+                    if (!found) {
+                        BACnetDevice dev;
+                        dev.device_id = data.device_id;
+                        dev.mac_address = data.mac_address;
+                        dev.enabled = data.enabled;
+                        dev.name = String(data.name);
+                        dev.vendor = String(data.vendor);
+                        dev.discovery_done = data.discovery_done; // RESTAURATION ÉTAT
+                        for (int i = 0; i < data.count; i++) {
+                            BACnetObject obj;
+                            obj.type = data.objects[i].val >> 25;
+                            obj.instance = data.objects[i].val & 0x1FFFFFF;
+                            obj.name = String(data.objects[i].name);
+                            obj.enabled = data.objects[i].poll;
+                            obj.units = data.objects[i].units;
+                            obj.unit_text = get_unit_text(obj.units);
+                            obj.present_value = 0.0f;
+                            obj.last_update = 0;
+                            dev.objects.push_back(obj);
+                        }
+                        dev.last_seen = millis();
+                        bacnet_network_cache.push_back(dev);
+                        z_log("[NVS] SUCCESS: Restored %lu (MAC:%u, Done:%d)\n", (unsigned long)device_id, dev.mac_address, dev.discovery_done);
                     }
-                    dev.discovery_done = true;
-                    dev.last_seen = millis();
-                    bacnet_network_cache.push_back(dev);
-                    z_log("[NVS] Blob restored for %lu\n", (unsigned long)device_id);
+                    xSemaphoreGive(cache_mutex);
                 }
-            }
-        }
+            } else { z_log("[NVS] ERROR: Failed to read blob for %lu\n", (unsigned long)device_id); }
+        } else { z_log("[NVS] INFO: No blob key in %s\n", ns); }
         prefs.end();
-    }
+    } else { z_log("[NVS] INFO: Namespace %s not found\n", ns); }
 }
 
 void load_configuration() {
+    // ... default init ...
     strlcpy(sysCfg.wifi_ssid, "", 32);
     strlcpy(sysCfg.wifi_pass, "", 64);
     sysCfg.static_ip = true; 
-    strlcpy(sysCfg.local_ip, "192.168.1.50", 16);
-    strlcpy(sysCfg.gateway, "192.168.1.254", 16);
-    strlcpy(sysCfg.subnet, "255.255.255.0", 16);
-    sysCfg.mac_address = 1; sysCfg.max_master = 127; sysCfg.device_id = 1234;
-    sysCfg.apdu_timeout = 1000; sysCfg.max_retries = 3;
-    strlcpy(sysCfg.mqtt_server, "192.168.1.11", 32);
+    strlcpy(sysCfg.local_ip, DEFAULT_STATIC_IP, 16);
+    strlcpy(sysCfg.gateway, DEFAULT_GATEWAY, 16);
+    strlcpy(sysCfg.subnet, DEFAULT_SUBNET, 16);
+    sysCfg.mac_address = DEFAULT_MAC_ADDRESS; 
+    sysCfg.max_master = DEFAULT_MAX_MASTER; 
+    sysCfg.device_id = DEFAULT_DEVICE_ID;
+    sysCfg.apdu_timeout = DEFAULT_APDU_TIMEOUT; 
+    sysCfg.max_retries = DEFAULT_MAX_RETRIES;
+    strlcpy(sysCfg.mqtt_server, DEFAULT_MQTT_SERVER, 32);
     sysCfg.mqtt_port = 1883;
     strlcpy(sysCfg.mqtt_user, "", 32);
     strlcpy(sysCfg.mqtt_pass, "", 32);
@@ -95,13 +107,34 @@ void load_configuration() {
         if (prefs.isKey("mqp")) prefs.getString("mqp", sysCfg.mqtt_pass, 32);
         if (prefs.isKey("mac")) sysCfg.mac_address = prefs.getUChar("mac", 1);
         if (prefs.isKey("mm")) sysCfg.max_master = prefs.getUChar("mm", 127);
-        if (prefs.isKey("did")) sysCfg.device_id = prefs.getUInt("did", 1234);
-        if (prefs.isKey("to")) sysCfg.apdu_timeout = prefs.getUShort("to", 1000);
+        if (prefs.isKey("did")) sysCfg.device_id = prefs.getUInt("did", 123);
+        if (prefs.isKey("to")) sysCfg.apdu_timeout = prefs.getUShort("to", 500);
         if (prefs.isKey("ret")) sysCfg.max_retries = prefs.getUChar("ret", 3);
+        sysCfg.heartbeat_interval = prefs.getUInt("hbeat", DEFAULT_HEARBEAT_INTERVAL);
+        sysCfg.token_skip = prefs.getUChar("tskip", DEFAULT_TOKEN_SKIP);
         prefs.end();
-        z_log("[NVS] System config loaded\n");
+        z_log("[NVS] Core Config Loaded (GW ID:%lu, MAC:%u)\n", (unsigned long)sysCfg.device_id, sysCfg.mac_address);
     }
-    load_device_objects(sysCfg.device_id);
+
+    // Chargement de la liste des devices distants via namespace 'registry'
+    Preferences reg;
+    if (reg.begin("registry", true)) {
+        if (reg.isKey("dev_list")) {
+            String list = reg.getString("dev_list", "");
+            z_log("[NVS] Registry found: %s\n", list.c_str());
+            int start = 0;
+            int end = list.indexOf(';');
+            while (end != -1) {
+                uint32_t id = list.substring(start, end).toInt();
+                if (id > 0) load_device_objects(id);
+                start = end + 1;
+                end = list.indexOf(';', start);
+            }
+            uint32_t last_id = list.substring(start).toInt();
+            if (last_id > 0) load_device_objects(last_id);
+        } else { z_log("[NVS] Registry empty (dev_list missing)\n"); }
+        reg.end();
+    }
 }
 
 void save_configuration() {
@@ -118,6 +151,8 @@ void save_configuration() {
         prefs.putUInt("did", sysCfg.device_id);
         prefs.putUShort("to", sysCfg.apdu_timeout);
         prefs.putUChar("ret", sysCfg.max_retries);
+        prefs.putUInt("hbeat", sysCfg.heartbeat_interval);
+        prefs.putUChar("tskip", sysCfg.token_skip);
         prefs.putString("mqh", sysCfg.mqtt_server);
         prefs.putString("mqu", sysCfg.mqtt_user);
         prefs.putString("mqp", sysCfg.mqtt_pass);
@@ -134,17 +169,34 @@ void save_device_objects(uint32_t device_id) {
             if (prefs.begin(ns, false)) {
                 BACnetPersistenceDev data;
                 data.device_id = dev.device_id;
+                data.mac_address = dev.mac_address;
                 data.enabled = dev.enabled;
+                data.discovery_done = dev.discovery_done; // SAUVEGARDE ÉTAT
                 strlcpy(data.name, dev.name.c_str(), 32);
                 strlcpy(data.vendor, dev.vendor.c_str(), 32);
                 data.count = (uint8_t)std::min((int)dev.objects.size(), 100);
                 for (int i = 0; i < data.count; i++) {
                     data.objects[i].val = ((uint32_t)dev.objects[i].type << 25) | (dev.objects[i].instance & 0x1FFFFFF);
                     strlcpy(data.objects[i].name, dev.objects[i].name.c_str(), 24);
+                    data.objects[i].units = dev.objects[i].units;
                     data.objects[i].poll = dev.objects[i].enabled;
                 }
                 prefs.putBytes("blob", &data, sizeof(data));
                 prefs.end();
+                
+                // Enregistrement dans le registre global
+                Preferences reg;
+                if (reg.begin("registry", false)) {
+                    String list = reg.getString("dev_list", "");
+                    char id_str[16]; snprintf(id_str, sizeof(id_str), "%lu", (unsigned long)device_id);
+                    if (list.indexOf(id_str) == -1) {
+                        if (list.length() > 0) list += ";";
+                        list += id_str;
+                        reg.putString("dev_list", list);
+                        z_log("[NVS] Registered device %lu in registry\n", (unsigned long)device_id);
+                    }
+                    reg.end();
+                }
                 z_log("[NVS] Device blob %lu saved\n", (unsigned long)device_id);
             }
             break;
@@ -222,6 +274,8 @@ void setup_network_infrastructure() {
         doc["did"] = sysCfg.device_id;
         doc["to"] = sysCfg.apdu_timeout;
         doc["ret"] = sysCfg.max_retries;
+        doc["hbeat"] = sysCfg.heartbeat_interval;
+        doc["tskip"] = sysCfg.token_skip;
         String res; serializeJson(doc, res);
         request->send(200, "application/json", res);
     });
@@ -235,18 +289,38 @@ void setup_network_infrastructure() {
 
     webServer.on("/api/reset_cache", HTTP_POST, [](AsyncWebServerRequest *request) {
         if(!is_authenticated(request)) return;
-        z_log("[NVS] Manual cache reset requested\n");
-        for (auto& dev : bacnet_network_cache) {
-            char ns[16]; snprintf(ns, sizeof(ns), "dev_%lu", (unsigned long)dev.device_id);
-            Preferences prefs;
-            if (prefs.begin(ns, false)) { prefs.clear(); prefs.end(); }
-        }
-        char ns[16]; snprintf(ns, sizeof(ns), "dev_%lu", (unsigned long)sysCfg.device_id);
-        Preferences prefs;
-        if (prefs.begin(ns, false)) { prefs.clear(); prefs.end(); }
+        z_log("[NVS] BACnet Global Cache Reset\n");
         
-        bacnet_network_cache.clear();
-        request->send(200, "text/plain", "CACHE CLEARED");
+        // 1. On nettoie les namespaces individuels via le registre
+        Preferences reg;
+        if (reg.begin("registry", false)) {
+            String dev_list = reg.getString("dev_list", "");
+            if (dev_list.length() > 0) {
+                int start = 0;
+                int end = dev_list.indexOf(';');
+                while (start < dev_list.length()) {
+                    String sid = (end == -1) ? dev_list.substring(start) : dev_list.substring(start, end);
+                    if (sid.length() > 0) {
+                        char ns[16]; snprintf(ns, sizeof(ns), "dev_%s", sid.c_str());
+                        Preferences p; p.begin(ns, false); p.clear(); p.end();
+                        z_log("[NVS] Cleared namespace %s\n", ns);
+                    }
+                    if (end == -1) break;
+                    start = end + 1;
+                    end = dev_list.indexOf(';', start);
+                }
+            }
+            reg.remove("dev_list");
+            reg.end();
+        }
+
+        // 2. On vide la RAM
+        if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
+            bacnet_network_cache.clear();
+            xSemaphoreGive(cache_mutex);
+        }
+
+        request->send(200, "text/plain", "BACNET CACHE CLEARED - REBOOTING");
         pending_reboot = true; reboot_timer = millis();
     });
 
@@ -298,6 +372,8 @@ void setup_network_infrastructure() {
         if(request->hasParam("did", true)) sysCfg.device_id = request->getParam("did", true)->value().toInt();
         if(request->hasParam("timeout", true)) sysCfg.apdu_timeout = request->getParam("timeout", true)->value().toInt();
         if(request->hasParam("retries", true)) sysCfg.max_retries = request->getParam("retries", true)->value().toInt();
+        if(request->hasParam("hbeat", true)) sysCfg.heartbeat_interval = request->getParam("hbeat", true)->value().toInt();
+        if(request->hasParam("tskip", true)) sysCfg.token_skip = request->getParam("tskip", true)->value().toInt();
 
         save_configuration();
         request->send(200, "text/plain", "OK");

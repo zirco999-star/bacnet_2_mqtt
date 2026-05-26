@@ -1,23 +1,19 @@
 # TRACE - BACnet2MQTT (v2026)
 
-## État au 21 Mai 2026 (Matin)
-- **Version actuelle** : v4.5.9 (Platinum)
-- **Environnement** : Core 3.3.8, ESP32-S3 (8MB Flash, 8MB OPI PSRAM)
+## État au 26 Mai 2026 (Fin de soirée)
+- **Version actuelle** : v4.7.45 (NVS Unit Persistence)
+- **Environnement** : Core 3.3.8, ESP32-S3 (FSM 9-États + NVS Units)
 - **Succès Technologiques** : 
-    - **FSM Asynchrone (Core 1)** : Migration vers une gestion UART par interruptions matérielles. Suppression de `uart_wait_tx_done` (zéro blocage RTOS).
-    - **Correctif NVS Critique** : Initialisation forcée en RW au boot (plus d'erreur `NOT_FOUND` après effacement).
-    - **Performance NVS** : Stockage par Blobs binaires (`putBytes`) pour l'automate. Écriture 100x plus rapide.
-    - **Robustesse WiFi** : Protection anti-wipe du mot de passe et fallback AP de secours.
-    - **UI v4.5.6+** : Branding validé, multi-contrôleurs, édition des noms, logo GitHub cliquable.
+    - **Persistance NVS des Unités** : Extension de la structure `BACnetPersistenceObj` pour inclure le champ `units`. Les unités d'ingénierie sont désormais sauvegardées en NVS et restaurées instantanément au boot.
+    - **Initialisation RAM Propre** : Correction de `load_device_objects` pour initialiser `present_value` à `0.0f` et recalculer `unit_text` à partir du code unité stocké.
+    - **Restauration de la Sauvegarde Automatique** : Réactivation des appels à `save_device_objects()` à la fin du cycle de découverte (scan nominal, timeout ou erreur).
+    - **Correctif de Syntaxe** : Nettoyage intégral de `z_bacnet.cpp` suite à des erreurs de concaténation de chaînes lors du refactoring précédent.
 
-## Prochaine Étape (Phase 2 - Étape 2)
-- **Export EDE** : Implémentation du téléchargement CSV dynamique.
-- **BACnet Meta** : Décodage des unités et des textes d'état (Multi-State).
+## Prochaine Étape
+- **Mapping MQTT Final** : Raccorder la file de publication MQTT pour diffuser les données avec leurs unités.
 
 ## Historique des Incidents Résolus
-- [v4.5.6] Blocage LED (Deadlock NVS) -> Résolu par Blob binaire v4.5.8.
-- [v4.5.7] WiFi Handshake Timeout -> Résolu par protection API v4.5.8.
-- [v4.5.8] NVS NOT_FOUND au boot -> Résolu par RW Init v4.5.9.
-- [v4.5.13] Flash Overflow -> Table de partitions corrigée par l'utilisateur (FFAT @ 0x8D0000).
-- [v4.5.16] OTA & MQTT Fix -> Restauration de ArduinoOTA.begin() et implémentation du Circuit Breaker MQTT (stop après 3 échecs).
-- [v4.5.20] Platinum Release -> Fix persistance BACnet (Max Master), validation table partitions 1Mo, et restauration logs UART0.
+- [v4.7.35] Discovery Hang -> Absence de logs et de progression forcée au timeout.
+- [v4.7.42] CRC Storage Bug -> Indexation incorrecte des octets CRC en réception.
+- [v4.7.45] Unit Persistence Loss -> Champ `units` manquant dans les structures NVS.
+

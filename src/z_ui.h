@@ -179,7 +179,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     <div class="form-group"><label>Station MAC</label><input type="number" name="mac" id="in-mac"></div>
                     <div class="form-group"><label>Max Retries</label><input type="number" name="retries" id="in-retries" value="3"></div>
                     <div class="form-group"><label>Max Master</label><input type="number" name="mm" id="in-mm"></div>
-                    <div class="form-group"><label>APDU Timeout (ms)</label><input type="number" name="timeout" id="in-timeout" value="1000"></div>
+                    <div class="form-group"><label>APDU Timeout (ms)</label><input type="number" name="timeout" id="in-timeout"></div>
+                    <div class="form-group"><label>Heartbeat (ms)</label><input type="number" name="hbeat" id="in-hbeat"></div>
+                    <div class="form-group"><label>Token Skip</label><input type="number" name="tskip" id="in-tskip"></div>
                 </form>
             </div>
             <div class="card">
@@ -215,6 +217,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('in-sn').value = d.sn || "";
                 document.getElementById('in-mac').value = d.mac_id || 1;
                 document.getElementById('in-mm').value = d.mm || 127;
+                document.getElementById('in-retries').value = d.ret || 3;
+                document.getElementById('in-timeout').value = d.to || 500;
+                document.getElementById('in-hbeat').value = d.hbeat || 50000;
+                document.getElementById('in-tskip').value = d.tskip || 0;
                 document.getElementById('in-mqh').value = d.mqh || "";
                 toggleStatic();
             });

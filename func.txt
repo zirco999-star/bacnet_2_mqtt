@@ -1,0 +1,29 @@
+uint16_t build_read_property_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, uint8_t property_id, int32_t array_index) {
+    uint16_t len = 0;
+    buffer[len++] = 0x01; // NPDU
+    buffer[len++] = 0x04;
+    buffer[len++] = 0x02; // APDU
+    buffer[len++] = 0x73;
+    buffer[len++] = invoke_id;
+    buffer[len++] = 0x0C;
+    buffer[len++] = 0x0C; // Tag 0
+    uint32_t oid = ((uint32_t)obj_type << 22) | (obj_instance & 0x3FFFFF);
+    buffer[len++] = (oid >> 24) & 0xFF;
+    buffer[len++] = (oid >> 16) & 0xFF;
+    buffer[len++] = (oid >> 8) & 0xFF;
+    buffer[len++] = oid & 0xFF;
+    buffer[len++] = 0x19; // Tag 1
+    buffer[len++] = property_id;
+    if (array_index >= 0) {
+        if (array_index <= 255) {
+            buffer[len++] = 0x29; // Tag 2
+            buffer[len++] = (uint8_t)array_index;
+        } else {
+            buffer[len++] = 0x2A;
+            buffer[len++] = (array_index >> 8) & 0xFF;
+            buffer[len++] = array_index & 0xFF;
+        }
+    }
+    return len;
+}
+

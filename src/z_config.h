@@ -10,7 +10,21 @@
 #include <ArduinoOTA.h>
 #include <mqtt_client.h>
 
+// DEFAULT CONFIGURATION 
 #define VERSION_GLOBAL "v4.5.32"
+#define DEFAULT_SSID    "Freebox-A4297A"
+#define DEFAULT_STATIC_IP "192.168.1.50"
+#define DEFAULT_GATEWAY "192.168.1.254"
+#define DEFAULT_SUBNET "255.255.255.0"
+#define DEFAULT_MAX_MASTER 5
+#define DEFAULT_DEVICE_ID 123
+#define DEFAULT_MAC_ADDRESS 1
+#define DEFAULT_APDU_TIMEOUT 300
+#define DEFAULT_MAX_RETRIES 3
+#define DEFAULT_MQTT_SERVER "192.168.1.11"
+
+#define DEFAULT_HEARBEAT_INTERVAL 50000
+#define DEFAULT_TOKEN_SKIP  0
 
 #define RX_PIN 18
 #define TX_PIN 17
@@ -38,6 +52,8 @@ struct Config {
     uint8_t log_level; 
     char admin_user[32];
     char admin_pass[64];
+    uint32_t heartbeat_interval;
+    uint8_t token_skip;
 };
 
 extern Config sysCfg;

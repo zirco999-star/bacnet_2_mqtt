@@ -25,7 +25,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 
         case MQTT_EVENT_DISCONNECTED:
             mqtt_is_connected = false;
-            if (!mqtt_circuit_open) {
+            if (!mqtt_circuit_open && WiFi.status() == WL_CONNECTED) {
                 mqtt_conn_fail_count++;
                 z_log("[MQTT] Disconnected (%d/3)\n", mqtt_conn_fail_count);
                 if (mqtt_conn_fail_count >= 3) {
@@ -37,13 +37,14 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 
         case MQTT_EVENT_ERROR:
             mqtt_is_connected = false;
-            z_log("[MQTT] Protocol/Network Error\n");
-            // v4.5.22: On incrémente aussi sur erreur réseau pour déclencher le breaker
-            if (!mqtt_circuit_open) {
-                mqtt_conn_fail_count++;
-                if (mqtt_conn_fail_count >= 3) {
-                    z_log("[MQTT] CIRCUIT BREAKER TRIPPED (Error).\n");
-                    mqtt_circuit_open = true;
+            if (WiFi.status() == WL_CONNECTED) {
+                z_log("[MQTT] Protocol/Network Error\n");
+                if (!mqtt_circuit_open) {
+                    mqtt_conn_fail_count++;
+                    if (mqtt_conn_fail_count >= 3) {
+                        z_log("[MQTT] CIRCUIT BREAKER TRIPPED (Error).\n");
+                        mqtt_circuit_open = true;
+                    }
                 }
             }
             break;
