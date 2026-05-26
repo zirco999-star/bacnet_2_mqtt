@@ -49,47 +49,85 @@ void z_log(const char* format, ...) {
 }
 
 void load_device_objects(uint32_t device_id) {
-    if (cache_mutex == NULL) cache_mutex = xSemaphoreCreateMutex(); // FIX CRITICAL CRASH
+    if (cache_mutex == NULL) cache_mutex = xSemaphoreCreateMutex();
     char ns[16]; snprintf(ns, sizeof(ns), "dev_%lu", (unsigned long)device_id);
     Preferences prefs;
-    z_log("[NVS] Attempting restore: %s\n", ns);
+    z_log("[NVS] Restore Attempt: %s\n", ns);
+    
     if (prefs.begin(ns, true)) {
-        if (prefs.isKey("blob")) {
-            BACnetPersistenceDev data;
-            if (prefs.getBytes("blob", &data, sizeof(data)) > 0) {
-                if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
-                    bool found = false;
-                    for(auto& d : bacnet_network_cache) if(d.device_id == device_id) found = true;
-                    if (!found) {
-                        BACnetDevice dev;
-                        dev.device_id = data.device_id;
-                        dev.mac_address = data.mac_address;
-                        dev.enabled = data.enabled;
-                        dev.name = String(data.name);
-                        dev.vendor = String(data.vendor);
-                        dev.discovery_done = data.discovery_done; // RESTAURATION ÉTAT
-                        for (int i = 0; i < data.count; i++) {
-                            BACnetObject obj;
-                            obj.type = data.objects[i].val >> 25;
-                            obj.instance = data.objects[i].val & 0x1FFFFFF;
-                            obj.name = String(data.objects[i].name);
-                            obj.enabled = data.objects[i].poll;
-                            obj.units = data.objects[i].units;
-                            obj.unit_text = get_unit_text(obj.units);
-                            obj.present_value = 0.0f;
-                            obj.last_update = 0;
-                            dev.objects.push_back(obj);
-                        }
-                        dev.last_seen = millis();
-                        bacnet_network_cache.push_back(dev);
-                        z_log("[NVS] SUCCESS: Restored %lu (MAC:%u, Done:%d)\n", (unsigned long)device_id, dev.mac_address, dev.discovery_done);
+        // FIX v5.6: Allocation sur le HEAP (PSRAM) pour éviter le Stack Overflow (>3.7KB)
+        BACnetPersistenceDev* data = (BACnetPersistenceDev*)ps_malloc(sizeof(BACnetPersistenceDev));
+        if (data == NULL) { z_log("[NVS] ERROR: PSRAM Allocation failed\n"); prefs.end(); return; }
+        
+        bool loaded = false;
+
+        if (prefs.isKey("blob_v2")) {
+            if (prefs.getBytes("blob_v2", data, sizeof(BACnetPersistenceDev)) > 0) {
+                loaded = true;
+            }
+        } 
+        else if (prefs.isKey("blob")) {
+            // Migration: On alloue aussi l'ancienne structure sur le heap
+            BACnetPersistenceDev_v1* old = (BACnetPersistenceDev_v1*)ps_malloc(sizeof(BACnetPersistenceDev_v1));
+            if (old != NULL) {
+                if (prefs.getBytes("blob", old, sizeof(BACnetPersistenceDev_v1)) > 0) {
+                    z_log("[NVS] MIGRATING %lu to v2...\n", (unsigned long)device_id);
+                    data->device_id = old->device_id;
+                    data->mac_address = old->mac_address;
+                    data->enabled = old->enabled;
+                    strlcpy(data->name, old->name, 32);
+                    strlcpy(data->vendor, old->vendor, 32);
+                    data->count = old->count;
+                    data->discovery_done = old->discovery_done;
+                    for (int i = 0; i < old->count; i++) {
+                        data->objects[i].val = old->objects[i].val;
+                        data->objects[i].poll = old->objects[i].poll;
+                        strlcpy(data->objects[i].name, old->objects[i].name, 20);
+                        String u = get_unit_text(old->objects[i].units);
+                        strlcpy(data->objects[i].unit_text, u.c_str(), 11);
                     }
-                    xSemaphoreGive(cache_mutex);
+                    prefs.end(); prefs.begin(ns, false);
+                    prefs.putBytes("blob_v2", data, sizeof(BACnetPersistenceDev));
+                    prefs.remove("blob");
+                    loaded = true;
                 }
-            } else { z_log("[NVS] ERROR: Failed to read blob for %lu\n", (unsigned long)device_id); }
-        } else { z_log("[NVS] INFO: No blob key in %s\n", ns); }
+                free(old);
+            }
+        }
+
+        if (loaded) {
+            if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
+                bool found = false;
+                for(auto& d : bacnet_network_cache) if(d.device_id == device_id) found = true;
+                if (!found) {
+                    BACnetDevice dev;
+                    dev.device_id = data->device_id;
+                    dev.mac_address = data->mac_address;
+                    dev.enabled = data->enabled;
+                    dev.name = String(data->name);
+                    dev.vendor = String(data->vendor);
+                    dev.discovery_done = data->discovery_done;
+                    for (int i = 0; i < data->count; i++) {
+                        BACnetObject obj;
+                        obj.type = data->objects[i].val >> 22;
+                        obj.instance = data->objects[i].val & 0x3FFFFF;
+                        obj.name = String(data->objects[i].name);
+                        obj.enabled = data->objects[i].poll;
+                        obj.unit_text = String(data->objects[i].unit_text);
+                        obj.present_value = 0.0f;
+                        obj.last_update = 0;
+                        dev.objects.push_back(obj);
+                    }
+                    dev.last_seen = millis();
+                    bacnet_network_cache.push_back(dev);
+                    z_log("[NVS] SUCCESS: Loaded %lu (%d objs)\n", (unsigned long)device_id, data->count);
+                }
+                xSemaphoreGive(cache_mutex);
+            }
+        }
+        free(data);
         prefs.end();
-    } else { z_log("[NVS] INFO: Namespace %s not found\n", ns); }
+    }
 }
 
 void load_configuration() {
@@ -189,21 +227,25 @@ void save_device_objects(uint32_t device_id) {
     for (auto& dev : bacnet_network_cache) {
         if (dev.device_id == device_id) {
             if (prefs.begin(ns, false)) {
-                BACnetPersistenceDev data;
-                data.device_id = dev.device_id;
-                data.mac_address = dev.mac_address;
-                data.enabled = dev.enabled;
-                data.discovery_done = dev.discovery_done; // SAUVEGARDE ÉTAT
-                strlcpy(data.name, dev.name.c_str(), 32);
-                strlcpy(data.vendor, dev.vendor.c_str(), 32);
-                data.count = (uint8_t)std::min((int)dev.objects.size(), 100);
-                for (int i = 0; i < data.count; i++) {
-                    data.objects[i].val = ((uint32_t)dev.objects[i].type << 25) | (dev.objects[i].instance & 0x1FFFFFF);
-                    strlcpy(data.objects[i].name, dev.objects[i].name.c_str(), 24);
-                    data.objects[i].units = dev.objects[i].units;
-                    data.objects[i].poll = dev.objects[i].enabled;
+                // FIX v5.6: Allocation sur le HEAP (PSRAM)
+                BACnetPersistenceDev* data = (BACnetPersistenceDev*)ps_malloc(sizeof(BACnetPersistenceDev));
+                if (data != NULL) {
+                    data->device_id = dev.device_id;
+                    data->mac_address = dev.mac_address;
+                    data->enabled = dev.enabled;
+                    data->discovery_done = dev.discovery_done;
+                    strlcpy(data->name, dev.name.c_str(), 32);
+                    strlcpy(data->vendor, dev.vendor.c_str(), 32);
+                    data->count = (uint8_t)std::min((int)dev.objects.size(), 100);
+                    for (int i = 0; i < data->count; i++) {
+                        data->objects[i].val = ((uint32_t)dev.objects[i].type << 22) | (dev.objects[i].instance & 0x3FFFFF);
+                        strlcpy(data->objects[i].name, dev.objects[i].name.c_str(), 20);
+                        strlcpy(data->objects[i].unit_text, dev.objects[i].unit_text.c_str(), 11);
+                        data->objects[i].poll = dev.objects[i].enabled;
+                    }
+                    prefs.putBytes("blob_v2", data, sizeof(BACnetPersistenceDev));
+                    free(data);
                 }
-                prefs.putBytes("blob", &data, sizeof(data));
                 prefs.end();
                 
                 // Enregistrement dans le registre global
@@ -215,11 +257,11 @@ void save_device_objects(uint32_t device_id) {
                         if (list.length() > 0) list += ";";
                         list += id_str;
                         reg.putString("dev_list", list);
-                        z_log("[NVS] Registered device %lu in registry\n", (unsigned long)device_id);
+                        z_log("[NVS] Registered device %lu\n", (unsigned long)device_id);
                     }
                     reg.end();
                 }
-                z_log("[NVS] Device blob %lu saved\n", (unsigned long)device_id);
+                z_log("[NVS] SUCCESS: Saved %lu to v2\n", (unsigned long)device_id);
             }
             break;
         }
@@ -373,7 +415,25 @@ void setup_network_infrastructure() {
                         uint16_t type = o["type"];
                         for (auto& obj : dev.objects) {
                             if (obj.instance == inst && obj.type == type) {
-                                if (o.containsKey("name")) obj.name = o["name"].as<String>();
+                                // 1. Gestion du NOM (avec WriteProperty)
+                                if (o.containsKey("name")) {
+                                    String new_name = o["name"].as<String>();
+                                    if (new_name != obj.name) {
+                                        obj.name = new_name;
+                                        // Déclenchement asynchrone du WriteProperty (Prop 77)
+                                        BACnetJob job;
+                                        job.type = JOB_WRITE_PROP;
+                                        job.target_mac = dev.mac_address;
+                                        job.obj_type = obj.type;
+                                        job.obj_instance = obj.instance;
+                                        job.prop_id = 77; // Object_Name
+                                        job.name = new_name;
+                                        enqueue_bacnet_job(job);
+                                    }
+                                }
+                                // 2. Gestion de l'UNITÉ (Persistance locale uniquement)
+                                if (o.containsKey("unit")) obj.unit_text = o["unit"].as<String>();
+                                // 3. Gestion du POLLING
                                 if (o.containsKey("poll")) obj.enabled = o["poll"].as<bool>();
                                 break;
                             }

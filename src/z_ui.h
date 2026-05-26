@@ -31,7 +31,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         .badge-ok { background: #052e16; color: #4ade80; border: 1px solid #14532d; }
         .badge-fail { background: #450a0a; color: #f87171; border: 1px solid #7f1d1d; }
 
-        .tabs { display: flex; gap: 0.2rem; background: #000; padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); overflow-x: auto; }
+        .tabs { display: flex; gap: 0.2rem; background: #000; padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); overflow-x: auto; position: sticky; top: 41px; z-index: 99; }
         .tab-btn { padding: 0.4rem 0.6rem; background: transparent; border: none; color: var(--muted); font-size: 0.65rem; font-weight: 700; cursor: pointer; border-radius: 4px; white-space: nowrap; text-transform: uppercase; }
         .tab-btn.active { background: var(--primary); color: #fff; }
 
@@ -179,9 +179,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     <div class="form-group"><label>Station MAC</label><input type="number" name="mac" id="in-mac"></div>
                     <div class="form-group"><label>Max Retries</label><input type="number" name="retries" id="in-retries" value="3"></div>
                     <div class="form-group"><label>Max Master</label><input type="number" name="mm" id="in-mm"></div>
-                    <div class="form-group"><label>APDU Timeout (ms)</label><input type="number" name="timeout" id="in-timeout"></div>
-                    <div class="form-group"><label>Heartbeat (ms)</label><input type="number" name="hbeat" id="in-hbeat"></div>
-                    <div class="form-group"><label>Token Skip</label><input type="number" name="tskip" id="in-tskip"></div>
+                    <div class="form-group"><label>APDU Timeout (ms)</label><input type="number" name="timeout" id="in-timeout" value="1000"></div>
                 </form>
             </div>
             <div class="card">
@@ -217,11 +215,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('in-sn').value = d.sn || "";
                 document.getElementById('in-mac').value = d.mac_id || 1;
                 document.getElementById('in-mm').value = d.mm || 127;
-                document.getElementById('in-retries').value = d.ret || 3;
-                document.getElementById('in-timeout').value = d.to || 500;
-                document.getElementById('in-hbeat').value = d.hbeat || 50000;
-                document.getElementById('in-tskip').value = d.tskip || 0;
                 document.getElementById('in-mqh').value = d.mqh || "";
+                document.getElementById('in-mqu').value = d.mqu || "";
+                document.getElementById('in-mqp').value = d.mqp_set ? "******" : "";
+                document.getElementById('in-timeout').value = d.to || 1000;
+                document.getElementById('in-retries').value = d.ret || 3;
                 toggleStatic();
             });
         }
@@ -241,6 +239,25 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             });
         }
 
+        function downloadEDE(id) {
+            window.location.href = "/api/download_ede";
+        }
+        function saveDeviceChanges(id) {
+            const block = document.querySelector(`[data-dev="${id}"]`);
+            const rows = block.querySelectorAll('tbody tr');
+            const objects = [];
+            rows.forEach(r => {
+                objects.push({
+                    inst: parseInt(r.getAttribute('data-inst')),
+                    type: parseInt(r.getAttribute('data-type')),
+                    name: r.querySelector('.in-edit').value,
+                    unit: r.querySelector('.unit-edit').value,
+                    poll: r.querySelector('.poll-sw').checked
+                });
+            });
+            const data = { device_id: id, objects: objects };
+            fetch('/api/save_objects', {method:'POST', body:JSON.stringify(data), headers:{'Content-Type':'application/json'}}).then(() => alert("Saved."));
+        }
         function refreshDiscovery() {
             fetch('/api/objects').then(r=>r.json()).then(controllers=>{
                 const container = document.getElementById('discovery-container');
@@ -261,15 +278,16 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                         </div>
                         <table style="${c.enabled?'':'opacity:0.4;pointer-events:none'}"><thead><tr><th>OBJ</th><th>NAME</th><th>VALUE</th><th>UNIT</th><th>POLL</th></tr></thead><tbody>`;
                     c.objects.forEach(o => {
-                        if (o.type === 8) return; // Skip Device Object
+                        if (o.type === 8) return; 
+                        let isUseful = (o.type <= 5 || o.type == 12 || o.type == 13 || o.type == 14 || o.type == 19 || o.type == 23 || o.type == 24 || (o.type >= 39 && o.type <= 50) || o.type == 54 || o.type == 55);
                         let tStr = o.type == 0 ? "AI" : o.type == 1 ? "AO" : o.type == 2 ? "AV" : o.type == 3 ? "BI" : o.type == 4 ? "BO" : o.type == 5 ? "BV" : o.type == 13 ? "MSI" : o.type == 14 ? "MSO" : o.type == 19 ? "MSV" : "OBJ";
                         let valStr = (o.val !== null && o.val !== undefined) ? o.val.toFixed(2) : "---";
-                        html += `<tr data-inst="${o.inst}" data-type="${o.type}">
+                        html += `<tr data-inst="${o.inst}" data-type="${o.type}" style="${isUseful?'':'opacity:0.5'}">
                             <td><span class="tag-obj">${tStr}:${o.inst}</span></td>
                             <td><input type="text" class="in-edit" value="${o.name}"></td>
                             <td style="color:var(--success); font-weight:700; font-family:monospace">${valStr}</td>
-                            <td><span class="badge">${o.unit || "---"}</span></td>
-                            <td><label class="switch"><input type="checkbox" class="poll-sw" ${o.poll?'checked':''}><span class="slider"></span></label></td>
+                            <td><input type="text" class="in-edit unit-edit" value="${o.unit || ''}" style="width:50px; text-align:center; font-size:0.6rem; color:var(--accent)"></td>
+                            <td><label class="switch"><input type="checkbox" class="poll-sw" ${o.poll?'checked':''} ${isUseful?'':'disabled'}><span class="slider"></span></label></td>
                         </tr>`;
                     });
                     html += `</tbody></table>

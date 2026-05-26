@@ -93,7 +93,6 @@ static void send_mstp_frame(uint8_t target_mac, uint8_t type, const uint8_t* apd
         uart_tx(buffer, 8+len+2);
     } else uart_tx(buffer, 8);
 }
-
 uint16_t build_read_property_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, uint8_t property_id, int32_t array_index) {
     uint16_t len = 0;
     buffer[len++] = 0x01; buffer[len++] = 0x04; buffer[len++] = 0x02; buffer[len++] = 0x73;
@@ -101,10 +100,32 @@ uint16_t build_read_property_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t o
     uint32_t oid = ((uint32_t)obj_type << 22) | (obj_instance & 0x3FFFFF);
     buffer[len++] = (oid >> 24) & 0xFF; buffer[len++] = (oid >> 16) & 0xFF; buffer[len++] = (oid >> 8) & 0xFF; buffer[len++] = oid & 0xFF;
     buffer[len++] = 0x19; buffer[len++] = property_id;
-    if (array_index >= 0) {
-        if (array_index <= 255) { buffer[len++] = 0x29; buffer[len++] = (uint8_t)array_index; }
-        else { buffer[len++] = 0x2A; buffer[len++] = (array_index >> 8) & 0xFF; buffer[len++] = array_index & 0xFF; }
-    }
+    if (array_index >= 0) { buffer[len++] = 0x29; buffer[len++] = (uint8_t)array_index; }
+    return len;
+}
+
+// FIX v5.6: Encodage WriteProperty pour Object_Name (Prop 77) conforme ASHRAE 135
+uint16_t build_write_property_name_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, const String& new_name) {
+    uint16_t len = 0;
+    buffer[len++] = 0x01; // Version
+    buffer[len++] = 0x04; // Control (Data Expecting Reply)
+    buffer[len++] = 0x02; // PDU Type 0 (Confirmed Request)
+    buffer[len++] = 0x03; // Max Segments & Max APDU
+    buffer[len++] = invoke_id;
+    buffer[len++] = 0x0F; // Service Choice 15 (WriteProperty)
+    buffer[len++] = 0x0C; // Context Tag 0 (Object Identifier)
+    uint32_t oid = ((uint32_t)obj_type << 22) | (obj_instance & 0x3FFFFF);
+    buffer[len++] = (oid >> 24) & 0xFF; buffer[len++] = (oid >> 16) & 0xFF; buffer[len++] = (oid >> 8) & 0xFF; buffer[len++] = oid & 0xFF;
+    buffer[len++] = 0x19; buffer[len++] = 0x4D; // Context Tag 1 (Prop 77: Object_Name)
+    buffer[len++] = 0x3E; // Context Tag 3 (Property Value) Opening
+    uint32_t str_len = new_name.length();
+    uint32_t payload_len = str_len + 1; // +1 pour Charset
+    if (payload_len <= 4) buffer[len++] = 0x70 | (uint8_t)payload_len;
+    else { buffer[len++] = 0x75; buffer[len++] = (uint8_t)payload_len; }
+    buffer[len++] = 0x00; // Charset UTF-8
+    memcpy(&buffer[len], new_name.c_str(), str_len);
+    len += str_len;
+    buffer[len++] = 0x3F; // Closing
     return len;
 }
 
@@ -337,6 +358,12 @@ static void bacnet_task(void *pv) {
                             send_mstp_frame(0xFF, 0x06, buffer, len);
                             token_skip_count = 0;
                             mstp_state = MSTP_DONE_WITH_TOKEN;
+                        } else if (has_job && current_job.type == JOB_WRITE_PROP) {
+                            uint8_t buffer[256];
+                            uint16_t apdu_len = build_write_property_name_apdu(buffer, current_invoke_id, current_job.obj_type, current_job.obj_instance, current_job.name);
+                            token_skip_count = 0; waiting_for_reply = true;
+                            send_mstp_frame(current_job.target_mac, 0x05, buffer, apdu_len);
+                            mstp_state = MSTP_AWAIT_REPLY;
                         } else if (!bacnet_network_cache.empty()) {
                             uint8_t apdu[64]; uint16_t apdu_len = 0;
                             auto& dev = bacnet_network_cache[0];
@@ -413,16 +440,12 @@ static void bacnet_task(void *pv) {
                         mstp_state = MSTP_DONE_WITH_TOKEN; break;
                     }
 
-                    // --- TRAITEMENT RÉPONSES AUX REQUÊTES (Complex-ACK 0x30) ---
+                    // --- TRAITEMENT RÉPONSES AUX REQUÊTES ---
                     if (dest_mac == sysCfg.mac_address) {
-                        if (pdu_type == 0x50 || pdu_type == 0x40 || pdu_type == 0x20) { 
-                            if (!bacnet_network_cache.empty() && !bacnet_network_cache[0].discovery_done) {
-                                z_log("[BACNET] Step %d Error\n", (int)disc_step);
-                                if (disc_step == DISC_OBJ_VALUE || disc_step == DISC_OBJ_UNITS || (disc_step == DISC_OBJ_NAME && bacnet_network_cache[0].objects[disc_obj_idx].type > 1000)) { 
-                                    disc_obj_idx++; disc_step = DISC_OBJ_OID; 
-                                } else disc_step = static_cast<DISC_STEP_T>((int)disc_step + 1);
-                            }
-                        } else if (apdu[0] == 0x30) { // Complex-ACK
+                        if (pdu_type == 0x20) { // Simple-ACK (Succès WriteProperty)
+                            z_log("[BACNET] WriteProperty SUCCESS (Invoke ID %d)\n", apdu[1]);
+                        } 
+                        else if (pdu_type == 0x30) { // Complex-ACK (Succès ReadProperty)
                             uint16_t apdu_pos = 3; BACnetTag t;
                             while (apdu_pos < apdu_len && decode_next_tag(apdu, &apdu_pos, apdu_len, &t)) {
                                 if (t.isOpening && t.number == 3) {
@@ -485,6 +508,14 @@ static void bacnet_task(void *pv) {
                                         xSemaphoreGive(cache_mutex);
                                     }
                                 } else apdu_pos += t.len;
+                            }
+                        }
+                        else if (pdu_type == 0x50 || pdu_type == 0x40) { // Error ou Segment-ACK
+                            if (!bacnet_network_cache.empty() && !bacnet_network_cache[0].discovery_done) {
+                                z_log("[BACNET] Step %d Error (PDU Type %02X)\n", (int)disc_step, pdu_type);
+                                if (disc_step == DISC_OBJ_VALUE || disc_step == DISC_OBJ_UNITS || (disc_step == DISC_OBJ_NAME && bacnet_network_cache[0].objects[disc_obj_idx].type > 1000)) { 
+                                    disc_obj_idx++; disc_step = DISC_OBJ_OID; 
+                                } else disc_step = static_cast<DISC_STEP_T>((int)disc_step + 1);
                             }
                         }
                     }

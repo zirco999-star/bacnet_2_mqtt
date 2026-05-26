@@ -4,12 +4,31 @@
 #include "z_config.h"
 #include <vector>
 
-// --- STRUCTURE DE PERSISTANCE BINAIRE (Max 4KB pour NVS) ---
-struct BACnetPersistenceObj {
-    uint32_t val; // [TYPE:6][INSTANCE:25][UNUSED:1]
+// --- STRUCTURE DE PERSISTANCE BINAIRE (v1 Legacy) ---
+struct BACnetPersistenceObj_v1 {
+    uint32_t val;
     char name[24];
     bool poll;
     uint16_t units;
+};
+
+struct BACnetPersistenceDev_v1 {
+    uint32_t device_id;
+    uint8_t mac_address;
+    bool enabled;
+    char name[32];
+    char vendor[32];
+    uint8_t count;
+    bool discovery_done;
+    BACnetPersistenceObj_v1 objects[100];
+};
+
+// --- STRUCTURE DE PERSISTANCE BINAIRE (v2 - Optimisée ASHRAE 135) ---
+struct BACnetPersistenceObj {
+    uint32_t val;         // [TYPE:10][INSTANCE:22]
+    char name[20];        // Nom tronqué à 20 pour gagner de la place
+    char unit_text[11];   // Unité textuelle personnalisée
+    bool poll;            // Flag de polling
 };
 
 struct BACnetPersistenceDev {
@@ -20,20 +39,8 @@ struct BACnetPersistenceDev {
     char vendor[32];
     uint8_t count;
     bool discovery_done;
-    BACnetPersistenceObj objects[100]; // Max 100 points
+    BACnetPersistenceObj objects[100]; // Total Blob ~3672 octets
 };
-
-// --- STATISTIQUES MS/TP ---
-struct BACnet_Stats {
-    uint32_t ms_msgs_rx;
-    uint32_t ms_msgs_tx;
-    uint32_t tokens_seen;
-    uint32_t pfm_replies;
-    uint32_t errors_crc;
-    uint8_t current_index; 
-    uint8_t total_objects; 
-};
-extern BACnet_Stats bacnetStats;
 
 // --- TYPES D'OBJETS BACNET (ASHRAE 135) ---
 enum BACnetObjectType {
@@ -101,6 +108,18 @@ enum BACnetObjectType {
     OBJ_AUDIT_REPORTER = 62
 };
 
+// --- STATISTIQUES MS/TP ---
+struct BACnet_Stats {
+    uint32_t ms_msgs_rx;
+    uint32_t ms_msgs_tx;
+    uint32_t tokens_seen;
+    uint32_t pfm_replies;
+    uint32_t errors_crc;
+    uint8_t current_index; 
+    uint8_t total_objects; 
+};
+extern BACnet_Stats bacnetStats;
+
 // --- BASE DE DONNÉES EN RAM ---
 struct BACnetObject {
     uint16_t type;
@@ -112,6 +131,8 @@ struct BACnetObject {
     uint32_t last_update;
     uint16_t units;
     String unit_text;
+    uint16_t expected_states_count; 
+    bool discovery_done;
     std::vector<String> state_texts;
 };
 
@@ -130,15 +151,40 @@ struct BACnetDevice {
 extern std::vector<BACnetDevice> bacnet_network_cache;
 extern SemaphoreHandle_t cache_mutex;
 
-enum BACnetJobType { JOB_WHO_IS, JOB_READ_PROP, JOB_WRITE_PROP, JOB_READ_UNITS, JOB_CHECK_COMMANDABLE, JOB_READ_STATE_TEXT };
+// --- ÉTATS FSM MS/TP (ASHRAE 135) ---
+enum RX_STATE { 
+    RX_IDLE, 
+    RX_PREAMBLE, 
+    RX_HEADER, 
+    RX_HEADER_CRC, 
+    RX_DATA, 
+    RX_DATA_CRC 
+};
+
+enum MSTP_MASTER_STATE { 
+    MSTP_INITIALIZE, 
+    MSTP_IDLE, 
+    MSTP_USE_TOKEN, 
+    MSTP_WAIT_FOR_REPLY, 
+    MSTP_DONE_WITH_TOKEN, 
+    MSTP_PASS_TOKEN, 
+    MSTP_NO_TOKEN, 
+    MSTP_POLL_FOR_MASTER, 
+    MSTP_ANSWER_DATA_REQUEST,
+    MSTP_WAIT_TX_DONE
+};
+
+enum BACnetJobType { JOB_WHO_IS, JOB_I_AM, JOB_READ_PROP, JOB_WRITE_PROP, JOB_READ_UNITS, JOB_CHECK_COMMANDABLE, JOB_READ_STATE_TEXT };
 struct BACnetJob {
     BACnetJobType type;
     uint8_t target_mac;
     uint16_t obj_type;
     uint32_t obj_instance;
     uint8_t prop_id;
+    uint16_t array_index; // Pour State_Text
     float write_value;
     uint8_t priority;
+    String name; 
 };
 
 struct MQTTPublishJob {
