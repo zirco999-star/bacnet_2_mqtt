@@ -55,9 +55,9 @@ void load_device_objects(uint32_t device_id) {
     z_log("[NVS] Restore Attempt: %s\n", ns);
     
     if (prefs.begin(ns, true)) {
-        // FIX v5.6: Allocation sur le HEAP (PSRAM) pour éviter le Stack Overflow (>3.7KB)
-        BACnetPersistenceDev* data = (BACnetPersistenceDev*)ps_malloc(sizeof(BACnetPersistenceDev));
-        if (data == NULL) { z_log("[NVS] ERROR: PSRAM Allocation failed\n"); prefs.end(); return; }
+        // FIX v5.6.1: Utilisation de malloc standard (plus sûr au boot que ps_malloc)
+        BACnetPersistenceDev* data = (BACnetPersistenceDev*)malloc(sizeof(BACnetPersistenceDev));
+        if (data == NULL) { z_log("[NVS] ERROR: Malloc failed\n"); prefs.end(); return; }
         
         bool loaded = false;
 
@@ -68,10 +68,11 @@ void load_device_objects(uint32_t device_id) {
         } 
         else if (prefs.isKey("blob")) {
             // Migration: On alloue aussi l'ancienne structure sur le heap
-            BACnetPersistenceDev_v1* old = (BACnetPersistenceDev_v1*)ps_malloc(sizeof(BACnetPersistenceDev_v1));
+            BACnetPersistenceDev_v1* old = (BACnetPersistenceDev_v1*)malloc(sizeof(BACnetPersistenceDev_v1));
             if (old != NULL) {
                 if (prefs.getBytes("blob", old, sizeof(BACnetPersistenceDev_v1)) > 0) {
                     z_log("[NVS] MIGRATING %lu to v2...\n", (unsigned long)device_id);
+                    memset(data, 0, sizeof(BACnetPersistenceDev));
                     data->device_id = old->device_id;
                     data->mac_address = old->mac_address;
                     data->enabled = old->enabled;
@@ -107,6 +108,9 @@ void load_device_objects(uint32_t device_id) {
                     dev.name = String(data->name);
                     dev.vendor = String(data->vendor);
                     dev.discovery_done = data->discovery_done;
+                    dev.disc_step = (DISC_STEP_T)data->disc_step;
+                    dev.disc_obj_idx = data->disc_obj_idx;
+
                     for (int i = 0; i < data->count; i++) {
                         BACnetObject obj;
                         obj.type = data->objects[i].val >> 22;
@@ -120,7 +124,8 @@ void load_device_objects(uint32_t device_id) {
                     }
                     dev.last_seen = millis();
                     bacnet_network_cache.push_back(dev);
-                    z_log("[NVS] SUCCESS: Loaded %lu (%d objs)\n", (unsigned long)device_id, data->count);
+                    z_log("[NVS] SUCCESS: Loaded %lu (%d objs, ScanDone:%d, Step:%d, Idx:%d)\n", 
+                        (unsigned long)device_id, (int)dev.objects.size(), dev.discovery_done, (int)dev.disc_step, dev.disc_obj_idx);
                 }
                 xSemaphoreGive(cache_mutex);
             }
@@ -178,22 +183,26 @@ void load_configuration() {
 
     // Chargement de la liste des devices distants via namespace 'registry'
     Preferences reg;
+    String dev_list = "";
     if (reg.begin("registry", true)) {
         if (reg.isKey("dev_list")) {
-            String list = reg.getString("dev_list", "");
-            z_log("[NVS] Registry found: %s\n", list.c_str());
-            int start = 0;
-            int end = list.indexOf(';');
-            while (end != -1) {
-                uint32_t id = list.substring(start, end).toInt();
-                if (id > 0) load_device_objects(id);
-                start = end + 1;
-                end = list.indexOf(';', start);
-            }
-            uint32_t last_id = list.substring(start).toInt();
-            if (last_id > 0) load_device_objects(last_id);
+            dev_list = reg.getString("dev_list", "");
+            z_log("[NVS] Registry found: %s\n", dev_list.c_str());
         } else { z_log("[NVS] Registry empty (dev_list missing)\n"); }
         reg.end();
+    }
+
+    if (dev_list.length() > 0) {
+        int start = 0;
+        int end = dev_list.indexOf(';');
+        while (end != -1) {
+            uint32_t id = dev_list.substring(start, end).toInt();
+            if (id > 0) load_device_objects(id);
+            start = end + 1;
+            end = dev_list.indexOf(';', start);
+        }
+        uint32_t last_id = dev_list.substring(start).toInt();
+        if (last_id > 0) load_device_objects(last_id);
     }
 }
 
@@ -227,13 +236,16 @@ void save_device_objects(uint32_t device_id) {
     for (auto& dev : bacnet_network_cache) {
         if (dev.device_id == device_id) {
             if (prefs.begin(ns, false)) {
-                // FIX v5.6: Allocation sur le HEAP (PSRAM)
-                BACnetPersistenceDev* data = (BACnetPersistenceDev*)ps_malloc(sizeof(BACnetPersistenceDev));
+                // FIX v5.6.1: Utilisation de malloc standard (plus sûr que ps_malloc sur boot)
+                BACnetPersistenceDev* data = (BACnetPersistenceDev*)malloc(sizeof(BACnetPersistenceDev));
                 if (data != NULL) {
+                    memset(data, 0, sizeof(BACnetPersistenceDev));
                     data->device_id = dev.device_id;
                     data->mac_address = dev.mac_address;
                     data->enabled = dev.enabled;
                     data->discovery_done = dev.discovery_done;
+                    data->disc_step = (uint8_t)dev.disc_step;
+                    data->disc_obj_idx = dev.disc_obj_idx;
                     strlcpy(data->name, dev.name.c_str(), 32);
                     strlcpy(data->vendor, dev.vendor.c_str(), 32);
                     data->count = (uint8_t)std::min((int)dev.objects.size(), 100);
@@ -248,16 +260,18 @@ void save_device_objects(uint32_t device_id) {
                 }
                 prefs.end();
                 
-                // Enregistrement dans le registre global
+                // Enregistrement ROBUSTE dans le registre global
                 Preferences reg;
                 if (reg.begin("registry", false)) {
                     String list = reg.getString("dev_list", "");
-                    char id_str[16]; snprintf(id_str, sizeof(id_str), "%lu", (unsigned long)device_id);
-                    if (list.indexOf(id_str) == -1) {
+                    String id_str = String(device_id);
+                    // Check avec délimiteurs pour éviter les faux positifs (ex: 123 dans 1123)
+                    String check_list = ";" + list + ";";
+                    if (check_list.indexOf(";" + id_str + ";") == -1) {
                         if (list.length() > 0) list += ";";
                         list += id_str;
                         reg.putString("dev_list", list);
-                        z_log("[NVS] Registered device %lu\n", (unsigned long)device_id);
+                        z_log("[NVS] Registered device %lu in registry\n", (unsigned long)device_id);
                     }
                     reg.end();
                 }
@@ -347,6 +361,7 @@ void setup_network_infrastructure() {
         doc["static"] = sysCfg.static_ip;
         doc["gw"] = sysCfg.gateway; doc["sn"] = sysCfg.subnet;
         doc["mqh"] = sysCfg.mqtt_server;
+        doc["mqpr"] = sysCfg.mqtt_prefix;
         doc["mm"] = sysCfg.max_master;
         doc["did"] = sysCfg.device_id;
         doc["to"] = sysCfg.apdu_timeout;
@@ -459,7 +474,9 @@ void setup_network_infrastructure() {
         check("local_ip", sysCfg.local_ip, 16); check("gateway", sysCfg.gateway, 16);
         check("subnet", sysCfg.subnet, 16); check("mqh", sysCfg.mqtt_server, 32);
         check("mqu", sysCfg.mqtt_user, 32); check("mqp", sysCfg.mqtt_pass, 32);
-        if(request->hasParam("static_ip", true)) sysCfg.static_ip = true; 
+        check("mqpr", sysCfg.mqtt_prefix, 64);
+        if(request->hasParam("static_ip", true)) sysCfg.static_ip = true;
+ 
         else if(request->hasParam("form_type", true) && request->getParam("form_type", true)->value() == "wifi") sysCfg.static_ip = false;
 
         if(request->hasParam("mac", true)) sysCfg.mac_address = request->getParam("mac", true)->value().toInt();

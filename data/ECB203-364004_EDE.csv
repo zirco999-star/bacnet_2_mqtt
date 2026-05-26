@@ -1,0 +1,106 @@
+#Engineering-Data-Exchange - B.I.G.-EU
+PROJECT_NAME
+VERSION_OF_REFERENCEFILE
+TIMESTAMP_OF_LAST_CHANGE;28/04/2026
+AUTHOR_OF_LAST_CHANGE;YABE Yet Another Bacnet Explorer
+VERSION_OF_LAYOUT;2.3
+#mandatory;mandator;mandatory;mandatory;mandatory;optional;optional;optional;optional;optional;optional;optional;optional;optional;optional;optional
+# keyname;device obj.-instance;object-name;object-type;object-instance;description;present-value-default;min-present-value;max-present-value;settable;supports COV;hi-limit;low-limit;state-text-reference;unit-code;vendor-specific-addres
+OBJECT_DEVICE:364004;364004;ECB_203;8;364004;;;;;;;;;;
+OBJECT_PROGRAM:1;364004;Program;16;1;;;;;;;;;;
+OBJECT_FILE:1;364004;Device configuration;10;1;;;;;;;;;;
+OBJECT_FILE:2;364004;Project backup;10;2;;;;;;;;;;
+OBJECT_FILE:3;364004;Main firmware;10;3;;;;;;;;;;
+OBJECT_FILE:4;364004;Sensor-Vue firmware;10;4;;;;;;;;;;
+OBJECT_FILE:5;364004;Preloaded configuration;10;5;;;;;;;;;;
+OBJECT_FILE:6;364004;LCD firmware;10;6;;;;;;;;;;
+OBJECT_FILE:7;364004;LCD images;10;7;;;;;;;;;;
+OBJECT_ANALOG_INPUT:1;364004;Sonde2;0;1;;;;;;;;;;62
+OBJECT_ANALOG_INPUT:2;364004;Offset2;0;2;;;;;;;;;;62
+OBJECT_ANALOG_INPUT:3;364004;Sonde3;0;3;;;;;;;;;;62
+OBJECT_ANALOG_INPUT:4;364004;Offset3;0;4;;;;;;;;;;62
+OBJECT_ANALOG_INPUT:5;364004;Sonde4;0;5;;;;;;;;;;62
+OBJECT_ANALOG_INPUT:6;364004;Offset4;0;6;;;;;;;;;;62
+OBJECT_ANALOG_INPUT:1001;364004;Wireless Sensor 1 SetPoint;0;1001;;;;;;;;;;95
+OBJECT_ANALOG_INPUT:1002;364004;Wireless Sensor 1 SetPoint;0;1002;;;;;;;;;;95
+OBJECT_ANALOG_INPUT:1003;364004;Wireless Sensor 2 SetPoint;0;1003;;;;;;;;;;95
+OBJECT_ANALOG_INPUT:1004;364004;Wireless Sensor 3 SpaceTemp;0;1004;;;;;;;;;;95
+OBJECT_ANALOG_INPUT:1005;364004;Wireless Sensor 3 SetPoint;0;1005;;;;;;;;;;95
+OBJECT_ANALOG_INPUT:1009;364004;Wireless Sensor 1 SpaceTemp;0;1009;;;;;;;;;;95
+OBJECT_ANALOG_INPUT:5001;364004;ComSensor 1 Temp;0;5001;;;;;;;;;;95
+OBJECT_ANALOG_INPUT:5002;364004;ComSensor 1 Humid;0;5002;;;;;;;;;;29
+OBJECT_ANALOG_INPUT:5003;364004;ComSensor 1 CO2;0;5003;;;;;;;;;;96
+OBJECT_ANALOG_OUTPUT:1;364004;VoletAir1;1;1;;;;;;;;;;98
+OBJECT_ANALOG_OUTPUT:2;364004;VoletAir2;1;2;;;;;;;;;;98
+OBJECT_ANALOG_OUTPUT:3;364004;VoletAir3;1;3;;;;;;;;;;98
+OBJECT_ANALOG_OUTPUT:4;364004;VoletAir4;1;4;;;;;;;;;;98
+OBJECT_ANALOG_OUTPUT:5;364004;Vanne;1;5;;;;;;;;;;98
+OBJECT_ANALOG_OUTPUT:7;364004;Ventilateur;1;7;;;;;;;;;;98
+OBJECT_ANALOG_OUTPUT:8;364004;Ventil UTA2;1;8;;;;;;;;;;98
+OBJECT_ANALOG_VALUE:1;364004;ConsigneTemperature1;2;1;;;;;;;;;;62
+OBJECT_ANALOG_VALUE:2;364004;ConsigneTemperature2;2;2;;;;;;;;;;62
+OBJECT_ANALOG_VALUE:3;364004;ConsigneTemperature3;2;3;;;;;;;;;;62
+OBJECT_ANALOG_VALUE:4;364004;ConsigneTemperature4;2;4;;;;;;;;;;62
+OBJECT_ANALOG_VALUE:5;364004;Hysteresis regulation;2;5;;;;;;;;;;62
+OBJECT_ANALOG_VALUE:6;364004;MaxVentilateur;2;6;;;;;;;;;;98
+OBJECT_ANALOG_VALUE:7;364004;PoidsVolet1;2;7;;;;;;;;;;98
+OBJECT_ANALOG_VALUE:8;364004;PoidsVolet2;2;8;;;;;;;;;;98
+OBJECT_ANALOG_VALUE:9;364004;PoidsVolet3;2;9;;;;;;;;;;98
+OBJECT_ANALOG_VALUE:10;364004;PoidsVolet4;2;10;;;;;;;;;;98
+OBJECT_ANALOG_VALUE:11;364004;VentilLimitebasse;2;11;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:12;364004;TempoVolet;2;12;;;;;;;;;;73
+OBJECT_ANALOG_VALUE:13;364004;ConsigneTemperatureEco1;2;13;;;;;;;;;;62
+OBJECT_ANALOG_VALUE:14;364004;ConsigneTemperatureEco2;2;14;;;;;;;;;;62
+OBJECT_ANALOG_VALUE:15;364004;ConsigneTemperatureEco3;2;15;;;;;;;;;;62
+OBJECT_ANALOG_VALUE:16;364004;ConsigneTemperatureEco4;2;16;;;;;;;;;;62
+OBJECT_ANALOG_VALUE:17;364004;Choix_T1T4_grandT4;2;17;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:18;364004;TempHorsGel;2;18;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:19;364004;Version;2;19;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:20;364004;Subversion;2;20;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:21;364004;WirelessTemp2;2;21;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:22;364004;WirelessOffset2;2;22;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:23;364004;WirelessTemp3;2;23;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:24;364004;WirelessOffset3;2;24;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:25;364004;WirelessTemp4;2;25;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:26;364004;WirelessOffset4;2;26;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:27;364004;TempFinale1;2;27;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:28;364004;TempFinale2;2;28;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:29;364004;TempFinale3;2;29;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:30;364004;TempFinale4;2;30;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:31;364004;OffsetFinal1;2;31;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:32;364004;OffsetFinal2;2;32;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:33;364004;OffsetFinal3;2;33;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:34;364004;OffsetFinal4;2;34;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:35;364004;ConsigneFinale1;2;35;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:36;364004;ConsigneFinale2;2;36;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:37;364004;ConsigneFinale3;2;37;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:38;364004;ConsigneFinale4;2;38;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:39;364004;Versionfordisplay;2;39;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:40;364004;NbrePieces;2;40;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:41;364004;Ipadoffset;2;41;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:42;364004;LowOffsetLimit;2;42;;;;;;;;;;62
+OBJECT_ANALOG_VALUE:43;364004;HighOffsetLimit;2;43;;;;;;;;;;62
+OBJECT_ANALOG_VALUE:44;364004;ConsigneTemperatureEcoETE1;2;44;;;;;;;;;;62
+OBJECT_ANALOG_VALUE:45;364004;ConsigneTemperatureEcoETE2;2;45;;;;;;;;;;62
+OBJECT_ANALOG_VALUE:46;364004;ConsigneTemperatureEcoETE3;2;46;;;;;;;;;;62
+OBJECT_ANALOG_VALUE:47;364004;ConsigneTemperatureEcoETE4;2;47;;;;;;;;;;62
+OBJECT_ANALOG_VALUE:48;364004;ConsigneTemperatureEcoETE4;2;48;;;;;;;;;;62
+OBJECT_ANALOG_VALUE:49;364004;offset2ipad;2;49;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:50;364004;offset3ipad;2;50;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:51;364004;offset4ipad;2;51;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:52;364004;offset1ipad;2;52;;;;;;;;;;95
+OBJECT_ANALOG_VALUE:53;364004;CoeffOffset;2;53;;;;;;;;;;95
+OBJECT_BINARY_INPUT:5004;364004;ComSensor 1 Motion;3;5004;;;;;;;;;0;
+OBJECT_BINARY_OUTPUT:6;364004;Vanne;4;6;;;;;;;;;1;
+OBJECT_BINARY_VALUE:1;364004;DemandeChaud1;5;1;;;;;;;;;1;
+OBJECT_BINARY_VALUE:2;364004;DemandeChaud2;5;2;;;;;;;;;1;
+OBJECT_BINARY_VALUE:3;364004;DemandeChaud3;5;3;;;;;;;;;1;
+OBJECT_BINARY_VALUE:4;364004;DemandeChaud4;5;4;;;;;;;;;1;
+OBJECT_BINARY_VALUE:5;364004;DemandeFroid1;5;5;;;;;;;;;1;
+OBJECT_BINARY_VALUE:6;364004;DemandeFroid2;5;6;;;;;;;;;1;
+OBJECT_BINARY_VALUE:7;364004;DemandeFroid3;5;7;;;;;;;;;1;
+OBJECT_BINARY_VALUE:8;364004;DemandeFroid4;5;8;;;;;;;;;1;
+OBJECT_BINARY_VALUE:11;364004;EnableChgOver;5;11;;;;;;;;;2;
+OBJECT_MULTI_STATE_VALUE:1;364004;ModeConfortEco;19;1;;;;;;;;;3;
+OBJECT_MULTI_STATE_VALUE:2;364004;ModeChangeOver;19;2;;;;;;;;;4;
+OBJECT_MULTI_STATE_VALUE:50;364004;ModeConfortEcoIpad;19;50;;;;;;;;;3;

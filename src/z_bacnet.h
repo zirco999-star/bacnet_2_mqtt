@@ -37,9 +37,11 @@ struct BACnetPersistenceDev {
     bool enabled;
     char name[32];
     char vendor[32];
-    uint8_t count;
-    bool discovery_done;
-    BACnetPersistenceObj objects[100]; // Total Blob ~3672 octets
+    uint8_t count;        // Nombre total d'objets attendus
+    bool discovery_done;  // scan_done flag
+    uint16_t disc_obj_idx; // Index de progression du scan
+    uint8_t disc_step;     // Étape actuelle du scan
+    BACnetPersistenceObj objects[100]; // Total Blob ~3676 octets
 };
 
 // --- TYPES D'OBJETS BACNET (ASHRAE 135) ---
@@ -108,6 +110,18 @@ enum BACnetObjectType {
     OBJ_AUDIT_REPORTER = 62
 };
 
+// --- ÉTATS DE DÉCOUVERTE ---
+enum DISC_STEP_T { 
+    DISC_DEV_ID = 0, 
+    DISC_DEV_NAME, 
+    DISC_DEV_VENDOR, 
+    DISC_OBJ_COUNT,   
+    DISC_OBJ_OID,     
+    DISC_OBJ_NAME,    
+    DISC_OBJ_UNITS,   
+    DISC_OBJ_VALUE    
+};
+
 // --- STATISTIQUES MS/TP ---
 struct BACnet_Stats {
     uint32_t ms_msgs_rx;
@@ -122,30 +136,34 @@ extern BACnet_Stats bacnetStats;
 
 // --- BASE DE DONNÉES EN RAM ---
 struct BACnetObject {
-    uint16_t type;
-    uint32_t instance;
-    String name;
-    float present_value;
-    bool is_commandable;
-    bool enabled;
-    uint32_t last_update;
-    uint16_t units;
-    String unit_text;
-    uint16_t expected_states_count; 
-    bool discovery_done;
+    uint16_t type = 65535;
+    uint32_t instance = 0;
+    String name = "Unknown";
+    float present_value = 0.0f;
+    bool is_commandable = false;
+    bool enabled = false;
+    uint32_t last_update = 0;
+    uint16_t units = 95;
+    String unit_text = "";
+    uint16_t expected_states_count = 0; 
+    bool discovery_done = false;
     std::vector<String> state_texts;
 };
 
 struct BACnetDevice {
-    uint8_t mac_address;
-    uint32_t device_id;
-    String name;
-    String vendor;
-    String version;
-    bool enabled;
+    uint8_t mac_address = 0;
+    uint32_t device_id = 4194303;
+    String name = "";
+    String vendor = "";
+    String version = "";
+    bool enabled = true;
     std::vector<BACnetObject> objects;
-    uint32_t last_seen;
-    bool discovery_done; 
+    uint32_t last_seen = 0;
+    bool discovery_done = false; // scan_done
+    DISC_STEP_T disc_step = DISC_DEV_ID;
+    uint16_t disc_obj_idx = 0;
+
+    BACnetDevice() {} // Constructeur par défaut
 };
 
 extern std::vector<BACnetDevice> bacnet_network_cache;

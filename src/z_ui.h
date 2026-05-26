@@ -16,7 +16,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             --text: #fafafa; --muted: #a1a1aa; --border: #27272a; --success: #22c55e; --error: #ef4444; --warning: #f59e0b;
             --glass: rgba(24, 24, 27, 0.8);
         }
-        /* Suppression de Google Fonts pour rapidité en mode AP */
         body { background: var(--bg); color: var(--text); font-family: -apple-system, system-ui, sans-serif; margin: 0; line-height: 1.2; -webkit-tap-highlight-color: transparent; }
         
         nav { background: var(--glass); backdrop-filter: blur(12px); padding: 0.5rem 1rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 100; }
@@ -65,7 +64,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         .card-header { background: #1e1e1e; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
         .card-title { font-size: 0.65rem; font-weight: 800; color: var(--muted); text-transform: uppercase; }
         
-        /* Controller & Table Styles */
         .controller-block { margin-bottom: 1rem; border: 1px solid var(--border); border-radius: 8px; background: #0c0c0e; overflow: hidden; }
         .controller-header { background: #1a1a1c; padding: 0.6rem 0.75rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); }
         .header-actions { display: flex; gap: 0.6rem; align-items: center; }
@@ -174,12 +172,15 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 </form>
             </div>
             <div class="card">
-                <div class="card-header"><div class="card-title">BACnet MS/TP Settings</div><button class="btn btn-p" onclick="doSaveBac()">Save</button></div>
+                <div class="card-header"><div class="card-title">BACnet MS/TP Engine</div><button class="btn btn-p" onclick="doSaveBac()">Save</button></div>
                 <form id="f-bac" class="grid-form">
                     <div class="form-group"><label>Station MAC</label><input type="number" name="mac" id="in-mac"></div>
-                    <div class="form-group"><label>Max Retries</label><input type="number" name="retries" id="in-retries" value="3"></div>
+                    <div class="form-group"><label>Device Instance (GW)</label><input type="number" name="did" id="in-did"></div>
                     <div class="form-group"><label>Max Master</label><input type="number" name="mm" id="in-mm"></div>
-                    <div class="form-group"><label>APDU Timeout (ms)</label><input type="number" name="timeout" id="in-timeout" value="1000"></div>
+                    <div class="form-group"><label>Max Retries</label><input type="number" name="retries" id="in-retries"></div>
+                    <div class="form-group"><label>APDU Timeout (ms)</label><input type="number" name="timeout" id="in-timeout"></div>
+                    <div class="form-group"><label>Token Skip (Pacing)</label><input type="number" name="tskip" id="in-tskip"></div>
+                    <div class="full-w"><label>Internal Heartbeat (ms)</label><input type="number" name="hbeat" id="in-hbeat"></div>
                 </form>
             </div>
             <div class="card">
@@ -188,6 +189,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     <div class="full-w"><label>Broker Server IP</label><input type="text" name="mqh" id="in-mqh"></div>
                     <div class="form-group"><label>MQTT User</label><input type="text" name="mqu" id="in-mqu"></div>
                     <div class="form-group"><label>MQTT Password</label><input type="password" name="mqp" id="in-mqp"></div>
+                    <div class="full-w"><label>Root Topic Prefix</label><input type="text" name="mqpr" id="in-mqpr"></div>
                 </form>
             </div>
             <div class="grid-stats" style="margin-top:1rem; grid-template-columns: 1fr 1fr 1fr;">
@@ -218,8 +220,12 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('in-mqh').value = d.mqh || "";
                 document.getElementById('in-mqu').value = d.mqu || "";
                 document.getElementById('in-mqp').value = d.mqp_set ? "******" : "";
+                document.getElementById('in-mqpr').value = d.mqpr || "bacnet";
+                document.getElementById('in-did').value = d.did || 123;
                 document.getElementById('in-timeout').value = d.to || 1000;
                 document.getElementById('in-retries').value = d.ret || 3;
+                document.getElementById('in-hbeat').value = d.hbeat || 50000;
+                document.getElementById('in-tskip').value = d.tskip || 0;
                 toggleStatic();
             });
         }
@@ -230,6 +236,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         function doSaveMqtt() { fetch('/save', {method:'POST', body:new FormData(document.getElementById('f-mqtt'))}).then(()=>alert("MQTT Saved.")); }
         function doResetCache() { if(confirm("Clear BACnet Cache?")) fetch('/api/reset_cache', {method:'POST'}).then(()=>alert("Cache cleared. Rebooting...")); }
         function doResetFactory() { if(confirm("DANGER: Factory Reset?")) fetch('/api/factory_reset', {method:'POST'}).then(()=>alert("Factory Reset OK. Rebooting to AP mode...")); }
+        
         function toggleDevice(id, enabled) {
             const data = { device_id: id, enabled: enabled, objects: [] };
             fetch('/api/save_objects', {method:'POST', body:JSON.stringify(data), headers:{'Content-Type':'application/json'}}).then(() => {
@@ -251,7 +258,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     inst: parseInt(r.getAttribute('data-inst')),
                     type: parseInt(r.getAttribute('data-type')),
                     name: r.querySelector('.in-edit').value,
-                    unit: r.querySelector('.unit-edit').value,
+                    unit: r.querySelector('.unit-edit') ? r.querySelector('.unit-edit').value : "",
                     poll: r.querySelector('.poll-sw').checked
                 });
             });

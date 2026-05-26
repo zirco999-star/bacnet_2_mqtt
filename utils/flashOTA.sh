@@ -9,3 +9,5 @@ if [ ! -f "$FILE" ]; then
 fi
 echo "Déploiement OTA sur $IP:$PORT..."
 /home/dev/venv/bin/python3 /root/.arduino15/packages/esp32/hardware/esp32/3.3.8/tools/espota.py -i $IP -p $PORT -f $FILE
+
+

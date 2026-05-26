@@ -1,0 +1,7 @@
+#State Text Reference
+#Reference Number;Text 1 or Inactive-Text;Text 2 or Active-Text;Text 3
+0;Inactive;Active
+1;FALSE;TRUE
+2;Non;Oui
+3;Confort;Eco;Arret
+4;Chaud;Froid
