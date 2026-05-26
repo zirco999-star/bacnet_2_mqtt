@@ -247,12 +247,19 @@ void setup_network_infrastructure() {
                     JsonObject obj = objs_arr.add<JsonObject>();
                     obj["type"] = o.type; obj["inst"] = o.instance; obj["name"] = o.name;
                     obj["val"] = o.present_value; obj["poll"] = o.enabled;
+                    obj["unit"] = o.unit_text; // AJOUT UNITÉ
                 }
             }
             xSemaphoreGive(cache_mutex);
         }
         String response; serializeJson(doc, response);
         request->send(200, "application/json", response);
+    });
+
+    webServer.on("/reboot", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if(!is_authenticated(request)) return;
+        request->send(200, "text/plain", "REBOOTING...");
+        pending_reboot = true; reboot_timer = millis();
     });
 
     webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {

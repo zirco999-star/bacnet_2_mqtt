@@ -1,0 +1,263 @@
+Enumeration,Unit,Unit type
+166,meters-per-second-per-second,Acceleration
+0,square-meters,Area
+116,square-centimeters,Area
+1,square-feet,Area
+115,square-inches,Area
+105,currency1,Currency
+106,currency2,Currency
+107,currency3,Currency
+108,currency4,Currency
+109,currency5,Currency
+110,currency6,Currency
+111,currency7,Currency
+112,currency8,Currency
+113,currency9,Currency
+114,currency10,Currency
+2,milliamperes,Electrical
+3,amperes,Electrical
+167,amperes-per-meter,Electrical
+168,amperes-per-square-meter,Electrical
+169,ampere-square-meters,Electrical
+199,decibels,Electrical
+200,decibels-millivolt,Electrical
+201,decibels-volt,Electrical
+170,farads,Electrical
+171,henrys,Electrical
+4,ohms,Electrical
+237,ohm-meter-squared-per-meter,Electrical
+172,ohm-meters,Electrical
+145,milliohms,Electrical
+122,kilohms,Electrical
+123,megohms,Electrical
+190,microsiemens,Electrical
+202,millisiemens,Electrical
+173,siemens,Electrical
+174,siemens-per-meter,Electrical
+175,teslas,Electrical
+5,volts,Electrical
+124,millivolts,Electrical
+6,kilovolts,Electrical
+7,megavolts,Electrical
+8,volt-amperes,Electrical
+9,kilovolt-amperes,Electrical
+10,megavolt-amperes,Electrical
+11,volt-amperes-reactive,Electrical
+12,kilovolt-amperes-reactive,Electrical
+13,megavolt-amperes-reactive,Electrical
+176,volts-per-degree-kelvin,Electrical
+177,volts-per-meter,Electrical
+14,degrees-phase,Electrical
+15,power-factor,Electrical
+178,webers,Electrical
+238,ampere-seconds,Energy
+239,volt-ampere-hours,Energy
+240,kilovolt-ampere-hours,Energy
+241,megavolt-ampere-hours,Energy
+242,volt-ampere-hours-reactive,Energy
+243,kilovolt-ampere-hours-reactive,Energy
+244,megavolt-ampere-hours-reactive,Energy
+245,volt-square-hours,Energy
+246,ampere-square-hours,Energy
+16,joules,Energy
+17,kilojoules,Energy
+125,kilojoules-per-kilogram,Energy
+126,megajoules,Energy
+18,watt-hours,Energy
+19,kilowatt-hours,Energy
+146,megawatt-hours,Energy
+203,watt-hours-reactive,Energy
+204,kilowatt-hours-reactive,Energy
+205,megawatt-hours-reactive,Energy
+20,btus,Energy
+147,kilo-btus,Energy
+148,mega-btus,Energy
+21,therms,Energy
+22,ton-hours,Energy
+23,joules-per-kilogram-dry-air,Enthalpy
+149,kilojoules-per-kilogram-dry-air,Enthalpy
+150,megajoules-per-kilogram-dry-air,Enthalpy
+24,btus-per-pound-dry-air,Enthalpy
+117,btus-per-pound,Enthalpy
+127,joules-per-degree-kelvin,Entropy
+151,kilojoules-per-degree-kelvin,Entropy
+152,megajoules-per-degree-kelvin,Entropy
+128,joules-per-kilogram-degree-kelvin,Entropy
+153,newton,Force
+25,cycles-per-hour,Frequency
+26,cycles-per-minute,Frequency
+27,hertz,Frequency
+129,kilohertz,Frequency
+130,megahertz,Frequency
+131,per-hour,Frequency
+28,grams-of-water-per-kilogram-dry-air,Humidity
+29,percent-relative-humidity,Humidity
+194,micrometers,Length
+30,millimeters,Length
+118,centimeters,Length
+193,kilometers,Length
+31,meters,Length
+32,inches,Length
+33,feet,Length
+179,candelas,Light
+180,candelas-per-square-meter,Light
+34,watts-per-square-foot,Light
+35,watts-per-square-meter,Light
+36,lumens,Light
+37,luxes,Light
+38,foot-candles,Light
+196,milligrams,Mass
+195,grams,Mass
+39,kilograms,Mass
+40,pounds-mass,Mass
+41,tons,Mass
+154,grams-per-second,Mass Flow
+155,grams-per-minute,Mass Flow
+42,kilograms-per-second,Mass Flow
+43,kilograms-per-minute,Mass Flow
+44,kilograms-per-hour,Mass Flow
+119,pounds-mass-per-second,Mass Flow
+45,pounds-mass-per-minute,Mass Flow
+46,pounds-mass-per-hour,Mass Flow
+156,tons-per-hour,Mass Flow
+132,milliwatts,Power
+47,watts,Power
+48,kilowatts,Power
+49,megawatts,Power
+50,btus-per-hour,Power
+157,kilo-btus-per-hour,Power
+247,joule-per-hours,Power
+51,horsepower,Power
+52,tons-refrigeration,Power
+53,pascals,Pressure
+133,hectopascals,Pressure
+54,kilopascals,Pressure
+134,millibars,Pressure
+55,bars,Pressure
+56,pounds-force-per-square-inch,Pressure
+206,millimeters-of-water,Pressure
+57,centimeters-of-water,Pressure
+58,inches-of-water,Pressure
+59,millimeters-of-mercury,Pressure
+60,centimeters-of-mercury,Pressure
+61,inches-of-mercury,Pressure
+62,degrees-celsius,Temperature
+63,degrees-kelvin,Temperature
+181,degrees-kelvin-per-hour,Temperature
+182,degrees-kelvin-per-minute,Temperature
+64,degrees-fahrenheit,Temperature
+65,degree-days-celsius,Temperature
+66,degree-days-fahrenheit,Temperature
+120,delta-degrees-fahrenheit,Temperature
+121,delta-degrees-kelvin,Temperature
+67,years,Time
+68,months,Time
+69,weeks,Time
+70,days,Time
+71,hours,Time
+72,minutes,Time
+73,seconds,Time
+158,hundredths-seconds,Time
+159,milliseconds,Time
+160,newton-meters,Torque
+161,illimeters-per-second,Velocitym
+162,millimeters-per-minute,Velocitym
+74,meters-per-second,Velocitym
+163,meters-per-minute,Velocitym
+164,meters-per-hour,Velocitym
+75,kilometers-per-hour,Velocitym
+76,feet-per-second,Velocitym
+77,feet-per-minute,Velocitym
+78,miles-per-hour,Velocitym
+79,cubic-feet,Volume
+80,cubic-meters,Volume
+81,imperial-gallons,Volume
+197,milliliters,Volume
+82,liters,Volume
+83,us-gallons,Volume
+142,cubic-feet-per-second,Volumetric Flow
+84,cubic-feet-per-minute,Volumetric Flow
+254,million-standard-cubic-feet-per-minute,Volumetric Flow
+191,cubic-feet-per-hour,Volumetric Flow
+248,cubic-feet-per-day,Volumetric Flow
+47808,standard-cubic-feet-per-day,Volumetric Flow
+47809,million-standard-cubic-feet-per-day,Volumetric Flow
+47810,thousand-cubic-feet-per-day,Volumetric Flow
+47811,thousand-standard-cubic-feet-per-day,Volumetric Flow
+47812,pounds-mass-per-day,Volumetric Flow
+85,cubic-meters-per-second,Volumetric Flow
+165,cubic-meters-per-minute,Volumetric Flow
+135,cubic-meters-per-hour,Volumetric Flow
+249,cubic-meters-per-day,Volumetric Flow
+86,imperial-gallons-per-minute,Volumetric Flow
+198,milliliters-per-second,Volumetric Flow
+87,liters-per-second,Volumetric Flow
+88,liters-per-minute,Volumetric Flow
+136,liters-per-hour,Volumetric Flow
+89,us-gallons-per-minute,Volumetric Flow
+192,us-gallons-per-hour,Volumetric Flow
+90,degrees-angular,Other
+91,degrees-celsius-per-hour,Other
+92,degrees-celsius-per-minute,Other
+93,degrees-fahrenheit-per-hour,Other
+94,degrees-fahrenheit-per-minute,Other
+183,joule-seconds,Other
+186,kilograms-per-cubic-meter,Other
+137,kilowatt-hours-per-square-meter,Other
+138,kilowatt-hours-per-square-foot,Other
+250,watt-hours-per-cubic-meter,Other
+251,joules-per-cubic-meter,Other
+139,megajoules-per-square-meter,Other
+140,megajoules-per-square-foot,Other
+252,mole-percent,Other
+95,no-units,Other
+187,newton-seconds,Other
+188,newtons-per-meter,Other
+96,parts-per-million,Other
+97,parts-per-billion,Other
+253,pascal-seconds,Other
+98,percent,Other
+143,percent-obscuration-per-foot,Other
+144,percent-obscuration-per-meter,Other
+99,percent-per-second,Other
+100,per-minute,Other
+101,per-second,Other
+102,psi-per-degree-fahrenheit,Other
+103,radians,Other
+184,radians-per-second,Other
+104,revolutions-per-minute,Other
+185,square-meters-per-newton,Other
+189,watts-per-meter-per-degree-kelvin,Other
+141,watts-per-square-meter-degree-kelvin,Other
+207,per-mille,Other
+208,grams-per-gram,Other
+209,kilograms-per-kilogram,Other
+210,grams-per-kilogram,Other
+211,milligrams-per-gram,Other
+212,milligrams-per-kilogram,Other
+213,grams-per-milliliter,Other
+214,grams-per-liter,Other
+215,milligrams-per-liter,Other
+216,micrograms-per-liter,Other
+217,grams-per-cubic-meter,Other
+218,milligrams-per-cubic-meter,Other
+219,micrograms-per-cubic-meter,Other
+220,nanograms-per-cubic-meter,Other
+221,grams-per-cubic-centimeter,Other
+222,becquerels,Other
+223,kilobecquerels,Other
+224,megabecquerels,Other
+225,gray,Other
+226,milligray,Other
+227,microgray,Other
+228,sieverts,Other
+229,millisieverts,Other
+230,microsieverts,Other
+231,microsieverts-per-hour,Other
+47814,millirems,Other
+47815,millirems-per-hour,Other
+232,decibels-a,Other
+233,nephelometric-turbidity-unit,Other
+234,pH,Other
+235,grams-per-square-meter,Other
+236,minutes-per-degree-kelvin,Other

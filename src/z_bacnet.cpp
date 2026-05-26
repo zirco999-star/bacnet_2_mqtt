@@ -110,13 +110,57 @@ uint16_t build_read_property_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t o
 
 String get_unit_text(uint16_t units) {
     switch(units) {
-        case 62: return "°C"; case 63: return "°F";
-        case 98: return "%"; case 95: return "kWh";
-        case 19: return "W"; case 47: return "V";
-        case 3: return "A"; case 79: return "Pa";
-        case 20: return "Wh"; case 17: return "kW";
-        case 82: return "l/s"; case 84: return "m³/h";
-        case 255: return "No Unit";
+        // Température
+        case 62: return "°C";
+        case 63: return "°K";
+        case 64: return "°F";
+        // Énergie
+        case 19: return "kWh";
+        case 18: return "Wh";
+        case 146: return "MWh";
+        case 17: return "kJ";
+        case 16: return "J";
+        case 126: return "MJ";
+        case 20: return "BTU";
+        // Puissance
+        case 48: return "kW";
+        case 47: return "W";
+        case 49: return "MW";
+        // Électrique
+        case 5: return "V";
+        case 124: return "mV";
+        case 3: return "A";
+        case 2: return "mA";
+        case 4: return "Ohm";
+        case 8: return "VA";
+        case 9: return "kVA";
+        // Pression
+        case 53: return "Pa";
+        case 54: return "kPa";
+        case 55: return "bar";
+        case 56: return "psi";
+        // Débit
+        case 87: return "L/s";
+        case 88: return "L/min";
+        case 136: return "L/h";
+        case 85: return "m³/s";
+        case 135: return "m³/h";
+        case 84: return "cfm";
+        // Humidité / Concentration / Pourcentage
+        case 29: return "%RH";
+        case 98: return "%";
+        case 96: return "ppm";
+        // Temps
+        case 73: return "s";
+        case 72: return "min";
+        case 71: return "h";
+        case 159: return "ms";
+        // Volume
+        case 82: return "L";
+        case 80: return "m³";
+        // Divers
+        case 95: return "no-units"; 
+        case 255: return "none";
         default: return "Unit " + String(units);
     }
 }
@@ -151,7 +195,7 @@ static void bacnet_task(void *pv) {
     
     uart_event_t event;
 
-    z_log("[BACNET] Engine v4.7.72 - Per-Object Discovery & Fix C++ Enum\n");
+    z_log("[BACNET] Engine v4.7.85 - Comprehensive Discovery & ASHRAE Units\n");
 
     for (;;) {
         if (xQueueReceive(uart_evt_queue, (void *)&event, 0) == pdTRUE) {
@@ -178,12 +222,18 @@ static void bacnet_task(void *pv) {
                             if (src_mac < 128 && src_mac != sysCfg.mac_address) {
                                 if (xSemaphoreTake(cache_mutex, 0)) {
                                     bool known = false;
-                                    for(auto& d : bacnet_network_cache) { if(d.mac_address == src_mac) { known = true; break; } }
+                                    for(auto& d : bacnet_network_cache) { 
+                                        if(d.mac_address == src_mac) { 
+                                            known = true; 
+                                            break; 
+                                        } 
+                                    }
                                     if(!known) {
                                         z_log("[BACNET] Found New MAC: %u\n", src_mac);
                                         BACnetDevice d; d.mac_address = src_mac; d.device_id = 4194303; d.enabled = true; d.discovery_done = false;
                                         d.name = ""; d.vendor = "";
                                         bacnet_network_cache.push_back(d);
+                                        disc_step = DISC_DEV_ID; disc_obj_idx = 0;
                                     }
                                     xSemaphoreGive(cache_mutex);
                                 }
@@ -244,10 +294,12 @@ static void bacnet_task(void *pv) {
                             } else {
                                 // --- POLLING LOGIC ---
                                 size_t count = dev.objects.size();
-                                for(size_t i=0; i<count; i++) {
+                                if (count > 0) {
                                     current_poll_idx = (current_poll_idx + 1) % count;
                                     auto& o = dev.objects[current_poll_idx];
-                                    if (o.enabled && o.type != 8) { apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, 85, -1); break; }
+                                    if (o.enabled && o.type != 8 && o.type != 65535) { 
+                                        apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, 85, -1); 
+                                    }
                                 }
                             }
                             if (apdu_len > 0) { token_skip_count = 0; waiting_for_reply = true; send_mstp_frame(dev.mac_address, 0x05, apdu, apdu_len); mstp_state = MSTP_AWAIT_REPLY; }
@@ -265,9 +317,9 @@ static void bacnet_task(void *pv) {
                     if (pos < data_len) {
                         uint8_t pdu_type = data_buf[pos] & 0xF0;
                         if (pdu_type == 0x50 || pdu_type == 0x40 || pdu_type == 0x20) { 
-                            z_log("[BACNET] Error at Step %d\n", (int)disc_step);
                             if (!bacnet_network_cache.empty() && !bacnet_network_cache[0].discovery_done) {
-                                if (disc_step == DISC_OBJ_VALUE) { 
+                                z_log("[BACNET] Step %d Error (Normal for some types)\n", (int)disc_step);
+                                if (disc_step == DISC_OBJ_VALUE || disc_step == DISC_OBJ_UNITS || (disc_step == DISC_OBJ_NAME && bacnet_network_cache[0].objects[disc_obj_idx].type > 1000)) { 
                                     disc_obj_idx++; disc_step = DISC_OBJ_OID; 
                                     if (disc_obj_idx % 10 == 0) save_device_objects(bacnet_network_cache[0].device_id);
                                 } else disc_step = static_cast<DISC_STEP_T>((int)disc_step + 1);
@@ -294,21 +346,55 @@ static void bacnet_task(void *pv) {
                                                         disc_obj_idx = 0; disc_step = DISC_OBJ_OID;
                                                     } else if (disc_obj_idx < dev.objects.size()) {
                                                         auto& o = dev.objects[disc_obj_idx];
-                                                        if (disc_step == DISC_OBJ_OID) { uint32_t oid = (data_buf[pos]<<24)|(data_buf[pos+1]<<16)|(data_buf[pos+2]<<8)|data_buf[pos+3]; o.type = oid >> 22; o.instance = oid & 0x3FFFFF; if(o.type != 8) o.enabled = true; z_log("[BACNET] Obj %u OID: T%u I%lu\n", disc_obj_idx+1, o.type, (unsigned long)o.instance); disc_step = DISC_OBJ_NAME; }
-                                                        else if (disc_step == DISC_OBJ_NAME) { char n[33]; uint8_t enc = data_buf[pos]; if (enc == 0) { uint16_t slen = std::min((int)val_tag.len - 1, 32); memcpy(n, &data_buf[pos+1], slen); n[slen]=0; } else { int slen=0; for(int i=2; i<val_tag.len && slen<32; i+=2) n[slen++]=data_buf[pos+i]; n[slen]=0; } o.name = String(n); z_log("[BACNET] Obj %u Name: %s\n", disc_obj_idx+1, n); if(o.type <= 2) disc_step = DISC_OBJ_UNITS; else disc_step = DISC_OBJ_VALUE; }
-                                                        else if (disc_step == DISC_OBJ_UNITS) { uint32_t u=0; for(int i=0; i<val_tag.len; i++) u = (u << 8) | data_buf[pos+i]; o.units = u; o.unit_text = get_unit_text(u); z_log("[BACNET] Obj %u Units: %s\n", disc_obj_idx+1, o.unit_text.c_str()); disc_step = DISC_OBJ_VALUE; }
+                                                        if (disc_step == DISC_OBJ_OID) { 
+                                                            uint32_t oid = (data_buf[pos]<<24)|(data_buf[pos+1]<<16)|(data_buf[pos+2]<<8)|data_buf[pos+3]; 
+                                                            o.type = oid >> 22; o.instance = oid & 0x3FFFFF; 
+                                                            // Logic exhaustive de filtrage par type (ASHRAE 135)
+                                                            if((o.type <= 5) || (o.type >= 12 && o.type <= 14) || (o.type == 19) || (o.type == 23 || o.type == 24) || (o.type >= 39 && o.type <= 50) || (o.type == 54 || o.type == 55)) o.enabled = true;
+                                                            else o.enabled = false;
+                                                            z_log("[BACNET] Obj %u OID: T%u I%lu\n", disc_obj_idx+1, o.type, (unsigned long)o.instance); 
+                                                            disc_step = DISC_OBJ_NAME; 
+                                                        }
+                                                        else if (disc_step == DISC_OBJ_NAME) { 
+                                                            char n[33]; uint8_t enc = data_buf[pos]; 
+                                                            if (enc == 0) { uint16_t slen = std::min((int)val_tag.len - 1, 32); memcpy(n, &data_buf[pos+1], slen); n[slen]=0; } 
+                                                            else { int slen=0; for(int i=2; i<val_tag.len && slen<32; i+=2) n[slen++]=data_buf[pos+i]; n[slen]=0; } 
+                                                            o.name = String(n); z_log("[BACNET] Obj %u Name: %s\n", disc_obj_idx+1, n); 
+                                                            
+                                                            // Détermination de l'étape suivante (Units, Value ou Next Object)
+                                                            if(o.type <= 2 || o.type == 23 || o.type == 24 || o.type == 46) disc_step = DISC_OBJ_UNITS; 
+                                                            else if(o.enabled) disc_step = DISC_OBJ_VALUE;
+                                                            else {
+                                                                // Skip units/value for system objects
+                                                                disc_obj_idx++; disc_step = DISC_OBJ_OID;
+                                                                if (disc_obj_idx % 10 == 0) save_device_objects(dev.device_id);
+                                                                if(disc_obj_idx >= dev.objects.size()) { dev.discovery_done=true; save_device_objects(dev.device_id); z_log("[BACNET] Scan Complete\n"); }
+                                                            }
+                                                        }
+                                                        else if (disc_step == DISC_OBJ_UNITS) { 
+                                                            uint32_t u=0; for(int i=0; i<val_tag.len; i++) u = (u << 8) | data_buf[pos+i]; 
+                                                            o.units = u; 
+                                                            o.unit_text = get_unit_text(u); 
+                                                            if (o.unit_text == "" || o.unit_text.startsWith("Unit")) {
+                                                                z_log("[BACNET] Obj %u Units: %s (Raw:%lu)\n", disc_obj_idx+1, o.unit_text.c_str(), (unsigned long)u);
+                                                            } else {
+                                                                z_log("[BACNET] Obj %u Units: %s\n", disc_obj_idx+1, o.unit_text.c_str());
+                                                            }
+                                                            disc_step = DISC_OBJ_VALUE; 
+                                                        }
                                                         else if (disc_step == DISC_OBJ_VALUE) {
                                                             if (val_tag.number == 4) { float v; uint32_t tmp; memcpy(&tmp, &data_buf[pos], 4); tmp = __builtin_bswap32(tmp); memcpy(&v, &tmp, 4); o.present_value = v; }
-                                                            else { uint32_t v=0; for(int i=0; i<val_tag.len; i++) v = (v << 8) | data_buf[pos+i]; o.present_value = v; }
+                                                            else { uint32_t v=0; for(int i=0; i<val_tag.len; i++) v = (v << 8) | data_buf[pos+i]; o.present_value = (float)v; }
                                                             o.last_update = millis(); z_log("[BACNET] Obj %u Value: %.2f\n", disc_obj_idx+1, o.present_value);
                                                             disc_obj_idx++; disc_step = DISC_OBJ_OID;
                                                             if (disc_obj_idx % 10 == 0) { save_device_objects(dev.device_id); z_log("[NVS] Incremental Save (%d/%d)\n", disc_obj_idx, (uint32_t)dev.objects.size()); }
+                                                            if(disc_obj_idx >= dev.objects.size()) { dev.discovery_done=true; save_device_objects(dev.device_id); z_log("[BACNET] Scan Complete\n"); }
                                                         }
                                                     }
                                                 } else {
                                                     // --- POLLING PROCESSING ---
                                                     if (val_tag.number == 4) { float v; uint32_t tmp; memcpy(&tmp, &data_buf[pos], 4); tmp = __builtin_bswap32(tmp); memcpy(&v, &tmp, 4); if(current_poll_idx < dev.objects.size()){ auto& o=dev.objects[current_poll_idx]; o.present_value=v; o.last_update=millis(); z_log("[BACNET] Polled %lu: %.2f\n", (unsigned long)o.instance, v); } }
-                                                    else if (val_tag.number == 2 || val_tag.number == 9) { uint32_t v=0; for(int i=0; i<val_tag.len; i++) v=(v<<8)|data_buf[pos+i]; if(current_poll_idx < dev.objects.size()){ auto& o=dev.objects[current_poll_idx]; o.present_value=v; o.last_update=millis(); z_log("[BACNET] Polled %lu: %lu\n", (unsigned long)o.instance, (unsigned long)v); } }
+                                                    else if (val_tag.number == 2 || val_tag.number == 9) { uint32_t v=0; for(int i=0; i<val_tag.len; i++) v=(v<<8)|data_buf[pos+i]; if(current_poll_idx < dev.objects.size()){ auto& o=dev.objects[current_poll_idx]; o.present_value=(float)v; o.last_update=millis(); z_log("[BACNET] Polled %lu: %lu\n", (unsigned long)o.instance, (unsigned long)v); } }
                                                 }
                                                 pos += val_tag.len;
                                             }
@@ -321,13 +407,14 @@ static void bacnet_task(void *pv) {
                     }
                     mstp_state = MSTP_DONE_WITH_TOKEN;
                 } else if (millis() - timer_silence > 300) { 
-                    z_log("[MSTP] Timeout at Step %d\n", (int)disc_step);
                     waiting_for_reply = false;
                     if (!bacnet_network_cache.empty() && !bacnet_network_cache[0].discovery_done) {
-                        if (disc_step == DISC_OBJ_VALUE) { 
+                        z_log("[MSTP] Timeout Step %d\n", (int)disc_step);
+                        if (disc_step == DISC_OBJ_VALUE || disc_step == DISC_OBJ_UNITS) { 
                             disc_obj_idx++; disc_step = DISC_OBJ_OID; 
                             if (disc_obj_idx % 10 == 0) save_device_objects(bacnet_network_cache[0].device_id);
                         } else disc_step = static_cast<DISC_STEP_T>((int)disc_step + 1);
+                        if(disc_obj_idx >= bacnet_network_cache[0].objects.size()) { bacnet_network_cache[0].discovery_done=true; save_device_objects(bacnet_network_cache[0].device_id); }
                     }
                     mstp_state = MSTP_DONE_WITH_TOKEN;
                 }
