@@ -1,11 +1,12 @@
 #include "z_mqtt.h"
 #include "z_bacnet.h"
 #include <string.h>
+#include <atomic>
 
 extern void z_log(const char* format, ...);
 
 static int mqtt_conn_fail_count = 0;
-static bool mqtt_circuit_open = false;
+static std::atomic<bool> mqtt_circuit_open{false};
 static bool mqtt_is_connected = false;
 
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
@@ -25,11 +26,12 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 
         case MQTT_EVENT_DISCONNECTED:
             mqtt_is_connected = false;
+            // Si le Wi-Fi est là mais qu'on perd le MQTT, on compte les échecs
             if (!mqtt_circuit_open && WiFi.status() == WL_CONNECTED) {
                 mqtt_conn_fail_count++;
                 z_log("[MQTT] Disconnected (%d/3)\n", mqtt_conn_fail_count);
                 if (mqtt_conn_fail_count >= 3) {
-                    z_log("[MQTT] CIRCUIT BREAKER TRIPPED: Scheduled for shutdown.\n");
+                    z_log("[MQTT] CIRCUIT BREAKER TRIPPED: Signaling shutdown to main task.\n");
                     mqtt_circuit_open = true;
                 }
             }
@@ -50,6 +52,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             break;
 
         case MQTT_EVENT_DATA:
+            // ... (logique de parsing des messages entrants identique) ...
             {
                 char topic_buf[128];
                 if (event->topic_len < sizeof(topic_buf)) {
@@ -89,17 +92,20 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 }
 
 void setup_mqtt() {
-    if (strlen(sysCfg.mqtt_server) == 0) return;
-    
+    // 1. Tear-down complet et propre selon les standards Espressif
     if (mqtt_client != NULL) {
+        z_log("[MQTT] Stopping and Destroying previous client instance...\n");
         esp_mqtt_client_stop(mqtt_client);
         esp_mqtt_client_destroy(mqtt_client);
         mqtt_client = NULL;
     }
 
+    // 2. Réinitialisation des états du Circuit Breaker
     mqtt_conn_fail_count = 0;
     mqtt_circuit_open = false;
 
+    if (strlen(sysCfg.mqtt_server) == 0) return;
+    
     static char mqtt_uri[128]; 
     if (strlen(sysCfg.mqtt_user) > 0) {
         snprintf(mqtt_uri, sizeof(mqtt_uri), "mqtt://%s:%s@%s:%d", sysCfg.mqtt_user, sysCfg.mqtt_pass, sysCfg.mqtt_server, sysCfg.mqtt_port);
@@ -110,28 +116,31 @@ void setup_mqtt() {
     esp_mqtt_client_config_t mqtt_cfg = {};
     mqtt_cfg.broker.address.uri = mqtt_uri;
     
+    // 3. Désactivation de la reconnexion automatique du driver pour laisser le contrôle à l'appli
+    mqtt_cfg.network.disable_auto_reconnect = true;
+    mqtt_cfg.network.reconnect_timeout_ms = 10000; // 10s entre les tentatives manuelles si besoin
+
     mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
     if (mqtt_client) {
         esp_mqtt_client_register_event(mqtt_client, (esp_mqtt_event_id_t)ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
         esp_mqtt_client_start(mqtt_client);
-        z_log("[MQTT] Client task initiated (v4.5.24)\n");
+        z_log("[MQTT] Client initialized (v5.6 - Official Best Practices)\n");
     }
 }
 
 bool is_mqtt_connected() { return mqtt_is_connected; }
 
 void handle_mqtt() {
-    static bool is_stopped = false;
-    
-    if (mqtt_circuit_open && !is_stopped && mqtt_client != NULL) {
-        z_log("[MQTT] Executing Circuit Breaker Shutdown...\n");
+    // Exécution différée de la destruction (Deferred Processing) sur le Core 0
+    if (mqtt_circuit_open && mqtt_client != NULL) {
+        z_log("[MQTT] ASYNC SHUTDOWN: Stopping and Destroying client to release Core 0 resources.\n");
         esp_mqtt_client_stop(mqtt_client);
-        is_stopped = true;
+        esp_mqtt_client_destroy(mqtt_client);
+        mqtt_client = NULL; // Évite les dangling pointers
         return;
     }
 
-    if (!mqtt_circuit_open) is_stopped = false;
-
+    // Traitement normal des publications si le circuit est fermé
     if (mqtt_publish_queue != NULL && mqtt_client != NULL && !mqtt_circuit_open) {
         MQTTPublishJob pubJob;
         while (xQueueReceive(mqtt_publish_queue, &pubJob, 0) == pdTRUE) {

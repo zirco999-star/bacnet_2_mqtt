@@ -1,19 +1,20 @@
 # TRACE - BACnet2MQTT (v2026)
 
-## État au 26 Mai 2026 (Fin de soirée)
-- **Version actuelle** : v4.7.45 (NVS Unit Persistence)
-- **Environnement** : Core 3.3.8, ESP32-S3 (FSM 9-États + NVS Units)
+## État au 26 Mai 2026 (Nuit - Stabilisation v5.6)
+- **Version actuelle** : v5.6 (Official Expert Remediation)
+- **Environnement** : Core 1 (BACnet FSM Precision), Core 0 (WiFi/MQTT/UI Deferred)
 - **Succès Technologiques** : 
-    - **Persistance NVS des Unités** : Extension de la structure `BACnetPersistenceObj` pour inclure le champ `units`. Les unités d'ingénierie sont désormais sauvegardées en NVS et restaurées instantanément au boot.
-    - **Initialisation RAM Propre** : Correction de `load_device_objects` pour initialiser `present_value` à `0.0f` et recalculer `unit_text` à partir du code unité stocké.
-    - **Restauration de la Sauvegarde Automatique** : Réactivation des appels à `save_device_objects()` à la fin du cycle de découverte (scan nominal, timeout ou erreur).
-    - **Correctif de Syntaxe** : Nettoyage intégral de `z_bacnet.cpp` suite à des erreurs de concaténation de chaînes lors du refactoring précédent.
+    - **Délégation Asynchrone des Logs** : Implémentation d'une `log_queue` (FreeRTOS) pour les WebSockets. Le Core 1 n'appelle plus de fonctions réseau bloquantes, garantissant le respect du `Tusage_delay`.
+    - **Timing MS/TP Normatif** : Intégration du `Tturnaround` (1050us) et suppression des `vTaskDelay(1)` aléatoires au profit d'un yield dynamique. Le bus est d'une stabilité absolue (>1000 jetons sans régénération).
+    - **Découverte Dynamique NPCI** : Refonte du parseur NPDU gérant les offsets DNET/SNET/HopCount. Capture réussie des messages `Who-Is` / `I-Am`, permettant la découverte automatique de l'ECB-203 sans scan manuel des MAC.
+    - **Circuit Breaker MQTT (Best Practices)** : Désactivation de l'auto-reconnect du driver au profit d'une gestion applicative différée (`esp_mqtt_client_stop` & `esp_mqtt_client_destroy` sur le Core 0). Neutralisation réelle des boucles infinies de reconnexion en cas de broker hors-ligne.
+    - **Considération de l'UI** : Toutes les modifications respectent les variables de configuration ajoutées dans le menu SETTINGS de l'interface Web.
 
 ## Prochaine Étape
-- **Mapping MQTT Final** : Raccorder la file de publication MQTT pour diffuser les données avec leurs unités.
+- **Optimisation EDE** : Valider l'export EDE complet avec les types d'objets BACnet identifiés.
 
 ## Historique des Incidents Résolus
-- [v4.7.35] Discovery Hang -> Absence de logs et de progression forcée au timeout.
-- [v4.7.42] CRC Storage Bug -> Indexation incorrecte des octets CRC en réception.
+- [v5.6] Discovery Failure -> Parser NPCI à offset fixe ignorait les I-Am routés.
+- [v5.6] Token Regeneration -> Blocage synchrone du Core 1 par les appels WebSockets.
+- [v5.6] MQTT Storm -> Boucle de reconnexion infinie saturant LwIP.
 - [v4.7.45] Unit Persistence Loss -> Champ `units` manquant dans les structures NVS.
-

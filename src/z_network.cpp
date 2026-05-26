@@ -13,16 +13,38 @@ extern AsyncWebSocket ws;
 static uint32_t wifi_connect_start = 0;
 static bool wifi_fallback_active = false;
 
-// FIX v4.5.25: Envoi WebSocket systématique si client connecté
+// Structure statique pour la queue (256 octets par log)
+typedef struct {
+    char message[256];
+} LogMessage;
+
+QueueHandle_t log_queue = NULL;
+
+// Tâche Gatekeeper pour les WebSockets (Core 0)
+static void websocket_log_task(void *pvParameters) {
+    LogMessage received_log;
+    for( ;; ) {
+        if (xQueueReceive(log_queue, &received_log, portMAX_DELAY) == pdTRUE) {
+            if (ws.count() > 0) {
+                ws.textAll(received_log.message);
+            }
+        }
+    }
+}
+
+// FIX v5.6: Envoi via Queue pour ne pas bloquer le Core 1
 void z_log(const char* format, ...) {
-    char loc_buf[256];
+    LogMessage log_msg;
     va_list arg;
     va_start(arg, format);
-    vsnprintf(loc_buf, sizeof(loc_buf), format, arg);
+    vsnprintf(log_msg.message, sizeof(log_msg.message), format, arg);
     va_end(arg);
-    printf("%s", loc_buf); 
-    if (ws.count() > 0) {
-        ws.textAll(loc_buf);
+    
+    printf("%s", log_msg.message); 
+
+    if (log_queue != NULL) {
+        // Timeout 0 pour garantir que le Core 1 ne bloque jamais
+        xQueueSend(log_queue, &log_msg, 0);
     }
 }
 
@@ -205,6 +227,12 @@ void save_device_objects(uint32_t device_id) {
 }
 
 void setup_network_infrastructure() {
+    // Initialisation de la Queue de logs (20 messages max)
+    log_queue = xQueueCreate(20, sizeof(LogMessage));
+    if (log_queue != NULL) {
+        xTaskCreatePinnedToCore(websocket_log_task, "WS_Log", 4096, NULL, 2, NULL, 0);
+    }
+
     load_configuration();
     WiFi.persistent(false); WiFi.disconnect(true);
     vTaskDelay(pdMS_TO_TICKS(100));
