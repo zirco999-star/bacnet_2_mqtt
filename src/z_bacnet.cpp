@@ -200,7 +200,7 @@ static void bacnet_task(void *pv) {
     uint8_t current_invoke_id = 10, current_poll_idx = 0, current_dev_idx = 0;
     uint32_t heartbeat_timer = 0;
     static uint32_t last_who_is_time = 0;
-    uint8_t next_station = (sysCfg.mac_address + 1) % 128;
+    static uint8_t next_station = (sysCfg.mac_address + 1) % (sysCfg.max_master + 1);
 
     uart_event_t event;
 
@@ -226,6 +226,7 @@ static void bacnet_task(void *pv) {
         }
 
         ReceivedValidFrame = false;
+        uint8_t retry_count = 0;
         while (uart_read_bytes(RS485_UART_PORT, &rx_byte, 1, 0) > 0) {
             last_rx_time = millis();
             switch (rx_state) {
@@ -282,7 +283,7 @@ static void bacnet_task(void *pv) {
             case MSTP_INITIALIZE: token_skip_count = 0; mstp_state = MSTP_IDLE; break;
             case MSTP_IDLE:
                 if (ReceivedValidFrame) {
-                    if (frame_type == 0x00 && dest_mac == sysCfg.mac_address) { bacnetStats.tokens_seen++; next_station = (src_mac + 1) % 128; mstp_state = MSTP_USE_TOKEN; }
+                    if (frame_type == 0x00 && dest_mac == sysCfg.mac_address) { bacnetStats.tokens_seen++; next_station = (src_mac + 1) % (sysCfg.max_master + 1); mstp_state = MSTP_USE_TOKEN; }
                     else if (frame_type == 0x01 && dest_mac == sysCfg.mac_address) { uint8_t f[8] = { 0x55, 0xFF, 0x02, src_mac, sysCfg.mac_address, 0, 0, 0 }; f[7] = calc_header_crc(&f[2], 5); uart_tx(f, 8); mstp_state = MSTP_WAIT_TX_DONE; }
                     else if (dest_mac == sysCfg.mac_address && frame_type >= 0x05) { mstp_state = MSTP_ANSWER_DATA_REQUEST; }
                     else if (dest_mac == 0xFF && (frame_type == 0x05 || frame_type == 0x06)) {
@@ -348,7 +349,7 @@ static void bacnet_task(void *pv) {
                         } else if (has_job && current_job.type == JOB_WRITE_PROP) {
                             uint8_t buffer[256];
                             uint16_t apdu_len = build_write_property_name_apdu(buffer, current_invoke_id, current_job.obj_type, current_job.obj_instance, current_job.name);
-                            token_skip_count = 0; waiting_for_reply = true;
+                            token_skip_count = 0; retry_count=0; waiting_for_reply = true;
                             send_mstp_frame(current_job.target_mac, 0x05, buffer, apdu_len);
                             mstp_state = MSTP_AWAIT_REPLY;
                         } else if (!bacnet_network_cache.empty()) {
@@ -521,8 +522,13 @@ static void bacnet_task(void *pv) {
                     }
                     current_dev_idx = (current_dev_idx + 1) % bacnet_network_cache.size();
                     mstp_state = MSTP_DONE_WITH_TOKEN;
-                } else if (millis() - timer_silence > 300) { 
-                    waiting_for_reply = false;
+                } else if (millis() - timer_silence > sysCfg.apdu_timeout) { 
+                    if (retry_count < sysCfg.apdu_timeout) { 
+                        retry_count++; 
+                        z_log("[BACNET] Retry %d/%d\n", retry_count, sysCfg.max_retries);
+                    } else {
+                        waiting_for_reply = false;
+                    }
                     if (current_dev_idx < bacnet_network_cache.size() && !bacnet_network_cache[current_dev_idx].discovery_done) {
                         auto& dev = bacnet_network_cache[current_dev_idx];
                         z_log("[MSTP] Timeout Step %d\n", (int)dev.disc_step);
