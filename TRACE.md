@@ -1,5 +1,17 @@
 # TRACE - BACnet2MQTT (v2026)
 
+## État au 27 Mai 2026 (Après-midi - v5.6.7)
+- **Version actuelle** : v5.6.7 (Iterative Discovery)
+- **Succès Technologiques** : 
+    - **FSM ASHRAE Strict** : Restauration de la FSM à 9 états (base commit 3713ac1). Ring stable avec ECB_203 (MAC 4).
+    - **Découverte Prop 110 (State_Text)** : Implémentation d'une lecture itérative (Index 0 puis 1..N) conforme à l'ASHRAE 135. Récupération réussie des libellés (ex: "Confort", "Eco") pour les objets Multi-State (MSV).
+    - **Observabilité MQTT** : Logs de debug ajoutés pour chaque publication (Topic + Valeur), permettant un suivi en temps réel de la diffusion.
+- **Prochaine Étape** : Intégrer les textes d'états dans les publications MQTT (Optionnel) et finaliser l'export EDE avec les métadonnées.
+
+## Historique des Incidents Résolus
+- [v5.6.7] RX Deafness -> Reboot de l'automate et restauration de la FSM stricte ont rétabli la communication.
+- [v5.6.7] Iterative Prop 110 -> Lecture par index prévient les AbortPDU sur MS/TP à 38400 bauds.
+
 ## État au 26 Mai 2026 (Nuit - Stabilisation v5.6)
 - **Version actuelle** : v5.6 (Official Expert Remediation)
 - **Environnement** : Core 1 (BACnet FSM Precision), Core 0 (WiFi/MQTT/UI Deferred)
@@ -9,9 +21,6 @@
     - **Découverte Dynamique NPCI** : Refonte du parseur NPDU gérant les offsets DNET/SNET/HopCount. Capture réussie des messages `Who-Is` / `I-Am`, permettant la découverte automatique de l'ECB-203 sans scan manuel des MAC.
     - **Circuit Breaker MQTT (Best Practices)** : Désactivation de l'auto-reconnect du driver au profit d'une gestion applicative différée (`esp_mqtt_client_stop` & `esp_mqtt_client_destroy` sur le Core 0). Neutralisation réelle des boucles infinies de reconnexion en cas de broker hors-ligne.
     - **Considération de l'UI** : Toutes les modifications respectent les variables de configuration ajoutées dans le menu SETTINGS de l'interface Web.
-
-## Prochaine Étape
-- **Optimisation EDE** : Valider l'export EDE complet avec les types d'objets BACnet identifiés.
 
 ## Historique des Incidents Résolus
 - [v5.6] Discovery Failure -> Parser NPCI à offset fixe ignorait les I-Am routés.

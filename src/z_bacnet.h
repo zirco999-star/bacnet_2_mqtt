@@ -118,7 +118,8 @@ enum DISC_STEP_T {
     DISC_OBJ_COUNT,   
     DISC_OBJ_OID,     
     DISC_OBJ_NAME,    
-    DISC_OBJ_UNITS,   
+    DISC_OBJ_UNITS,
+    DISC_OBJ_STATES,   
     DISC_OBJ_VALUE    
 };
 

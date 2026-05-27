@@ -369,6 +369,11 @@ static void bacnet_task(void *pv) {
                                         if (dev.disc_step == DISC_OBJ_OID) apdu_len = build_read_property_apdu(apdu, current_invoke_id++, 8, dev.device_id, 76, dev.disc_obj_idx + 1);
                                         else if (dev.disc_step == DISC_OBJ_NAME) apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, 77, -1);
                                         else if (dev.disc_step == DISC_OBJ_UNITS) apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, 117, -1);
+                                        else if (dev.disc_step == DISC_OBJ_STATES) {
+                                            if (o.expected_states_count == 0) apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, 110, 0);
+                                            else if (o.state_texts.size() < o.expected_states_count) apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, 110, o.state_texts.size() + 1);
+                                            else { dev.disc_step = DISC_OBJ_VALUE; apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, 85, -1); }
+                                        }
                                         else if (dev.disc_step == DISC_OBJ_VALUE) apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, 85, -1);
                                     } else { 
                                         dev.discovery_done = true; save_device_objects(dev.device_id); 
@@ -380,7 +385,8 @@ static void bacnet_task(void *pv) {
                                     if (count > 0) {
                                         current_poll_idx = (current_poll_idx + 1) % count;
                                         auto& o = dev.objects[current_poll_idx];
-                                        if (o.enabled && o.type != 8 && o.type != 65535) { 
+                                        // Selective Polling: Only if enabled in UI AND last update > 30s
+                                        if (o.enabled && o.type != 8 && o.type != 65535 && (millis() - o.last_update > 30000)) { 
                                             apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, 85, -1); 
                                         }
                                     }
@@ -481,12 +487,31 @@ static void bacnet_task(void *pv) {
                                                             else { int slen=0; for(int i=2; i<val_tag.len && slen<32; i+=2) n[slen++]=apdu[apdu_pos+i]; n[slen]=0; } 
                                                             o.name = String(n); z_log("[BACNET] Obj %u Name: %s\n", dev.disc_obj_idx+1, n); 
                                                             if(o.type <= 2 || o.type == 23 || o.type == 24 || o.type == 46) dev.disc_step = DISC_OBJ_UNITS; 
+                                                            else if(o.type == 13 || o.type == 14 || o.type == 19) { o.state_texts.clear(); o.expected_states_count = 0; dev.disc_step = DISC_OBJ_STATES; }
                                                             else if(o.enabled) dev.disc_step = DISC_OBJ_VALUE;
                                                             else { dev.disc_obj_idx++; dev.disc_step = DISC_OBJ_OID; if (dev.disc_obj_idx % 10 == 0) save_device_objects(dev.device_id); if(dev.disc_obj_idx >= dev.objects.size()) { dev.discovery_done=true; save_device_objects(dev.device_id); } }
                                                         }
                                                         else if (dev.disc_step == DISC_OBJ_UNITS) { 
                                                             uint32_t u=0; for(int i=0; i<val_tag.len; i++) u = (u << 8) | apdu[apdu_pos+i]; 
-                                                            o.units = u; o.unit_text = get_unit_text(u); dev.disc_step = DISC_OBJ_VALUE; 
+                                                            o.units = u; o.unit_text = get_unit_text(u); 
+                                                            if(o.type == 13 || o.type == 14 || o.type == 19) { o.state_texts.clear(); o.expected_states_count = 0; dev.disc_step = DISC_OBJ_STATES; }
+                                                            else dev.disc_step = DISC_OBJ_VALUE; 
+                                                        }
+                                                        else if (dev.disc_step == DISC_OBJ_STATES) {
+                                                            if (val_tag.number == 2) { // Unsigned Integer (Index 0)
+                                                                uint32_t count = 0; for(int i=0; i<val_tag.len; i++) count = (count << 8) | apdu[apdu_pos+i];
+                                                                o.expected_states_count = (uint16_t)count;
+                                                                z_log("[BACNET] Obj %u States Count: %u\n", dev.disc_obj_idx+1, o.expected_states_count);
+                                                                if (o.expected_states_count == 0) dev.disc_step = DISC_OBJ_VALUE;
+                                                            } 
+                                                            else if (val_tag.number == 7) { // CharacterString (Index 1..N)
+                                                                char n[33]; uint8_t enc = apdu[apdu_pos]; 
+                                                                if (enc == 0) { uint16_t slen = std::min((int)val_tag.len - 1, 32); memcpy(n, &apdu[apdu_pos+1], slen); n[slen]=0; } 
+                                                                else { int slen=0; for(int i=2; i<val_tag.len && slen<32; i+=2) n[slen++]=apdu[apdu_pos+i]; n[slen]=0; }
+                                                                o.state_texts.push_back(String(n));
+                                                                z_log("[BACNET] Obj %u State %u/%u: %s\n", dev.disc_obj_idx+1, (uint32_t)o.state_texts.size(), (uint32_t)o.expected_states_count, n);
+                                                                if (o.state_texts.size() >= o.expected_states_count) dev.disc_step = DISC_OBJ_VALUE;
+                                                            }
                                                         }
                                                         else if (dev.disc_step == DISC_OBJ_VALUE) {
                                                             if (val_tag.number == 4) { float v; uint32_t tmp; memcpy(&tmp, &apdu[apdu_pos], 4); tmp = __builtin_bswap32(tmp); memcpy(&v, &tmp, 4); o.present_value = v; }
@@ -499,8 +524,38 @@ static void bacnet_task(void *pv) {
                                                     }
                                                 } else {
                                                     // --- POLLING PROCESSING ---
-                                                    if (val_tag.number == 4) { float v; uint32_t tmp; memcpy(&tmp, &apdu[apdu_pos], 4); tmp = __builtin_bswap32(tmp); memcpy(&v, &tmp, 4); if(current_poll_idx < dev.objects.size()){ auto& o=dev.objects[current_poll_idx]; o.present_value=v; o.last_update=millis(); } }
-                                                    else if (val_tag.number == 2 || val_tag.number == 9) { uint32_t v=0; for(int i=0; i<val_tag.len; i++) v=(v<<8)|apdu[apdu_pos+i]; if(current_poll_idx < dev.objects.size()){ auto& o=dev.objects[current_poll_idx]; o.present_value=(float)v; o.last_update=millis(); } }
+                                                    if (val_tag.number == 4) { 
+                                                        float v; uint32_t tmp; memcpy(&tmp, &apdu[apdu_pos], 4); tmp = __builtin_bswap32(tmp); memcpy(&v, &tmp, 4); 
+                                                        if(current_poll_idx < dev.objects.size()){ 
+                                                            auto& o=dev.objects[current_poll_idx]; 
+                                                            o.present_value=v; o.last_update=millis(); 
+                                                            if (o.enabled) {
+                                                                MQTTPublishJob pub;
+                                                                pub.device_id = dev.device_id;
+                                                                pub.obj_type = o.type;
+                                                                pub.obj_instance = o.instance;
+                                                                pub.prop_id = 85;
+                                                                snprintf(pub.value_string, sizeof(pub.value_string), "%.2f", v);
+                                                                enqueue_mqtt_publish(pub);
+                                                            }
+                                                        } 
+                                                    }
+                                                    else if (val_tag.number == 2 || val_tag.number == 9) { 
+                                                        uint32_t v=0; for(int i=0; i<val_tag.len; i++) v=(v<<8)|apdu[apdu_pos+i]; 
+                                                        if(current_poll_idx < dev.objects.size()){ 
+                                                            auto& o=dev.objects[current_poll_idx]; 
+                                                            o.present_value=(float)v; o.last_update=millis(); 
+                                                            if (o.enabled) {
+                                                                MQTTPublishJob pub;
+                                                                pub.device_id = dev.device_id;
+                                                                pub.obj_type = o.type;
+                                                                pub.obj_instance = o.instance;
+                                                                pub.prop_id = 85;
+                                                                snprintf(pub.value_string, sizeof(pub.value_string), "%.0f", (float)v);
+                                                                enqueue_mqtt_publish(pub);
+                                                            }
+                                                        } 
+                                                    }
                                                 }
                                                 apdu_pos += val_tag.len;
                                             }
@@ -514,7 +569,7 @@ static void bacnet_task(void *pv) {
                             if (current_dev_idx < bacnet_network_cache.size() && !bacnet_network_cache[current_dev_idx].discovery_done) {
                                 auto& dev = bacnet_network_cache[current_dev_idx];
                                 z_log("[BACNET] Step %d Error (PDU Type %02X)\n", (int)dev.disc_step, pdu_type);
-                                if (dev.disc_step == DISC_OBJ_VALUE || dev.disc_step == DISC_OBJ_UNITS || (dev.disc_step == DISC_OBJ_NAME && dev.objects[dev.disc_obj_idx].type > 1000)) { 
+                                if (dev.disc_step == DISC_OBJ_VALUE || dev.disc_step == DISC_OBJ_UNITS || dev.disc_step == DISC_OBJ_STATES || (dev.disc_step == DISC_OBJ_NAME && dev.objects[dev.disc_obj_idx].type > 1000)) { 
                                     dev.disc_obj_idx++; dev.disc_step = DISC_OBJ_OID; 
                                 } else dev.disc_step = static_cast<DISC_STEP_T>((int)dev.disc_step + 1);
                             }
@@ -532,7 +587,7 @@ static void bacnet_task(void *pv) {
                     if (current_dev_idx < bacnet_network_cache.size() && !bacnet_network_cache[current_dev_idx].discovery_done) {
                         auto& dev = bacnet_network_cache[current_dev_idx];
                         z_log("[MSTP] Timeout Step %d\n", (int)dev.disc_step);
-                        if (dev.disc_step == DISC_OBJ_VALUE || dev.disc_step == DISC_OBJ_UNITS) { 
+                        if (dev.disc_step == DISC_OBJ_VALUE || dev.disc_step == DISC_OBJ_UNITS || dev.disc_step == DISC_OBJ_STATES) { 
                             dev.disc_obj_idx++; dev.disc_step = DISC_OBJ_OID; 
                         } else dev.disc_step = static_cast<DISC_STEP_T>((int)dev.disc_step + 1);
                         if(dev.disc_obj_idx >= dev.objects.size()) { dev.discovery_done=true; save_device_objects(dev.device_id); }
@@ -560,7 +615,7 @@ static void bacnet_task(void *pv) {
 void setup_bacnet_engine() {
     cache_mutex = xSemaphoreCreateMutex();
     bacnet_job_queue = xQueueCreate(10, sizeof(BACnetJob));
-    mqtt_publish_queue = xQueueCreate(30, sizeof(MQTTPublishJob));
+    mqtt_publish_queue = xQueueCreate(100, sizeof(MQTTPublishJob));
     const uart_config_t uc = { .baud_rate = 38400, .data_bits = UART_DATA_8_BITS, .parity = UART_PARITY_DISABLE, .stop_bits = UART_STOP_BITS_1, .flow_ctrl = UART_HW_FLOWCTRL_DISABLE, .rx_flow_ctrl_thresh = 122, .source_clk = UART_SCLK_APB };
     uart_driver_install(RS485_UART_PORT, 2048, 2048, 20, &uart_evt_queue, 0);
     uart_param_config(RS485_UART_PORT, &uc);

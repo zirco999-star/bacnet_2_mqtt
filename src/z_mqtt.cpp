@@ -80,10 +80,10 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                         job.prop_id = 85;
                         job.write_value = String(payload_buf).toFloat();
                         String type_str = t.substring(p2 + 1, p3);
-                        if (type_str == "analog_output") job.obj_type = OBJ_ANALOG_OUTPUT;
-                        else if (type_str == "analog_value") job.obj_type = OBJ_ANALOG_VALUE;
-                        else if (type_str == "binary_output") job.obj_type = OBJ_BINARY_OUTPUT;
-                        else if (type_str == "binary_value") job.obj_type = OBJ_BINARY_VALUE;
+                        if (type_str == "AO") job.obj_type = OBJ_ANALOG_OUTPUT;
+                        else if (type_str == "AV") job.obj_type = OBJ_ANALOG_VALUE;
+                        else if (type_str == "BO") job.obj_type = OBJ_BINARY_OUTPUT;
+                        else if (type_str == "BV") job.obj_type = OBJ_BINARY_VALUE;
                         else job.type = JOB_WHO_IS;
                         
                         if (job.type == JOB_WRITE_PROP) enqueue_bacnet_job(job);
@@ -122,6 +122,7 @@ void setup_mqtt() {
 
     // 3. Désactivation de la reconnexion automatique du driver pour laisser le contrôle à l'appli
     mqtt_cfg.network.disable_auto_reconnect = true;
+    mqtt_cfg.outbox.limit = 15360; // 15KB Outbox for bursts (validated v5.6.6)
     mqtt_cfg.buffer.out_size = 2048;
 
     mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
@@ -169,21 +170,23 @@ void handle_mqtt() {
             char topic[128];
             const char* t_str = "unknown";
             switch(pubJob.obj_type) {
-                case OBJ_ANALOG_INPUT: t_str = "analog_input"; break;
-                case OBJ_ANALOG_OUTPUT: t_str = "analog_output"; break;
-                case OBJ_ANALOG_VALUE: t_str = "analog_value"; break;
-                case OBJ_BINARY_INPUT: t_str = "binary_input"; break;
-                case OBJ_BINARY_OUTPUT: t_str = "binary_output"; break;
-                case OBJ_BINARY_VALUE: t_str = "binary_value"; break;
-                case OBJ_MULTI_STATE_INPUT: t_str = "multi_state_input"; break;
-                case OBJ_MULTI_STATE_OUTPUT: t_str = "multi_state_output"; break;
-                case OBJ_MULTI_STATE_VALUE: t_str = "multi_state_value"; break;
+                case OBJ_ANALOG_INPUT: t_str = "AI"; break;
+                case OBJ_ANALOG_OUTPUT: t_str = "AO"; break;
+                case OBJ_ANALOG_VALUE: t_str = "AV"; break;
+                case OBJ_BINARY_INPUT: t_str = "BI"; break;
+                case OBJ_BINARY_OUTPUT: t_str = "BO"; break;
+                case OBJ_BINARY_VALUE: t_str = "BV"; break;
+                case OBJ_MULTI_STATE_INPUT: t_str = "MSI"; break;
+                case OBJ_MULTI_STATE_OUTPUT: t_str = "MSO"; break;
+                case OBJ_MULTI_STATE_VALUE: t_str = "MSV"; break;
             }
             snprintf(topic, sizeof(topic), "%s/%lu/%s/%lu/state", sysCfg.mqtt_prefix, (unsigned long)pubJob.device_id, t_str, (unsigned long)pubJob.obj_instance);
             
             int msg_id = esp_mqtt_client_enqueue(mqtt_client, topic, pubJob.value_string, 0, 0, 0, true);
             if (msg_id == -2) {
                 z_log("[MQTT] WARN: Outbox is full. Message dropped.\n");
+            } else {
+                z_log("[MQTT] Published: %s -> %s\n", topic, pubJob.value_string);
             }
         }
     }
