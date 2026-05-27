@@ -200,11 +200,12 @@ void handle_mqtt() {
             }
 
             const char* subtopic = "state";
-            if (pubJob.prop_id == 77) subtopic = "name";
+            bool retain_flag = false;
+            if (pubJob.prop_id == 77) { subtopic = "name"; retain_flag = true; }
 
             snprintf(topic, sizeof(topic), "%s/%lu/%s/%lu/%s", sysCfg.mqtt_prefix, (unsigned long)pubJob.device_id, t_str, (unsigned long)pubJob.obj_instance, subtopic);
             
-            int msg_id = esp_mqtt_client_enqueue(mqtt_client, topic, pubJob.value_string, 0, 0, 0, true);
+            int msg_id = esp_mqtt_client_enqueue(mqtt_client, topic, pubJob.value_string, 0, 0, retain_flag, true);
             if (msg_id == -2) {
                 z_log("[MQTT] WARN: Outbox is full. Message dropped.\n");
             } else {
@@ -219,6 +220,7 @@ void handle_mqtt() {
             auto pub_b2m = [&](const char* key, String val) {
                 char t[128]; snprintf(t, sizeof(t), "%s/B2M/%s/state", sysCfg.mqtt_prefix, key);
                 esp_mqtt_client_enqueue(mqtt_client, t, val.c_str(), 0, 0, 0, true);
+                z_log("[MQTT] Published: %s -> %s\n", t, val.c_str());
             };
             pub_b2m("ver", VERSION_GLOBAL);
             pub_b2m("rssi", String(WiFi.RSSI()));

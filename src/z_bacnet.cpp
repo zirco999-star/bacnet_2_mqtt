@@ -397,7 +397,7 @@ static void bacnet_task(void *pv) {
                                         current_poll_idx = (current_poll_idx + 1) % count;
                                         auto& o = dev.objects[current_poll_idx];
                                         // Selective Polling: Only if enabled in UI AND last update > configurable interval
-                                        if (o.enabled && o.type != 8 && o.type != 65535 && (millis() - o.last_update > (sysCfg.mqtt_poll_interval * 1000))) { 
+                                        if (o.enabled && o.type != 8 && o.type != 65535 && (millis() - o.last_update > (sysCfg.mqtt_poll_interval * 100))) { 
                                             apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, 85, -1); 
                                         }
                                     }
@@ -557,6 +557,7 @@ static void bacnet_task(void *pv) {
                                                                 pub.prop_id = 85;
                                                                 snprintf(pub.value_string, sizeof(pub.value_string), "%.2f", v);
                                                                 enqueue_mqtt_publish(pub);
+                                                                z_log("[BACNET] Polling - '%s' value %s\n",o.name.c_str(), pub.value_string);
                                                             }
                                                         } 
                                                     }
@@ -573,6 +574,7 @@ static void bacnet_task(void *pv) {
                                                                 pub.prop_id = 85;
                                                                 snprintf(pub.value_string, sizeof(pub.value_string), "%.0f", (float)v);
                                                                 enqueue_mqtt_publish(pub);
+                                                                z_log("[BACNET] Polling - Obj %u Value: %.0f\n", current_poll_idx+1, (float)v);
                                                             }
                                                         } 
                                                     }
@@ -652,7 +654,7 @@ void publish_all_names() {
     if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
         for (auto& dev : bacnet_network_cache) {
             for (auto& obj : dev.objects) {
-                if (obj.type == 65535) continue;
+                if (obj.type == 65535 || obj.enabled == false) continue;
                 MQTTPublishJob pub;
                 pub.device_id = dev.device_id;
                 pub.obj_type = obj.type;

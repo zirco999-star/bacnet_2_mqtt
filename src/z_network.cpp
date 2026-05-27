@@ -390,6 +390,39 @@ void setup_network_infrastructure() {
         enqueue_bacnet_job(job);
         request->send(200, "text/plain", "WHO-IS ENQUEUED");
     });
+    webServer.on("/api/reset_cache", HTTP_POST, [](AsyncWebServerRequest *request) {
+        // 1. On nettoie les namespaces individuels via le registre
+        Preferences reg;
+        if (reg.begin("registry", false)) {
+            String dev_list = reg.getString("dev_list", "");
+            if (dev_list.length() > 0) {
+                int start = 0;
+                int end = dev_list.indexOf(';');
+                while (start < dev_list.length()) {
+                    String sid = (end == -1) ? dev_list.substring(start) : dev_list.substring(start, end);
+                    if (sid.length() > 0) {
+                        char ns[16]; snprintf(ns, sizeof(ns), "dev_%s", sid.c_str());
+                        Preferences p; p.begin(ns, false); p.clear(); p.end();
+                        z_log("[NVS] Cleared namespace %s\n", ns);
+                    }
+                    if (end == -1) break;
+                    start = end + 1;
+                    end = dev_list.indexOf(';', start);
+                }
+            }
+            reg.remove("dev_list");
+            reg.end();
+        }
+        // 2. On vide la RAM
+        if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
+            bacnet_network_cache.clear();
+            xSemaphoreGive(cache_mutex);
+        }
+        request->send(200, "text/plain", "BACNET CACHE CLEARED - REBOOTING");
+        z_log("[NVS] BACnet Global Cache Cleared\n");
+        pending_reboot = true; reboot_timer = millis();
+    });
+
 
     webServer.on("/api/save_objects", HTTP_POST, [](AsyncWebServerRequest *request) {
         if(!is_authenticated(request)) return;
