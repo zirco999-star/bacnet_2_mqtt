@@ -16,6 +16,11 @@ QueueHandle_t mqtt_publish_queue = NULL;
 QueueHandle_t uart_evt_queue = NULL;
 SemaphoreHandle_t cache_mutex = NULL;
 
+static uint8_t last_apdu[512]; // Buffer pour le retry
+static uint16_t last_apdu_len = 0;
+static uint8_t current_invoke_id = 0; // Pour filtrer les erreurs
+static uint8_t retry_count = 0;       // Compteur de tentatives
+
 // --- UTILS CRC ---
 static uint8_t calc_header_crc(uint8_t *data, size_t len) {
     uint8_t crc = 0xFF;
@@ -82,17 +87,28 @@ static void uart_tx(const uint8_t *buffer, uint16_t length) {
 }
 
 static void send_mstp_frame(uint8_t target_mac, uint8_t type, const uint8_t* apdu, uint16_t len) {
+    // Sauvegarde pour usage futur (Retry)
+    if (apdu != NULL && len > 0) {
+        memcpy(last_apdu, apdu, len);
+        last_apdu_len = len;
+        current_invoke_id = apdu[1]; // Sauvegarde de l'InvokeID (généralement index 1 dans APDU)
+    }
+
     uint8_t buffer[512+10];
     buffer[0]=0x55; buffer[1]=0xFF; buffer[2]=type; buffer[3]=target_mac; buffer[4]=sysCfg.mac_address;
     buffer[5]=(len>>8)&0xFF; buffer[6]=len&0xFF;
     buffer[7]=calc_header_crc(&buffer[2], 5);
+    
     if (len > 0) {
         memcpy(&buffer[8], apdu, len);
         uint16_t crc16 = calc_data_crc(&buffer[8], len);
         buffer[8+len]=crc16&0xFF; buffer[8+len+1]=(crc16>>8)&0xFF;
         uart_tx(buffer, 8+len+2);
-    } else uart_tx(buffer, 8);
+    } else {
+        uart_tx(buffer, 8);
+    }
 }
+
 uint16_t build_read_property_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, uint8_t property_id, int32_t array_index) {
     uint16_t len = 0;
     buffer[len++] = 0x01; buffer[len++] = 0x04; buffer[len++] = 0x02; buffer[len++] = 0x73;
@@ -226,7 +242,6 @@ static void bacnet_task(void *pv) {
         }
 
         ReceivedValidFrame = false;
-        uint8_t retry_count = 0;
         while (uart_read_bytes(RS485_UART_PORT, &rx_byte, 1, 0) > 0) {
             last_rx_time = millis();
             switch (rx_state) {
@@ -411,7 +426,9 @@ static void bacnet_task(void *pv) {
                             }
 
                             if (apdu_len > 0) { 
-                                token_skip_count = 0; waiting_for_reply = true; 
+                                token_skip_count = 0; 
+                                retry_count=0; 
+                                waiting_for_reply = true; 
                                 send_mstp_frame(dev.mac_address, 0x05, apdu, apdu_len); 
                                 mstp_state = MSTP_WAIT_FOR_REPLY; 
                             }
@@ -595,37 +612,80 @@ static void bacnet_task(void *pv) {
                                 } else apdu_pos += t.len;
                             }
                         }
-                        else if (pdu_type == 0x50 || pdu_type == 0x40) { // Error ou Segment-ACK
-                            if (current_dev_idx < bacnet_network_cache.size() && !bacnet_network_cache[current_dev_idx].discovery_done) {
-                                auto& dev = bacnet_network_cache[current_dev_idx];
-                                z_log("[BACNET] Step %d Error (PDU Type %02X)\n", (int)dev.disc_step, pdu_type);
-                                if (dev.disc_step == DISC_OBJ_VALUE || dev.disc_step == DISC_OBJ_UNITS || dev.disc_step == DISC_OBJ_STATES || (dev.disc_step == DISC_OBJ_NAME && dev.objects[dev.disc_obj_idx].type > 1000)) { 
-                                    dev.disc_obj_idx++; dev.disc_step = DISC_OBJ_OID; 
-                                } else dev.disc_step = static_cast<DISC_STEP_T>((int)dev.disc_step + 1);
+                        else if (pdu_type == 0x50 || pdu_type == 0x70 || pdu_type == 0x40) { 
+                            // pdu_type 0x50 = Error, 0x70 = Abort, 0x40 = Segment-ACK
+                            uint8_t invoke_id = apdu[1];
+
+                            // 1. Vérification que cette erreur concerne notre requête en cours
+                            if (invoke_id == current_invoke_id) {
+                                z_log("[BACNET] TSM: Réception Erreur/Abort 0x%02X, InvokeID: %d\n", pdu_type, invoke_id);
+                                
+                                // 2. Logique de Retry
+                                if (retry_count < sysCfg.max_retries) {
+                                    retry_count++;
+                                    z_log("[BACNET] Tentative de retry %d/%d pour InvokeID %d\n", retry_count, sysCfg.max_retries, invoke_id);
+                                    
+                                    // CORRECTION DU SCOPE : on récupère dev pour pouvoir l'utiliser
+                                    if (current_dev_idx < bacnet_network_cache.size()) {
+                                        auto& dev = bacnet_network_cache[current_dev_idx];
+                                        send_mstp_frame(dev.mac_address, 0x05, last_apdu, last_apdu_len);
+                                    }
+                                    
+                                    timer_silence = millis();
+                                    waiting_for_reply = true; // IMPORTANT : On reste en attente
+                                    break;                    // On sort du switch sans clôturer le jeton
+                                } else {
+                                    z_log("[BACNET] Max retries atteints, abandon de l'objet.\n");
+                                    // 3. Épuisement des retries : incrémentation sécurisée
+                                    if (current_dev_idx < bacnet_network_cache.size()) {
+                                        auto& dev = bacnet_network_cache[current_dev_idx];
+                                        if (!dev.discovery_done) {
+                                            dev.disc_obj_idx++; 
+                                            dev.disc_step = DISC_OBJ_OID;
+                                        }
+                                    }
+                                    // Pas de break ici, on laisse tomber plus bas pour clôturer le jeton
+                                }
+                            } else { // inconsistency trame received
+                                z_log("[BACNET] ignored inconsistency frame : %d != %d\n", invoke_id, current_invoke_id);
+                                waiting_for_reply = true; // On maintient l'attente
+                                break;                    // On sort du switch pour ne pas clôturer le jeton
                             }
                         }
                     }
                     current_dev_idx = (current_dev_idx + 1) % bacnet_network_cache.size();
                     mstp_state = MSTP_DONE_WITH_TOKEN;
+                    
                 } else if (millis() - timer_silence > sysCfg.apdu_timeout) { 
-                    if (retry_count < sysCfg.apdu_timeout) { 
-                        retry_count++; 
-                        z_log("[BACNET] Retry %d/%d\n", retry_count, sysCfg.max_retries);
-                    } else {
-                        waiting_for_reply = false;
-                    }
-                    if (current_dev_idx < bacnet_network_cache.size() && !bacnet_network_cache[current_dev_idx].discovery_done) {
+                    // CORRECTION DU TIMEOUT ET DU SCOPE
+                    if (current_dev_idx < bacnet_network_cache.size()) {
                         auto& dev = bacnet_network_cache[current_dev_idx];
-                        z_log("[MSTP] Timeout Step %d\n", (int)dev.disc_step);
-                        if (dev.disc_step == DISC_OBJ_VALUE || dev.disc_step == DISC_OBJ_UNITS || dev.disc_step == DISC_OBJ_STATES) { 
-                            dev.disc_obj_idx++; dev.disc_step = DISC_OBJ_OID; 
-                        } else dev.disc_step = static_cast<DISC_STEP_T>((int)dev.disc_step + 1);
-                        if(dev.disc_obj_idx >= dev.objects.size()) { dev.discovery_done=true; save_device_objects(dev.device_id); }
+                        
+                        if (retry_count < sysCfg.max_retries) {
+                            retry_count++;
+                            z_log("[BACNET] Timeout, Retry %d/%d for Obj %d\n", retry_count, sysCfg.max_retries, current_poll_idx);
+                            send_mstp_frame(dev.mac_address, 0x05, last_apdu, last_apdu_len); 
+                            timer_silence = millis(); 
+                            waiting_for_reply = true; // On repart en attente
+                            // On ne fait rien d'autre, le break du switch est en bas
+                        } else {
+                            z_log("[BACNET] Max retries reached on timeout. Skipping Obj.\n");
+                            // CORRECTION DE L'ERREUR DE SYNTAXE (le "|| ...") supprimé
+                            if (!dev.discovery_done) { 
+                                dev.disc_obj_idx++; 
+                                dev.disc_step = DISC_OBJ_OID;
+                            }
+                            current_dev_idx = (current_dev_idx + 1) % bacnet_network_cache.size();
+                            mstp_state = MSTP_DONE_WITH_TOKEN;
+                        }
+                    } else {
+                        // Sécurité si l'index est hors limites
+                        mstp_state = MSTP_DONE_WITH_TOKEN;
                     }
-                    current_dev_idx = (current_dev_idx + 1) % bacnet_network_cache.size();
-                    mstp_state = MSTP_DONE_WITH_TOKEN;
                 }
                 break;
+            
+
             case MSTP_ANSWER_DATA_REQUEST: z_log("[MSTP] Serving request...\n"); mstp_state = MSTP_IDLE; break;
             case MSTP_DONE_WITH_TOKEN: mstp_state = MSTP_PASS_TOKEN; break;
             case MSTP_PASS_TOKEN: { 
@@ -657,6 +717,22 @@ void setup_bacnet_engine() {
 }
 bool enqueue_bacnet_job(BACnetJob job) { if (bacnet_job_queue == NULL) return false; return xQueueSend(bacnet_job_queue, &job, 0) == pdTRUE; }
 bool enqueue_mqtt_publish(MQTTPublishJob pubJob) { if (mqtt_publish_queue == NULL) return false; return xQueueSend(mqtt_publish_queue, &pubJob, 0) == pdTRUE; }
+
+// Helper pour identifier si une erreur est transitoire (mérite un retry)
+bool is_transient_error(uint8_t pdu_type, uint8_t reason) {
+    // Si c'est un Abort ou un Error
+    if (pdu_type == 0x70 || pdu_type == 0x50) {
+        // Exemples de raisons récupérables : Device Busy (2)
+        return (reason == 0x02); 
+    }
+    return false;
+}
+
+// Extraction de la raison depuis l'APDU (exemple basé sur la structure standard)
+uint8_t get_error_reason(uint8_t* apdu) {
+    // Dans un Abort/Error, le InvokeID est à apdu[1], la raison à apdu[2]
+    return apdu[2];
+}
 
 void publish_all_names() {
     if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
