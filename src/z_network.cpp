@@ -152,7 +152,6 @@ void load_configuration() {
     sysCfg.mqtt_port = 1883;
     strlcpy(sysCfg.mqtt_user, "", 32);
     strlcpy(sysCfg.mqtt_pass, "", 32);
-    strlcpy(sysCfg.mqtt_prefix, "bacnet", 64);
     strlcpy(sysCfg.admin_user, "admin", 32);
     strlcpy(sysCfg.admin_pass, "admin1234", 64);
 
@@ -171,8 +170,7 @@ void load_configuration() {
         if (prefs.isKey("mqh")) prefs.getString("mqh", sysCfg.mqtt_server, 32);
         if (prefs.isKey("mqu")) prefs.getString("mqu", sysCfg.mqtt_user, 32);
         if (prefs.isKey("mqp")) prefs.getString("mqp", sysCfg.mqtt_pass, 32);
-        if (prefs.isKey("mqpt")) sysCfg.mqtt_port = prefs.getUShort("mqpt", 1883);
-        if (prefs.isKey("mqpref")) prefs.getString("mqpref", sysCfg.mqtt_prefix, 64);
+        if (prefs.isKey("mqpr")) prefs.getString("mqpr", sysCfg.mqtt_prefix, 64);
         if (prefs.isKey("mac")) sysCfg.mac_address = prefs.getUChar("mac", 1);
         if (prefs.isKey("mm")) sysCfg.max_master = prefs.getUChar("mm", 127);
         if (prefs.isKey("did")) sysCfg.device_id = prefs.getUInt("did", 123);
@@ -180,8 +178,9 @@ void load_configuration() {
         if (prefs.isKey("ret")) sysCfg.max_retries = prefs.getUChar("ret", 3);
         sysCfg.heartbeat_interval = prefs.getUInt("hbeat", DEFAULT_HEARBEAT_INTERVAL);
         sysCfg.token_skip = prefs.getUChar("tskip", DEFAULT_TOKEN_SKIP);
+        sysCfg.mqtt_poll_interval = prefs.getUShort("mpi", DEFAULT_MQTT_POLL);
         prefs.end();
-        z_log("[NVS] Core Config Loaded (GW ID:%lu, MAC:%u)\n", (unsigned long)sysCfg.device_id, sysCfg.mac_address);
+        z_log("[NVS] Core Config Loaded (v5.6.8)\n");
     }
 
     // Chargement de la liste des devices distants via namespace 'registry'
@@ -228,8 +227,8 @@ void save_configuration() {
         prefs.putString("mqh", sysCfg.mqtt_server);
         prefs.putString("mqu", sysCfg.mqtt_user);
         prefs.putString("mqp", sysCfg.mqtt_pass);
-        prefs.putUShort("mqpt", sysCfg.mqtt_port);
-        prefs.putString("mqpref", sysCfg.mqtt_prefix);
+        prefs.putString("mqpr", sysCfg.mqtt_prefix);
+        prefs.putUShort("mpi", sysCfg.mqtt_poll_interval);
         prefs.end();
         z_log("[NVS] Configuration saved\n");
     }
@@ -367,14 +366,13 @@ void setup_network_infrastructure() {
         doc["gw"] = sysCfg.gateway; doc["sn"] = sysCfg.subnet;
         doc["mqh"] = sysCfg.mqtt_server;
         doc["mqpr"] = sysCfg.mqtt_prefix;
-        doc["mqu"] = sysCfg.mqtt_user;
-        doc["mqp"] = sysCfg.mqtt_pass;
         doc["mm"] = sysCfg.max_master;
         doc["did"] = sysCfg.device_id;
         doc["to"] = sysCfg.apdu_timeout;
         doc["ret"] = sysCfg.max_retries;
         doc["hbeat"] = sysCfg.heartbeat_interval;
         doc["tskip"] = sysCfg.token_skip;
+        doc["mpi"] = sysCfg.mqtt_poll_interval;
         String res; serializeJson(doc, res);
         request->send(200, "application/json", res);
     });
@@ -425,48 +423,77 @@ void setup_network_infrastructure() {
 
     webServer.on("/api/save_objects", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
         if(!is_authenticated(request)) return;
-        JsonDocument doc;
-        if (!deserializeJson(doc, data, len)) {
-            uint32_t device_id = doc["device_id"];
-            JsonArray objects = doc["objects"];
-            for (auto& dev : bacnet_network_cache) {
-                if (dev.device_id == device_id) {
-                    if (doc.containsKey("enabled")) dev.enabled = doc["enabled"].as<bool>();
-                    for (JsonObject o : objects) {
-                        uint32_t inst = o["inst"];
-                        uint16_t type = o["type"];
-                        for (auto& obj : dev.objects) {
-                            if (obj.instance == inst && obj.type == type) {
-                                // 1. Gestion du NOM (avec WriteProperty)
-                                if (o.containsKey("name")) {
-                                    String new_name = o["name"].as<String>();
-                                    if (new_name != obj.name) {
-                                        obj.name = new_name;
-                                        // Déclenchement asynchrone du WriteProperty (Prop 77)
-                                        BACnetJob job;
-                                        job.type = JOB_WRITE_PROP;
-                                        job.target_mac = dev.mac_address;
-                                        job.obj_type = obj.type;
-                                        job.obj_instance = obj.instance;
-                                        job.prop_id = 77; // Object_Name
-                                        job.name = new_name;
-                                        enqueue_bacnet_job(job);
+        
+        if (index == 0) {
+            // Premier fragment : on alloue le buffer
+            request->_tempObject = malloc(total + 1);
+            if (!request->_tempObject) { request->send(500, "text/plain", "OOM"); return; }
+        }
+
+        if (request->_tempObject) {
+            memcpy((uint8_t*)request->_tempObject + index, data, len);
+        }
+
+        if (index + len == total) {
+            // Dernier fragment : on traite le JSON
+            ((uint8_t*)request->_tempObject)[total] = '\0';
+            JsonDocument doc;
+            DeserializationError err = deserializeJson(doc, (const char*)request->_tempObject);
+            free(request->_tempObject); request->_tempObject = NULL;
+
+            if (!err) {
+                uint32_t device_id = doc["device_id"];
+                JsonArray objects = doc["objects"];
+                for (auto& dev : bacnet_network_cache) {
+                    if (dev.device_id == device_id) {
+                        if (doc.containsKey("enabled")) dev.enabled = doc["enabled"].as<bool>();
+                        for (JsonObject o : objects) {
+                            uint32_t inst = o["inst"];
+                            uint16_t type = o["type"];
+                            for (auto& obj : dev.objects) {
+                                if (obj.instance == inst && obj.type == type) {
+                                    // 1. Gestion du NOM
+                                    if (o.containsKey("name")) {
+                                        String new_name = o["name"].as<String>();
+                                        if (new_name != obj.name) {
+                                            obj.name = new_name;
+                                            // A. Sauvegarde NVS & RAM faite via save_device_objects en fin de boucle
+                                            
+                                            // B. Publication MQTT immédiate (Object_Name = Prop 77)
+                                            MQTTPublishJob pub;
+                                            pub.device_id = dev.device_id;
+                                            pub.obj_type = obj.type;
+                                            pub.obj_instance = obj.instance;
+                                            pub.prop_id = 77; 
+                                            strlcpy(pub.value_string, new_name.c_str(), sizeof(pub.value_string));
+                                            enqueue_mqtt_publish(pub);
+
+                                            // C. Déclenchement asynchrone du WriteProperty (Prop 77) sur le bus
+                                            BACnetJob job;
+                                            job.type = JOB_WRITE_PROP;
+                                            job.target_mac = dev.mac_address;
+                                            job.obj_type = obj.type;
+                                            job.obj_instance = obj.instance;
+                                            job.prop_id = 77;
+                                            job.name = new_name;
+                                            enqueue_bacnet_job(job);
+                                        }
                                     }
+                                    // 2. Gestion de l'UNITÉ
+                                    if (o.containsKey("unit")) obj.unit_text = o["unit"].as<String>();
+                                    // 3. Gestion du POLLING
+                                    if (o.containsKey("poll")) obj.enabled = o["poll"].as<bool>();
+                                    break;
                                 }
-                                // 2. Gestion de l'UNITÉ (Persistance locale uniquement)
-                                if (o.containsKey("unit")) obj.unit_text = o["unit"].as<String>();
-                                // 3. Gestion du POLLING
-                                if (o.containsKey("poll")) obj.enabled = o["poll"].as<bool>();
-                                break;
                             }
                         }
+                        save_device_objects(device_id);
+                        break;
                     }
-                    save_device_objects(device_id);
-                    break;
                 }
-            }
-            request->send(200, "text/plain", "OK");
-        } else request->send(400, "text/plain", "Invalid JSON");
+                request->send(200, "text/plain", "OK");
+            } else request->send(400, "text/plain", "Invalid JSON");
+        }
     });
 
     webServer.on("/save", HTTP_POST, [](AsyncWebServerRequest *request) {
@@ -474,7 +501,7 @@ void setup_network_infrastructure() {
         auto check = [&](const char* p, char* t, size_t m) {
             if(request->hasParam(p, true)) {
                 String v = request->getParam(p, true)->value();
-                if(v != "******") strlcpy(t, v.c_str(), m);
+                if(v.length() > 0 && v != "******") strlcpy(t, v.c_str(), m);
             }
         };
         check("ssid", sysCfg.wifi_ssid, 32); check("pass", sysCfg.wifi_pass, 64);
@@ -482,6 +509,7 @@ void setup_network_infrastructure() {
         check("subnet", sysCfg.subnet, 16); check("mqh", sysCfg.mqtt_server, 32);
         check("mqu", sysCfg.mqtt_user, 32); check("mqp", sysCfg.mqtt_pass, 32);
         check("mqpr", sysCfg.mqtt_prefix, 64);
+        if(request->hasParam("mpi", true)) sysCfg.mqtt_poll_interval = request->getParam("mpi", true)->value().toInt();
         if(request->hasParam("static_ip", true)) sysCfg.static_ip = true;
  
         else if(request->hasParam("form_type", true) && request->getParam("form_type", true)->value() == "wifi") sysCfg.static_ip = false;
@@ -495,13 +523,16 @@ void setup_network_infrastructure() {
         if(request->hasParam("tskip", true)) sysCfg.token_skip = request->getParam("tskip", true)->value().toInt();
 
         save_configuration();
-        
-        // 4. Redémarrage à chaud de la couche MQTT (Core 0)
-        setup_mqtt();
-        
-        // 5. Réponse asynchrone sécurisée
-        request->send(200, "application/json", "{\"status\":\"ok\",\"message\":\"Configuration sauvegardée et appliquée.\"}");
-        pending_reboot = true; reboot_timer = millis();
+        request->send(200, "text/plain", "OK");
+
+        if(request->hasParam("form_type", true)) {
+            String ft = request->getParam("form_type", true)->value();
+            if (ft == "wifi") {
+                pending_reboot = true; reboot_timer = millis();
+            } else if (ft == "mqtt") {
+                setup_mqtt(); // Hot-reload MQTT
+            }
+        }
     });
 
     webServer.on("/api/factory_reset", HTTP_POST, [](AsyncWebServerRequest *request) {

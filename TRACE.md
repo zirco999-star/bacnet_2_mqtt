@@ -1,5 +1,19 @@
 # TRACE - BACnet2MQTT (v2026)
 
+## État au 27 Mai 2026 (Fin de journée - v5.6.8)
+- **Version actuelle** : v5.6.8 (Smart Sync & MQTT Pro)
+- **Succès Technologiques** : 
+    - **Naming & Discovery Robustes** : Les objets sont découverts avec polling **OFF** par défaut. Les noms (`Object_Name`) sont publiés sur MQTT (`.../name`) à la découverte, au reboot (via cache NVS) et lors de chaque modification manuelle.
+    - **MQTT Dynamic Polling** : Ajout de l'option `poll_interval` (mpi) configurable dans l'UI pour cadencer la diffusion MQTT indépendamment du polling BACnet.
+    - **Simplification des Topics** : Passage aux abréviations normatives (`AI`, `AO`, `AV`, `BI`, `BO`, `BV`, `MSI`, `MSO`, `MSV`) pour faciliter l'intégration YAML.
+    - **Gateway Status (B2M)** : Publication périodique (60s) de l'état de santé du Waveshare (`heap`, `rssi`, `mstp_cnt`, `nb_dev`).
+    - **Smart Save & Stability** : Reboot uniquement pour les changements Wi-Fi. Hot-reload pour MQTT et BACnet. Gestion des gros payloads JSON via bufferisation de corps HTTP asynchrone.
+- **Prochaine Étape** : Finaliser la documentation utilisateur pour les nouveaux topics simplifiés.
+
+## Historique des Incidents Résolus
+- [v5.6.8] JSON Fragmented POST -> Implémentation du body buffering pour les équipements à grand nombre d'objets.
+- [v5.6.8] Unnecessary Reboots -> Distinction des formulaires de sauvegarde pour maintenir l'uptime.
+
 ## État au 27 Mai 2026 (Après-midi - v5.6.7)
 - **Version actuelle** : v5.6.7 (Iterative Discovery)
 - **Succès Technologiques** : 

@@ -73,20 +73,36 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                     int p3 = t.indexOf('/', p2 + 1);
                     int p4 = t.indexOf('/', p3 + 1);
                     if (p1 > 0 && p2 > 0 && p3 > 0 && p4 > 0) {
-                        BACnetJob job;
-                        job.type = JOB_WRITE_PROP;
-                        job.target_mac = t.substring(p1 + 1, p2).toInt();
-                        job.obj_instance = t.substring(p3 + 1, p4).toInt();
-                        job.prop_id = 85;
-                        job.write_value = String(payload_buf).toFloat();
-                        String type_str = t.substring(p2 + 1, p3);
-                        if (type_str == "AO") job.obj_type = OBJ_ANALOG_OUTPUT;
-                        else if (type_str == "AV") job.obj_type = OBJ_ANALOG_VALUE;
-                        else if (type_str == "BO") job.obj_type = OBJ_BINARY_OUTPUT;
-                        else if (type_str == "BV") job.obj_type = OBJ_BINARY_VALUE;
-                        else job.type = JOB_WHO_IS;
-                        
-                        if (job.type == JOB_WRITE_PROP) enqueue_bacnet_job(job);
+                        uint32_t device_id = t.substring(p1 + 1, p2).toInt();
+                        uint8_t target_mac = 0;
+                        bool found = false;
+
+                        if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(50))) {
+                            for (auto& d : bacnet_network_cache) {
+                                if (d.device_id == device_id) { target_mac = d.mac_address; found = true; break; }
+                            }
+                            xSemaphoreGive(cache_mutex);
+                        }
+
+                        if (found) {
+                            BACnetJob job;
+                            job.type = JOB_WRITE_PROP;
+                            job.target_mac = target_mac;
+                            job.obj_instance = t.substring(p3 + 1, p4).toInt();
+                            job.prop_id = 85;
+                            job.write_value = String(payload_buf).toFloat();
+                            String type_str = t.substring(p2 + 1, p3);
+                            
+                            if (type_str == "AO" || type_str == "analog_output") job.obj_type = 1;
+                            else if (type_str == "AV" || type_str == "analog_value") job.obj_type = 2;
+                            else if (type_str == "BO" || type_str == "binary_output") job.obj_type = 4;
+                            else if (type_str == "BV" || type_str == "binary_value") job.obj_type = 5;
+                            else if (type_str == "MSO" || type_str == "multi_state_output") job.obj_type = 14;
+                            else if (type_str == "MSV" || type_str == "multi_state_value") job.obj_type = 19;
+                            else job.type = JOB_WHO_IS; // Fallback ou rejet
+                            
+                            if (job.type == JOB_WRITE_PROP) enqueue_bacnet_job(job);
+                        }
                     }
                 }
             }
@@ -168,19 +184,23 @@ void handle_mqtt() {
         MQTTPublishJob pubJob;
         while (xQueueReceive(mqtt_publish_queue, &pubJob, 0) == pdTRUE) {
             char topic[128];
-            const char* t_str = "unknown";
+            const char* t_str = "OBJ";
             switch(pubJob.obj_type) {
-                case OBJ_ANALOG_INPUT: t_str = "AI"; break;
-                case OBJ_ANALOG_OUTPUT: t_str = "AO"; break;
-                case OBJ_ANALOG_VALUE: t_str = "AV"; break;
-                case OBJ_BINARY_INPUT: t_str = "BI"; break;
-                case OBJ_BINARY_OUTPUT: t_str = "BO"; break;
-                case OBJ_BINARY_VALUE: t_str = "BV"; break;
-                case OBJ_MULTI_STATE_INPUT: t_str = "MSI"; break;
-                case OBJ_MULTI_STATE_OUTPUT: t_str = "MSO"; break;
-                case OBJ_MULTI_STATE_VALUE: t_str = "MSV"; break;
+                case 0: t_str = "AI"; break;
+                case 1: t_str = "AO"; break;
+                case 2: t_str = "AV"; break;
+                case 3: t_str = "BI"; break;
+                case 4: t_str = "BO"; break;
+                case 5: t_str = "BV"; break;
+                case 13: t_str = "MSI"; break;
+                case 14: t_str = "MSO"; break;
+                case 19: t_str = "MSV"; break;
             }
-            snprintf(topic, sizeof(topic), "%s/%lu/%s/%lu/state", sysCfg.mqtt_prefix, (unsigned long)pubJob.device_id, t_str, (unsigned long)pubJob.obj_instance);
+
+            const char* subtopic = "state";
+            if (pubJob.prop_id == 77) subtopic = "name";
+
+            snprintf(topic, sizeof(topic), "%s/%lu/%s/%lu/%s", sysCfg.mqtt_prefix, (unsigned long)pubJob.device_id, t_str, (unsigned long)pubJob.obj_instance, subtopic);
             
             int msg_id = esp_mqtt_client_enqueue(mqtt_client, topic, pubJob.value_string, 0, 0, 0, true);
             if (msg_id == -2) {
@@ -188,6 +208,23 @@ void handle_mqtt() {
             } else {
                 z_log("[MQTT] Published: %s -> %s\n", topic, pubJob.value_string);
             }
+        }
+
+        // --- GATEWAY STATUS (B2M) ---
+        static uint32_t last_status_pub = 0;
+        if (millis() - last_status_pub > 60000) {
+            last_status_pub = millis();
+            auto pub_b2m = [&](const char* key, String val) {
+                char t[128]; snprintf(t, sizeof(t), "%s/B2M/%s/state", sysCfg.mqtt_prefix, key);
+                esp_mqtt_client_enqueue(mqtt_client, t, val.c_str(), 0, 0, 0, true);
+            };
+            pub_b2m("ver", VERSION_GLOBAL);
+            pub_b2m("rssi", String(WiFi.RSSI()));
+            pub_b2m("mqtt", "1");
+            pub_b2m("mstp_t", (bacnetStats.tokens_seen > 0 || bacnetStats.ms_msgs_rx > 0) ? "Running" : "Stopped");
+            pub_b2m("mstp_cnt", String(bacnetStats.tokens_seen));
+            pub_b2m("heap", String(ESP.getFreeHeap() / 1024));
+            pub_b2m("nb_dev", String(bacnet_network_cache.size()));
         }
     }
 }

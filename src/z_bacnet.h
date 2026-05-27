@@ -211,7 +211,7 @@ struct MQTTPublishJob {
     uint16_t obj_type;
     uint32_t obj_instance;
     uint8_t prop_id;
-    char value_string[32];
+    char value_string[64];
 };
 
 extern QueueHandle_t mqtt_publish_queue;
@@ -220,6 +220,7 @@ extern QueueHandle_t bacnet_job_queue;
 void setup_bacnet_engine();
 bool enqueue_bacnet_job(BACnetJob job);
 bool enqueue_mqtt_publish(MQTTPublishJob pubJob);
+void publish_all_names();
 String get_unit_text(uint16_t units);
 
 #endif

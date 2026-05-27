@@ -377,7 +377,18 @@ static void bacnet_task(void *pv) {
                                         else if (dev.disc_step == DISC_OBJ_VALUE) apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, 85, -1);
                                     } else { 
                                         dev.discovery_done = true; save_device_objects(dev.device_id); 
-                                        z_log("[BACNET] Discovery Successfully Finalized for ID:%lu.\n", dev.device_id); 
+                                        z_log("[BACNET] Discovery Successfully Finalized for ID:%lu.\n", dev.device_id);
+                                        // Publication immédiate de TOUS les noms à la fin de la découverte
+                                        for (auto& obj : dev.objects) {
+                                            if (obj.type == 65535) continue;
+                                            MQTTPublishJob pub;
+                                            pub.device_id = dev.device_id;
+                                            pub.obj_type = obj.type;
+                                            pub.obj_instance = obj.instance;
+                                            pub.prop_id = 77; 
+                                            strlcpy(pub.value_string, obj.name.c_str(), sizeof(pub.value_string));
+                                            enqueue_mqtt_publish(pub);
+                                        }
                                     }
                                 } else {
                                     // --- POLLING LOGIC ---
@@ -385,8 +396,8 @@ static void bacnet_task(void *pv) {
                                     if (count > 0) {
                                         current_poll_idx = (current_poll_idx + 1) % count;
                                         auto& o = dev.objects[current_poll_idx];
-                                        // Selective Polling: Only if enabled in UI AND last update > 30s
-                                        if (o.enabled && o.type != 8 && o.type != 65535 && (millis() - o.last_update > 30000)) { 
+                                        // Selective Polling: Only if enabled in UI AND last update > configurable interval
+                                        if (o.enabled && o.type != 8 && o.type != 65535 && (millis() - o.last_update > (sysCfg.mqtt_poll_interval * 1000))) { 
                                             apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, 85, -1); 
                                         }
                                     }
@@ -476,9 +487,8 @@ static void bacnet_task(void *pv) {
                                                         if (dev.disc_step == DISC_OBJ_OID) { 
                                                             uint32_t oid = (apdu[apdu_pos]<<24)|(apdu[apdu_pos+1]<<16)|(apdu[apdu_pos+2]<<8)|apdu[apdu_pos+3]; 
                                                             o.type = oid >> 22; o.instance = oid & 0x3FFFFF; 
-                                                            if((o.type <= 5) || (o.type >= 12 && o.type <= 14) || (o.type == 19) || (o.type == 23 || o.type == 24) || (o.type >= 39 && o.type <= 50) || (o.type == 54 || o.type == 55)) o.enabled = true;
-                                                            else o.enabled = false;
-                                                            z_log("[BACNET] Obj %u OID: T%u I%lu\n", dev.disc_obj_idx+1, o.type, (unsigned long)o.instance); 
+                                                            o.enabled = false;
+                                                            z_log("[BACNET] Obj %u OID: T%u I%lu (POLL:OFF)\n", dev.disc_obj_idx+1, o.type, (unsigned long)o.instance); 
                                                             dev.disc_step = DISC_OBJ_NAME; 
                                                         }
                                                         else if (dev.disc_step == DISC_OBJ_NAME) { 
@@ -627,3 +637,21 @@ void setup_bacnet_engine() {
 }
 bool enqueue_bacnet_job(BACnetJob job) { if (bacnet_job_queue == NULL) return false; return xQueueSend(bacnet_job_queue, &job, 0) == pdTRUE; }
 bool enqueue_mqtt_publish(MQTTPublishJob pubJob) { if (mqtt_publish_queue == NULL) return false; return xQueueSend(mqtt_publish_queue, &pubJob, 0) == pdTRUE; }
+
+void publish_all_names() {
+    if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
+        for (auto& dev : bacnet_network_cache) {
+            for (auto& obj : dev.objects) {
+                if (obj.type == 65535) continue;
+                MQTTPublishJob pub;
+                pub.device_id = dev.device_id;
+                pub.obj_type = obj.type;
+                pub.obj_instance = obj.instance;
+                pub.prop_id = 77; // Object_Name
+                strlcpy(pub.value_string, obj.name.c_str(), sizeof(pub.value_string));
+                enqueue_mqtt_publish(pub);
+            }
+        }
+        xSemaphoreGive(cache_mutex);
+    }
+}
