@@ -496,10 +496,20 @@ static void bacnet_task(void *pv) {
                                                             if (enc == 0) { uint16_t slen = std::min((int)val_tag.len - 1, 32); memcpy(n, &apdu[apdu_pos+1], slen); n[slen]=0; } 
                                                             else { int slen=0; for(int i=2; i<val_tag.len && slen<32; i+=2) n[slen++]=apdu[apdu_pos+i]; n[slen]=0; } 
                                                             o.name = String(n); z_log("[BACNET] Obj %u Name: %s\n", dev.disc_obj_idx+1, n); 
+                                                            
+                                                            // LIVE SYNC : Publication MQTT immédiate du nom découvert
+                                                            MQTTPublishJob pub;
+                                                            pub.device_id = dev.device_id;
+                                                            pub.obj_type = o.type;
+                                                            pub.obj_instance = o.instance;
+                                                            pub.prop_id = 77; // Object_Name
+                                                            strlcpy(pub.value_string, n, sizeof(pub.value_string));
+                                                            enqueue_mqtt_publish(pub);
+
                                                             if(o.type <= 2 || o.type == 23 || o.type == 24 || o.type == 46) dev.disc_step = DISC_OBJ_UNITS; 
                                                             else if(o.type == 13 || o.type == 14 || o.type == 19) { o.state_texts.clear(); o.expected_states_count = 0; dev.disc_step = DISC_OBJ_STATES; }
                                                             else if(o.enabled) dev.disc_step = DISC_OBJ_VALUE;
-                                                            else { dev.disc_obj_idx++; dev.disc_step = DISC_OBJ_OID; if (dev.disc_obj_idx % 10 == 0) save_device_objects(dev.device_id); if(dev.disc_obj_idx >= dev.objects.size()) { dev.discovery_done=true; save_device_objects(dev.device_id); } }
+                                                            else { dev.disc_obj_idx++; dev.disc_step = DISC_OBJ_OID; if (dev.disc_obj_idx % 10 == 0) save_device_objects(dev.device_id); if(dev.disc_obj_idx >= dev.objects.size()) { dev.discovery_done=true; save_device_objects(dev.device_id); publish_all_names(); } }
                                                         }
                                                         else if (dev.disc_step == DISC_OBJ_UNITS) { 
                                                             uint32_t u=0; for(int i=0; i<val_tag.len; i++) u = (u << 8) | apdu[apdu_pos+i]; 

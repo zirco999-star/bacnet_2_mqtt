@@ -190,6 +190,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     <div class="form-group"><label>MQTT User</label><input type="text" name="mqu" id="in-mqu"></div>
                     <div class="form-group"><label>MQTT Password</label><input type="password" name="mqp" id="in-mqp"></div>
                     <div class="full-w"><label>Root Topic Prefix</label><input type="text" name="mqpr" id="in-mqpr"></div>
+                    <div class="full-w"><label>MQTT Poll Interval (s)</label><input type="number" name="mpi" id="in-mpi"></div>
                 </form>
             </div>
             <div class="grid-stats" style="margin-top:1rem; grid-template-columns: 1fr 1fr 1fr;">
@@ -221,6 +222,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('in-mqu').value = d.mqu || "";
                 document.getElementById('in-mqp').value = d.mqp_set ? "******" : "";
                 document.getElementById('in-mqpr').value = d.mqpr || "bacnet";
+                document.getElementById('in-mpi').value = d.mpi || 30;
                 document.getElementById('in-did').value = d.did || 123;
                 document.getElementById('in-timeout').value = d.to || 1000;
                 document.getElementById('in-retries').value = d.ret || 3;
@@ -254,12 +256,13 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             const rows = block.querySelectorAll('tbody tr');
             const objects = [];
             rows.forEach(r => {
+                const poll_sw = r.querySelector('.poll-sw');
                 objects.push({
                     inst: parseInt(r.getAttribute('data-inst')),
                     type: parseInt(r.getAttribute('data-type')),
-                    name: r.querySelector('.in-edit').value,
+                    name: r.querySelector('.name-edit').value,
                     unit: r.querySelector('.unit-edit') ? r.querySelector('.unit-edit').value : "",
-                    poll: r.querySelector('.poll-sw').checked
+                    poll: poll_sw.checked
                 });
             });
             const data = { device_id: id, objects: objects };
@@ -291,10 +294,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                         let valStr = (o.val !== null && o.val !== undefined) ? o.val.toFixed(2) : "---";
                         html += `<tr data-inst="${o.inst}" data-type="${o.type}" style="${isUseful?'':'opacity:0.5'}">
                             <td><span class="tag-obj">${tStr}:${o.inst}</span></td>
-                            <td><input type="text" class="in-edit" value="${o.name}"></td>
+                            <td><input type="text" class="in-edit name-edit" value="${o.name}" ${o.poll?'':'disabled'} style="${o.poll?'':'opacity:0.5'}"></td>
                             <td style="color:var(--success); font-weight:700; font-family:monospace">${valStr}</td>
                             <td><input type="text" class="in-edit unit-edit" value="${o.unit || ''}" style="width:50px; text-align:center; font-size:0.6rem; color:var(--accent)"></td>
-                            <td><label class="switch"><input type="checkbox" class="poll-sw" ${o.poll?'checked':''} ${isUseful?'':'disabled'}><span class="slider"></span></label></td>
+                            <td><label class="switch"><input type="checkbox" class="poll-sw" ${o.poll?'checked':''} ${isUseful?'':'disabled'} onchange="this.closest('tr').querySelector('.name-edit').disabled = !this.checked; this.closest('tr').querySelector('.name-edit').style.opacity = this.checked ? '1' : '0.5'"><span class="slider"></span></label></td>
                         </tr>`;
                     });
                     html += `</tbody></table>

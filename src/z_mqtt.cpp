@@ -22,6 +22,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                 snprintf(sub_topic, sizeof(sub_topic), "%s/+/+/+/set", sysCfg.mqtt_prefix);
                 esp_mqtt_client_subscribe(mqtt_client, sub_topic, 0);
             }
+            extern void publish_all_names();
+            publish_all_names();
             break;
 
         case MQTT_EVENT_ERROR:
@@ -212,7 +214,7 @@ void handle_mqtt() {
 
         // --- GATEWAY STATUS (B2M) ---
         static uint32_t last_status_pub = 0;
-        if (millis() - last_status_pub > 60000) {
+        if (millis() - last_status_pub > (sysCfg.mqtt_poll_interval * 1000)) {
             last_status_pub = millis();
             auto pub_b2m = [&](const char* key, String val) {
                 char t[128]; snprintf(t, sizeof(t), "%s/B2M/%s/state", sysCfg.mqtt_prefix, key);

@@ -5,6 +5,7 @@
 #include <vector>
 
 // --- STRUCTURE DE PERSISTANCE BINAIRE (v1 Legacy) ---
+#pragma pack(push, 1)
 struct BACnetPersistenceObj_v1 {
     uint32_t val;
     char name[24];
@@ -43,6 +44,7 @@ struct BACnetPersistenceDev {
     uint8_t disc_step;     // Étape actuelle du scan
     BACnetPersistenceObj objects[100]; // Total Blob ~3676 octets
 };
+#pragma pack(pop)
 
 // --- TYPES D'OBJETS BACNET (ASHRAE 135) ---
 enum BACnetObjectType {
