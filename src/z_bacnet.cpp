@@ -192,7 +192,6 @@ static void bacnet_task(void *pv) {
     uint16_t data_len=0, data_idx=0;
     enum RX_STATE { RX_IDLE, RX_PREAMBLE_55, RX_HEADER, RX_DATA, RX_CRC16_L, RX_CRC16_H };
     RX_STATE rx_state = RX_IDLE;
-    enum MSTP_MASTER_STATE { MSTP_INITIALIZE, MSTP_IDLE, MSTP_USE_TOKEN, MSTP_WAIT_TX_DONE, MSTP_AWAIT_REPLY, MSTP_DONE_WITH_TOKEN, MSTP_PASS_TOKEN, MSTP_NO_TOKEN, MSTP_ANSWER_DATA_REQUEST, MSTP_WAIT_FOR_PROPORTIONAL };
     MSTP_MASTER_STATE mstp_state = MSTP_INITIALIZE;
     uint32_t last_rx_time = millis(); uint32_t timer_silence = millis();
     uint8_t token_skip_count = 0; bool waiting_for_reply = false, ReceivedValidFrame = false;
@@ -200,7 +199,8 @@ static void bacnet_task(void *pv) {
     uint8_t current_invoke_id = 10, current_poll_idx = 0, current_dev_idx = 0;
     uint32_t heartbeat_timer = 0;
     static uint32_t last_who_is_time = 0;
-    static uint8_t next_station = (sysCfg.mac_address + 1) % (sysCfg.max_master + 1);
+    static uint8_t next_station;
+    static uint8_t poll_station;
 
     uart_event_t event;
 
@@ -280,11 +280,16 @@ static void bacnet_task(void *pv) {
 
         uint32_t Tno_token = 500 + (sysCfg.mac_address * 10);
         switch (mstp_state) {
-            case MSTP_INITIALIZE: token_skip_count = 0; mstp_state = MSTP_IDLE; break;
+            case MSTP_INITIALIZE: 
+                token_skip_count = 0; 
+                next_station = sysCfg.mac_address;
+                poll_station = sysCfg.mac_address;
+                mstp_state = MSTP_IDLE; 
+                break;
             case MSTP_IDLE:
                 if (ReceivedValidFrame) {
                     if (frame_type == 0x00 && dest_mac == sysCfg.mac_address) { bacnetStats.tokens_seen++; next_station = (src_mac + 1) % (sysCfg.max_master + 1); mstp_state = MSTP_USE_TOKEN; }
-                    else if (frame_type == 0x01 && dest_mac == sysCfg.mac_address) { uint8_t f[8] = { 0x55, 0xFF, 0x02, src_mac, sysCfg.mac_address, 0, 0, 0 }; f[7] = calc_header_crc(&f[2], 5); uart_tx(f, 8); mstp_state = MSTP_WAIT_TX_DONE; }
+                    else if (frame_type == 0x01 && dest_mac == sysCfg.mac_address) { uint8_t f[8] = { 0x55, 0xFF, 0x02, src_mac, sysCfg.mac_address, 0, 0, 0 }; f[7] = calc_header_crc(&f[2], 5); uart_tx(f, 8); mstp_state = MSTP_IDLE; }
                     else if (dest_mac == sysCfg.mac_address && frame_type >= 0x05) { mstp_state = MSTP_ANSWER_DATA_REQUEST; }
                     else if (dest_mac == 0xFF && (frame_type == 0x05 || frame_type == 0x06)) {
                         // --- PARSING NPDU DYNAMIQUE POUR BROADCAST ---
@@ -322,9 +327,9 @@ static void bacnet_task(void *pv) {
                     }
                 } else if (millis() - last_rx_time > Tno_token) { mstp_state = MSTP_NO_TOKEN; }
                 break;
-            case MSTP_NO_TOKEN:  mstp_state = MSTP_WAIT_FOR_PROPORTIONAL; timer_silence = millis(); break;
-            case MSTP_WAIT_FOR_PROPORTIONAL:
-                if (millis() - timer_silence > 50) { last_rx_time = millis(); uint8_t f[8]={0x55,0xFF,0x01, (uint8_t)((sysCfg.mac_address+1)%128), sysCfg.mac_address,0,0,0}; f[7]=calc_header_crc(&f[2],5); uart_tx(f,8); bacnetStats.tokens_seen++; mstp_state = MSTP_WAIT_TX_DONE; }
+            case MSTP_NO_TOKEN:  mstp_state = MSTP_POLL_FOR_MASTER; timer_silence = millis(); break;
+            case MSTP_POLL_FOR_MASTER:
+                if (millis() - timer_silence > 50) { last_rx_time = millis(); uint8_t f[8]={0x55,0xFF,0x01, (uint8_t)((sysCfg.mac_address+1)%128), sysCfg.mac_address,0,0,0}; f[7]=calc_header_crc(&f[2],5); uart_tx(f,8); bacnetStats.tokens_seen++; mstp_state = MSTP_IDLE; }
                 break;
             case MSTP_USE_TOKEN:
                 token_skip_count++;
@@ -351,7 +356,7 @@ static void bacnet_task(void *pv) {
                             uint16_t apdu_len = build_write_property_name_apdu(buffer, current_invoke_id, current_job.obj_type, current_job.obj_instance, current_job.name);
                             token_skip_count = 0; retry_count=0; waiting_for_reply = true;
                             send_mstp_frame(current_job.target_mac, 0x05, buffer, apdu_len);
-                            mstp_state = MSTP_AWAIT_REPLY;
+                            mstp_state = MSTP_WAIT_FOR_REPLY;
                         } else if (!bacnet_network_cache.empty()) {
                             uint8_t apdu[64]; uint16_t apdu_len = 0;
                             if (current_dev_idx >= bacnet_network_cache.size()) current_dev_idx = 0;
@@ -387,6 +392,7 @@ static void bacnet_task(void *pv) {
                                             pub.obj_instance = obj.instance;
                                             pub.prop_id = 77; 
                                             strlcpy(pub.value_string, obj.name.c_str(), sizeof(pub.value_string));
+                                            pub.retain = true;
                                             enqueue_mqtt_publish(pub);
                                         }
                                     }
@@ -397,7 +403,7 @@ static void bacnet_task(void *pv) {
                                         current_poll_idx = (current_poll_idx + 1) % count;
                                         auto& o = dev.objects[current_poll_idx];
                                         // Selective Polling: Only if enabled in UI AND last update > configurable interval
-                                        if (o.enabled && o.type != 8 && o.type != 65535 && (millis() - o.last_update > (sysCfg.mqtt_poll_interval * 100))) { 
+                                        if (o.enabled && o.type != 8 && o.type != 65535 && (millis() - o.last_update > (sysCfg.bacnet_poll_interval * 1000))) { 
                                             apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, 85, -1); 
                                         }
                                     }
@@ -407,7 +413,7 @@ static void bacnet_task(void *pv) {
                             if (apdu_len > 0) { 
                                 token_skip_count = 0; waiting_for_reply = true; 
                                 send_mstp_frame(dev.mac_address, 0x05, apdu, apdu_len); 
-                                mstp_state = MSTP_AWAIT_REPLY; 
+                                mstp_state = MSTP_WAIT_FOR_REPLY; 
                             }
                             else { 
                                 current_dev_idx = (current_dev_idx + 1) % bacnet_network_cache.size();
@@ -418,8 +424,7 @@ static void bacnet_task(void *pv) {
                     } else { mstp_state = MSTP_DONE_WITH_TOKEN; }
                 } else { mstp_state = MSTP_DONE_WITH_TOKEN; }
                 break;
-            case MSTP_WAIT_TX_DONE: if (uart_wait_tx_done(RS485_UART_PORT, 0) == ESP_OK) { timer_silence = millis(); if (waiting_for_reply) mstp_state = MSTP_AWAIT_REPLY; else { last_rx_time = millis(); mstp_state = MSTP_IDLE; } } break;
-            case MSTP_AWAIT_REPLY:
+            case MSTP_WAIT_FOR_REPLY:
                 if (ReceivedValidFrame) {
                     waiting_for_reply = false;
                     
@@ -504,6 +509,7 @@ static void bacnet_task(void *pv) {
                                                             pub.obj_instance = o.instance;
                                                             pub.prop_id = 77; // Object_Name
                                                             strlcpy(pub.value_string, n, sizeof(pub.value_string));
+                                                            pub.retain = true;
                                                             enqueue_mqtt_publish(pub);
 
                                                             if(o.type <= 2 || o.type == 23 || o.type == 24 || o.type == 46) dev.disc_step = DISC_OBJ_UNITS; 
@@ -556,6 +562,7 @@ static void bacnet_task(void *pv) {
                                                                 pub.obj_instance = o.instance;
                                                                 pub.prop_id = 85;
                                                                 snprintf(pub.value_string, sizeof(pub.value_string), "%.2f", v);
+                                                                pub.retain = false;
                                                                 enqueue_mqtt_publish(pub);
                                                                 z_log("[BACNET] Polling - '%s' value %s\n",o.name.c_str(), pub.value_string);
                                                             }
@@ -573,6 +580,7 @@ static void bacnet_task(void *pv) {
                                                                 pub.obj_instance = o.instance;
                                                                 pub.prop_id = 85;
                                                                 snprintf(pub.value_string, sizeof(pub.value_string), "%.0f", (float)v);
+                                                                pub.retain = false;
                                                                 enqueue_mqtt_publish(pub);
                                                                 z_log("[BACNET] Polling - Obj %u Value: %.0f\n", current_poll_idx+1, (float)v);
                                                             }
@@ -625,7 +633,7 @@ static void bacnet_task(void *pv) {
                 f[7] = calc_header_crc(&f[2], 5); uart_tx(f, 8); 
                 waiting_for_reply = false; 
                 last_rx_time = millis(); 
-                mstp_state = MSTP_WAIT_TX_DONE; 
+                mstp_state = MSTP_IDLE; 
                 break; 
             }
         }
@@ -661,6 +669,7 @@ void publish_all_names() {
                 pub.obj_instance = obj.instance;
                 pub.prop_id = 77; // Object_Name
                 strlcpy(pub.value_string, obj.name.c_str(), sizeof(pub.value_string));
+                pub.retain = true; // ACTIVATION DE LA RÉTENTION
                 enqueue_mqtt_publish(pub);
             }
         }

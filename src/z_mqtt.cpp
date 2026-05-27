@@ -7,6 +7,7 @@ extern void z_log(const char* format, ...);
 
 static int mqtt_fail_count = 0;
 static std::atomic<bool> circuit_breaker_active{false};
+static std::atomic<bool> pending_name_publish{false};
 static bool mqtt_is_connected = false;
 
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
@@ -22,8 +23,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                 snprintf(sub_topic, sizeof(sub_topic), "%s/+/+/+/set", sysCfg.mqtt_prefix);
                 esp_mqtt_client_subscribe(mqtt_client, sub_topic, 0);
             }
-            extern void publish_all_names();
-            publish_all_names();
+            pending_name_publish = true; // DÉLÉGATION AU CORE 0
             break;
 
         case MQTT_EVENT_ERROR:
@@ -172,7 +172,14 @@ void handle_mqtt() {
         was_wifi_connected = false;
     }
 
-    // 2. Exécution différée de la destruction (Deferred Processing) sur le Core 0
+    // 2. Exécution de la publication différée des noms (Thread Safe)
+    if (pending_name_publish && mqtt_is_connected) {
+        extern void publish_all_names();
+        publish_all_names();
+        pending_name_publish = false;
+    }
+
+    // 3. Exécution différée de la destruction (Deferred Processing) sur le Core 0
     if (circuit_breaker_active && mqtt_client != NULL) {
         esp_mqtt_client_stop(mqtt_client);
         esp_mqtt_client_destroy(mqtt_client);
@@ -181,7 +188,7 @@ void handle_mqtt() {
         return;
     }
 
-    // 3. Traitement normal des publications si le circuit est fermé et Wi-Fi UP
+    // 4. Traitement normal des publications si le circuit est fermé et Wi-Fi UP
     if (mqtt_publish_queue != NULL && mqtt_client != NULL && is_wifi_connected && !circuit_breaker_active) {
         MQTTPublishJob pubJob;
         while (xQueueReceive(mqtt_publish_queue, &pubJob, 0) == pdTRUE) {
@@ -199,17 +206,15 @@ void handle_mqtt() {
                 case 19: t_str = "MSV"; break;
             }
 
-            const char* subtopic = "state";
-            bool retain_flag = false;
-            if (pubJob.prop_id == 77) { subtopic = "name"; retain_flag = true; }
+            const char* subtopic = (pubJob.prop_id == 77) ? "name" : "state";
 
             snprintf(topic, sizeof(topic), "%s/%lu/%s/%lu/%s", sysCfg.mqtt_prefix, (unsigned long)pubJob.device_id, t_str, (unsigned long)pubJob.obj_instance, subtopic);
             
-            int msg_id = esp_mqtt_client_enqueue(mqtt_client, topic, pubJob.value_string, 0, 0, retain_flag, true);
+            int msg_id = esp_mqtt_client_enqueue(mqtt_client, topic, pubJob.value_string, 0, 1, pubJob.retain, true);
             if (msg_id == -2) {
                 z_log("[MQTT] WARN: Outbox is full. Message dropped.\n");
             } else {
-                z_log("[MQTT] Published: %s -> %s\n", topic, pubJob.value_string);
+                z_log("[MQTT] Published: %s -> %s (Retain:%d)\n", topic, pubJob.value_string, pubJob.retain);
             }
         }
 
@@ -219,7 +224,7 @@ void handle_mqtt() {
             last_status_pub = millis();
             auto pub_b2m = [&](const char* key, String val) {
                 char t[128]; snprintf(t, sizeof(t), "%s/B2M/%s/state", sysCfg.mqtt_prefix, key);
-                esp_mqtt_client_enqueue(mqtt_client, t, val.c_str(), 0, 0, 0, true);
+                esp_mqtt_client_enqueue(mqtt_client, t, val.c_str(), 0, 1, 0, true);
                 z_log("[MQTT] Published: %s -> %s\n", t, val.c_str());
             };
             pub_b2m("ver", VERSION_GLOBAL);

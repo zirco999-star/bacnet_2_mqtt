@@ -182,19 +182,17 @@ enum RX_STATE {
     RX_DATA_CRC 
 };
 
-enum MSTP_MASTER_STATE { 
-    MSTP_INITIALIZE, 
-    MSTP_IDLE, 
-    MSTP_USE_TOKEN, 
-    MSTP_WAIT_FOR_REPLY, 
-    MSTP_DONE_WITH_TOKEN, 
-    MSTP_PASS_TOKEN, 
-    MSTP_NO_TOKEN, 
-    MSTP_POLL_FOR_MASTER, 
-    MSTP_ANSWER_DATA_REQUEST,
-    MSTP_WAIT_TX_DONE
+enum MSTP_MASTER_STATE {
+    MSTP_INITIALIZE,
+    MSTP_IDLE,
+    MSTP_USE_TOKEN,
+    MSTP_WAIT_FOR_REPLY,
+    MSTP_DONE_WITH_TOKEN,
+    MSTP_PASS_TOKEN,
+    MSTP_NO_TOKEN,
+    MSTP_POLL_FOR_MASTER,
+    MSTP_ANSWER_DATA_REQUEST
 };
-
 enum BACnetJobType { JOB_WHO_IS, JOB_I_AM, JOB_READ_PROP, JOB_WRITE_PROP, JOB_READ_UNITS, JOB_CHECK_COMMANDABLE, JOB_READ_STATE_TEXT };
 struct BACnetJob {
     BACnetJobType type;
@@ -214,6 +212,7 @@ struct MQTTPublishJob {
     uint32_t obj_instance;
     uint8_t prop_id;
     char value_string[64];
+    bool retain;
 };
 
 extern QueueHandle_t mqtt_publish_queue;

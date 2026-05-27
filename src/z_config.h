@@ -11,7 +11,7 @@
 #include <mqtt_client.h>
 
 // DEFAULT CONFIGURATION
-#define VERSION_GLOBAL "v5.6.8"
+#define VERSION_GLOBAL "v5.7.2"
 #define DEFAULT_SSID    "Freebox-A4297A"
 #define DEFAULT_STATIC_IP "192.168.1.50"
 #define DEFAULT_GATEWAY "192.168.1.254"
@@ -21,6 +21,7 @@
 #define DEFAULT_MAC_ADDRESS 1
 #define DEFAULT_APDU_TIMEOUT 300
 #define DEFAULT_MAX_RETRIES 3
+#define DEFAULT_BACNET_POLL 30
 #define DEFAULT_MQTT_SERVER "192.168.1.11"
 #define DEFAULT_MQTT_POLL 30
 
@@ -45,6 +46,7 @@ struct Config {
     uint32_t device_id;
     uint16_t apdu_timeout;
     uint8_t max_retries;
+    uint16_t bacnet_poll_interval;
     char mqtt_server[32];
     uint16_t mqtt_port;
     char mqtt_user[32];

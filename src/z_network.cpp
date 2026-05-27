@@ -154,9 +154,11 @@ void load_configuration() {
     sysCfg.heartbeat_interval = DEFAULT_HEARBEAT_INTERVAL;
     sysCfg.token_skip = DEFAULT_TOKEN_SKIP;
     sysCfg.mqtt_poll_interval = DEFAULT_MQTT_POLL;
+    sysCfg.bacnet_poll_interval = DEFAULT_BACNET_POLL;
+
 
     Preferences prefs;
-    if (prefs.begin("system", false)) {
+    if (prefs.begin("system", true)) {
         if (prefs.isKey("ssid")) prefs.getString("ssid", sysCfg.wifi_ssid, 32);
         if (prefs.isKey("pass")) prefs.getString("pass", sysCfg.wifi_pass, 64);
         if (prefs.isKey("static")) sysCfg.static_ip = prefs.getBool("static", true);
@@ -172,9 +174,10 @@ void load_configuration() {
         if (prefs.isKey("did")) sysCfg.device_id = prefs.getUInt("did", 123);
         if (prefs.isKey("to")) sysCfg.apdu_timeout = prefs.getUShort("to", 500);
         if (prefs.isKey("ret")) sysCfg.max_retries = prefs.getUChar("ret", 3);
-        sysCfg.heartbeat_interval = prefs.getUInt("hbeat", DEFAULT_HEARBEAT_INTERVAL);
-        sysCfg.token_skip = prefs.getUChar("tskip", DEFAULT_TOKEN_SKIP);
-        sysCfg.mqtt_poll_interval = prefs.getUShort("mpi", DEFAULT_MQTT_POLL);
+        if (prefs.isKey("bpi")) sysCfg.bacnet_poll_interval = prefs.getUShort("bpi", DEFAULT_BACNET_POLL);
+        if (prefs.isKey("hbeat")) sysCfg.heartbeat_interval = prefs.getUInt("hbeat", DEFAULT_HEARBEAT_INTERVAL);
+        if (prefs.isKey("tskip")) sysCfg.token_skip = prefs.getUChar("tskip", DEFAULT_TOKEN_SKIP);
+        if (prefs.isKey("mpi")) sysCfg.mqtt_poll_interval = prefs.getUShort("mpi", DEFAULT_MQTT_POLL);
         prefs.end();
         z_log("[NVS] Configuration Loaded\n");
     }
@@ -221,6 +224,7 @@ void save_configuration() {
         prefs.putString("mqp", sysCfg.mqtt_pass);
         prefs.putString("mqpr", sysCfg.mqtt_prefix);
         prefs.putUShort("mpi", sysCfg.mqtt_poll_interval);
+        prefs.putUShort("bpi", sysCfg.bacnet_poll_interval);
         prefs.end();
         z_log("[NVS] Configuration System Saved\n");
     }
@@ -461,6 +465,7 @@ void setup_network_infrastructure() {
                                                     pub.device_id = dev.device_id; pub.obj_type = obj.type;
                                                     pub.obj_instance = obj.instance; pub.prop_id = 77; 
                                                     strlcpy(pub.value_string, new_name.c_str(), sizeof(pub.value_string));
+                                                    pub.retain = true;
                                                     enqueue_mqtt_publish(pub);
                                                     BACnetJob job; job.type = JOB_WRITE_PROP; job.target_mac = dev.mac_address;
                                                     job.obj_type = obj.type; job.obj_instance = obj.instance;
