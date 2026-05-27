@@ -152,6 +152,7 @@ void load_configuration() {
     sysCfg.mqtt_port = 1883;
     strlcpy(sysCfg.mqtt_user, "", 32);
     strlcpy(sysCfg.mqtt_pass, "", 32);
+    strlcpy(sysCfg.mqtt_prefix, "bacnet", 64);
     strlcpy(sysCfg.admin_user, "admin", 32);
     strlcpy(sysCfg.admin_pass, "admin1234", 64);
 
@@ -170,6 +171,8 @@ void load_configuration() {
         if (prefs.isKey("mqh")) prefs.getString("mqh", sysCfg.mqtt_server, 32);
         if (prefs.isKey("mqu")) prefs.getString("mqu", sysCfg.mqtt_user, 32);
         if (prefs.isKey("mqp")) prefs.getString("mqp", sysCfg.mqtt_pass, 32);
+        if (prefs.isKey("mqpt")) sysCfg.mqtt_port = prefs.getUShort("mqpt", 1883);
+        if (prefs.isKey("mqpref")) prefs.getString("mqpref", sysCfg.mqtt_prefix, 64);
         if (prefs.isKey("mac")) sysCfg.mac_address = prefs.getUChar("mac", 1);
         if (prefs.isKey("mm")) sysCfg.max_master = prefs.getUChar("mm", 127);
         if (prefs.isKey("did")) sysCfg.device_id = prefs.getUInt("did", 123);
@@ -225,6 +228,8 @@ void save_configuration() {
         prefs.putString("mqh", sysCfg.mqtt_server);
         prefs.putString("mqu", sysCfg.mqtt_user);
         prefs.putString("mqp", sysCfg.mqtt_pass);
+        prefs.putUShort("mqpt", sysCfg.mqtt_port);
+        prefs.putString("mqpref", sysCfg.mqtt_prefix);
         prefs.end();
         z_log("[NVS] Configuration saved\n");
     }
@@ -362,6 +367,8 @@ void setup_network_infrastructure() {
         doc["gw"] = sysCfg.gateway; doc["sn"] = sysCfg.subnet;
         doc["mqh"] = sysCfg.mqtt_server;
         doc["mqpr"] = sysCfg.mqtt_prefix;
+        doc["mqu"] = sysCfg.mqtt_user;
+        doc["mqp"] = sysCfg.mqtt_pass;
         doc["mm"] = sysCfg.max_master;
         doc["did"] = sysCfg.device_id;
         doc["to"] = sysCfg.apdu_timeout;
@@ -467,7 +474,7 @@ void setup_network_infrastructure() {
         auto check = [&](const char* p, char* t, size_t m) {
             if(request->hasParam(p, true)) {
                 String v = request->getParam(p, true)->value();
-                if(v.length() > 0 && v != "******") strlcpy(t, v.c_str(), m);
+                if(v != "******") strlcpy(t, v.c_str(), m);
             }
         };
         check("ssid", sysCfg.wifi_ssid, 32); check("pass", sysCfg.wifi_pass, 64);
@@ -488,7 +495,12 @@ void setup_network_infrastructure() {
         if(request->hasParam("tskip", true)) sysCfg.token_skip = request->getParam("tskip", true)->value().toInt();
 
         save_configuration();
-        request->send(200, "text/plain", "OK");
+        
+        // 4. Redémarrage à chaud de la couche MQTT (Core 0)
+        setup_mqtt();
+        
+        // 5. Réponse asynchrone sécurisée
+        request->send(200, "application/json", "{\"status\":\"ok\",\"message\":\"Configuration sauvegardée et appliquée.\"}");
         pending_reboot = true; reboot_timer = millis();
     });
 

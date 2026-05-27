@@ -5,8 +5,8 @@
 
 extern void z_log(const char* format, ...);
 
-static int mqtt_conn_fail_count = 0;
-static std::atomic<bool> mqtt_circuit_open{false};
+static int mqtt_fail_count = 0;
+static std::atomic<bool> circuit_breaker_active{false};
 static bool mqtt_is_connected = false;
 
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
@@ -14,8 +14,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     switch ((esp_mqtt_event_id_t)event_id) {
         case MQTT_EVENT_CONNECTED:
             z_log("[MQTT] Connected to Broker.\n");
-            mqtt_conn_fail_count = 0; 
-            mqtt_circuit_open = false;
+            mqtt_fail_count = 0; 
+            circuit_breaker_active = false;
             mqtt_is_connected = true;
             {
                 char sub_topic[128];
@@ -24,30 +24,34 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             }
             break;
 
+        case MQTT_EVENT_ERROR:
         case MQTT_EVENT_DISCONNECTED:
             mqtt_is_connected = false;
-            // Si le Wi-Fi est là mais qu'on perd le MQTT, on compte les échecs
-            if (!mqtt_circuit_open && WiFi.status() == WL_CONNECTED) {
-                mqtt_conn_fail_count++;
-                z_log("[MQTT] Disconnected (%d/3)\n", mqtt_conn_fail_count);
-                if (mqtt_conn_fail_count >= 3) {
-                    z_log("[MQTT] CIRCUIT BREAKER TRIPPED: Signaling shutdown to main task.\n");
-                    mqtt_circuit_open = true;
-                }
+            if (circuit_breaker_active) break;
+            
+            // Ne pas pénaliser le broker si c'est la couche Wi-Fi qui est tombée
+            if (WiFi.status() != WL_CONNECTED) {
+                z_log("[MQTT] Connection dropped due to Wi-Fi loss. Waiting for link...\n");
+                break;
             }
-            break;
-
-        case MQTT_EVENT_ERROR:
-            mqtt_is_connected = false;
-            if (WiFi.status() == WL_CONNECTED) {
-                z_log("[MQTT] Protocol/Network Error\n");
-                if (!mqtt_circuit_open) {
-                    mqtt_conn_fail_count++;
-                    if (mqtt_conn_fail_count >= 3) {
-                        z_log("[MQTT] CIRCUIT BREAKER TRIPPED (Error).\n");
-                        mqtt_circuit_open = true;
+            
+            // Analyse granulaire de l'erreur via l'API esp-mqtt
+            if (event->error_handle != NULL) {
+                if (event->error_handle->error_type == MQTT_ERROR_TYPE_CONNECTION_REFUSED) {
+                    if (event->error_handle->connect_return_code == MQTT_CONNECTION_REFUSE_BAD_USERNAME ||
+                        event->error_handle->connect_return_code == MQTT_CONNECTION_REFUSE_NOT_AUTHORIZED) {
+                        z_log("[MQTT] FATAL: Invalid Broker Credentials.\n");
+                        mqtt_fail_count = 3; // On force le disjoncteur immédiatement
                     }
                 }
+            }
+            
+            mqtt_fail_count++;
+            z_log("[MQTT] Disconnected from Broker (%d/3).\n", mqtt_fail_count);
+            
+            if (mqtt_fail_count >= 3) {
+                z_log("[MQTT] CIRCUIT BREAKER: Halting MQTT connection attempts.\n");
+                circuit_breaker_active = true;
             }
             break;
 
@@ -101,47 +105,65 @@ void setup_mqtt() {
     }
 
     // 2. Réinitialisation des états du Circuit Breaker
-    mqtt_conn_fail_count = 0;
-    mqtt_circuit_open = false;
+    mqtt_fail_count = 0;
+    circuit_breaker_active = false;
 
     if (strlen(sysCfg.mqtt_server) == 0) return;
     
-    static char mqtt_uri[128]; 
-    if (strlen(sysCfg.mqtt_user) > 0) {
-        snprintf(mqtt_uri, sizeof(mqtt_uri), "mqtt://%s:%s@%s:%d", sysCfg.mqtt_user, sysCfg.mqtt_pass, sysCfg.mqtt_server, sysCfg.mqtt_port);
-    } else {
-        snprintf(mqtt_uri, sizeof(mqtt_uri), "mqtt://%s:%d", sysCfg.mqtt_server, sysCfg.mqtt_port);
-    }
-    
     esp_mqtt_client_config_t mqtt_cfg = {};
-    mqtt_cfg.broker.address.uri = mqtt_uri;
+    mqtt_cfg.broker.address.hostname = sysCfg.mqtt_server;
+    mqtt_cfg.broker.address.port = sysCfg.mqtt_port;
+    mqtt_cfg.broker.address.transport = MQTT_TRANSPORT_OVER_TCP;
     
+    mqtt_cfg.credentials.username = strlen(sysCfg.mqtt_user) > 0 ? sysCfg.mqtt_user : NULL;
+    mqtt_cfg.credentials.authentication.password = strlen(sysCfg.mqtt_pass) > 0 ? sysCfg.mqtt_pass : NULL;
+
+    z_log("[MQTT] Attempting to connect to Broker at %s:%d with credentials '%s' / '%s'\n", sysCfg.mqtt_server, sysCfg.mqtt_port, sysCfg.mqtt_user, sysCfg.mqtt_pass);      
+
     // 3. Désactivation de la reconnexion automatique du driver pour laisser le contrôle à l'appli
     mqtt_cfg.network.disable_auto_reconnect = true;
-    mqtt_cfg.network.reconnect_timeout_ms = 10000; // 10s entre les tentatives manuelles si besoin
+    mqtt_cfg.buffer.out_size = 2048;
 
     mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
     if (mqtt_client) {
         esp_mqtt_client_register_event(mqtt_client, (esp_mqtt_event_id_t)ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
         esp_mqtt_client_start(mqtt_client);
-        z_log("[MQTT] Client initialized (v5.6 - Official Best Practices)\n");
+        z_log("[MQTT] Client initialized -%s-\n", VERSION_GLOBAL);    
     }
 }
 
 bool is_mqtt_connected() { return mqtt_is_connected; }
 
 void handle_mqtt() {
-    // Exécution différée de la destruction (Deferred Processing) sur le Core 0
-    if (mqtt_circuit_open && mqtt_client != NULL) {
-        z_log("[MQTT] ASYNC SHUTDOWN: Stopping and Destroying client to release Core 0 resources.\n");
+    static bool was_wifi_connected = false;
+    bool is_wifi_connected = (WiFi.status() == WL_CONNECTED);
+
+    // 1. Détection du front montant du Wi-Fi (Connexion ou Reconnexion)
+    if (is_wifi_connected && !was_wifi_connected) {
+        z_log("[MQTT] Wi-Fi Link Up. Starting/Reconnecting MQTT...\n");
+        
+        if (mqtt_client == NULL && !circuit_breaker_active) {
+            setup_mqtt(); 
+        } else if (mqtt_client != NULL && !circuit_breaker_active) {
+            esp_mqtt_client_reconnect(mqtt_client); 
+        }
+        was_wifi_connected = true;
+    } else if (!is_wifi_connected && was_wifi_connected) {
+        z_log("[MQTT] Wi-Fi Link Down. Suspending MQTT traffic.\n");
+        was_wifi_connected = false;
+    }
+
+    // 2. Exécution différée de la destruction (Deferred Processing) sur le Core 0
+    if (circuit_breaker_active && mqtt_client != NULL) {
         esp_mqtt_client_stop(mqtt_client);
         esp_mqtt_client_destroy(mqtt_client);
         mqtt_client = NULL; // Évite les dangling pointers
+        z_log("[MQTT] Client fully destroyed to protect Core 0 LwIP.\n");
         return;
     }
 
-    // Traitement normal des publications si le circuit est fermé
-    if (mqtt_publish_queue != NULL && mqtt_client != NULL && !mqtt_circuit_open) {
+    // 3. Traitement normal des publications si le circuit est fermé et Wi-Fi UP
+    if (mqtt_publish_queue != NULL && mqtt_client != NULL && is_wifi_connected && !circuit_breaker_active) {
         MQTTPublishJob pubJob;
         while (xQueueReceive(mqtt_publish_queue, &pubJob, 0) == pdTRUE) {
             char topic[128];
@@ -158,7 +180,11 @@ void handle_mqtt() {
                 case OBJ_MULTI_STATE_VALUE: t_str = "multi_state_value"; break;
             }
             snprintf(topic, sizeof(topic), "%s/%lu/%s/%lu/state", sysCfg.mqtt_prefix, (unsigned long)pubJob.device_id, t_str, (unsigned long)pubJob.obj_instance);
-            esp_mqtt_client_publish(mqtt_client, topic, pubJob.value_string, 0, 1, 0);
+            
+            int msg_id = esp_mqtt_client_enqueue(mqtt_client, topic, pubJob.value_string, 0, 0, 0, true);
+            if (msg_id == -2) {
+                z_log("[MQTT] WARN: Outbox is full. Message dropped.\n");
+            }
         }
     }
 }

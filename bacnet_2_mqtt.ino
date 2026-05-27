@@ -34,7 +34,7 @@ void setup() {
     
     setup_network_infrastructure(); // WiFi + OTA + NVS Load
     setup_bacnet_engine();          // RS485 + MS/TP
-    setup_mqtt();                   // Broker connection
+    //setup_mqtt();                   // Broker connection
     
     Serial.println("[" + String(VERSION_GLOBAL) + "] System Operational.");
 }
