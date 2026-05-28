@@ -6,30 +6,12 @@
 
 // --- STRUCTURE DE PERSISTANCE BINAIRE (v1 Legacy) ---
 #pragma pack(push, 1)
-struct BACnetPersistenceObj_v1 {
-    uint32_t val;
-    char name[24];
-    bool poll;
-    uint16_t units;
-};
-
-struct BACnetPersistenceDev_v1 {
-    uint32_t device_id;
-    uint8_t mac_address;
-    bool enabled;
-    char name[32];
-    char vendor[32];
-    uint8_t count;
-    bool discovery_done;
-    BACnetPersistenceObj_v1 objects[100];
-};
-
-// --- STRUCTURE DE PERSISTANCE BINAIRE (v2 - Optimisée ASHRAE 135) ---
 struct BACnetPersistenceObj {
     uint32_t val;         // [TYPE:10][INSTANCE:22]
-    char name[20];        // Nom tronqué à 20 pour gagner de la place
-    char unit_text[11];   // Unité textuelle personnalisée
-    bool poll;            // Flag de polling
+    char name[32];        // ASHRAE Friendly
+    char unit_text[12];
+    bool poll;
+    bool name_published;
 };
 
 struct BACnetPersistenceDev {
@@ -38,11 +20,17 @@ struct BACnetPersistenceDev {
     bool enabled;
     char name[32];
     char vendor[32];
-    uint8_t count;        // Nombre total d'objets attendus
-    bool discovery_done;  // scan_done flag
-    uint16_t disc_obj_idx; // Index de progression du scan
-    uint8_t disc_step;     // Étape actuelle du scan
-    BACnetPersistenceObj objects[100]; // Total Blob ~3676 octets
+    uint8_t count;
+    bool discovery_done;
+    uint16_t disc_obj_idx;
+    uint8_t disc_step;
+};
+
+// Structure de transport pour les pages (pour respecter la limite 1984 octets)
+struct BACnetPersistencePage {
+    uint32_t device_id;
+    uint16_t page_index;
+    BACnetPersistenceObj objects[20]; // 20 * 48 = 960 octets ==> OK pour NVS
 };
 #pragma pack(pop)
 
@@ -141,16 +129,18 @@ extern BACnet_Stats bacnetStats;
 struct BACnetObject {
     uint16_t type = 65535;
     uint32_t instance = 0;
-    String name = "Unknown";
+    char name[50] = "Unknown";
     float present_value = 0.0f;
-    bool is_commandable = false;
     bool enabled = false;
+    bool name_published = false;
+    char last_mqtt_name[50] = "";
     uint32_t last_update = 0;
+    uint16_t expected_states_count = 0;
     uint16_t units = 95;
-    String unit_text = "";
-    uint16_t expected_states_count = 0; 
+    char unit_text[20] = "";
     bool discovery_done = false;
-    std::vector<String> state_texts;
+    // state_texts reste dynamique en RAM, mais n'est pas persisté (ou alors avec une logique à part)
+    std::vector<String> state_texts; 
 };
 
 struct BACnetDevice {

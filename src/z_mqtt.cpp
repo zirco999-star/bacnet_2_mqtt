@@ -237,3 +237,39 @@ void handle_mqtt() {
         }
     }
 }
+
+void publish_mqtt_topic(uint32_t device_id, BACnetObject& obj, uint8_t prop_id, bool retain) {
+    // Sécurité : ne rien publier si l'objet n'est pas activé
+    if (!obj.enabled) {
+        z_log("[MQTT] Blocage publication: Objet %u désactivé\n", obj.instance);
+        return;
+    }
+
+    // Construction du message  
+    MQTTPublishJob pub;
+    pub.device_id = device_id;
+    pub.obj_type = obj.type;
+    pub.obj_instance = obj.instance;
+    pub.prop_id = prop_id;
+    pub.retain = retain;
+
+    // Formattage de la valeur selon le prop_id (77 = Nom, 85 = Valeur)
+    if (prop_id == 77) {
+        // Sécurité : Vérifie si la chaine est vide
+        if (strlen(obj.name) == 0) return;
+        strlcpy(pub.value_string, obj.name, sizeof(pub.value_string));
+    } else if (prop_id == 85) {
+        // Format float pour les valeurs (prop 85)
+        snprintf(pub.value_string, sizeof(pub.value_string), "%.2f", obj.present_value);
+    } else {
+        z_log("[MQTT] Unknown prop_id %d\n", prop_id); 
+        return;
+    }
+
+    
+
+    enqueue_mqtt_publish(pub);
+    
+    // Log optionnel pour le debug
+    z_log("[MQTT] Publié ID %lu, Obj %u, Prop %d: %s\n", (unsigned long)device_id, obj.instance, prop_id, pub.value_string);
+}

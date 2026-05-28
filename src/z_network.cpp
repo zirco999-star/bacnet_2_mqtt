@@ -53,79 +53,70 @@ void z_log(const char* format, ...) {
  */
 void load_device_objects(uint32_t device_id) {
     if (cache_mutex == NULL) cache_mutex = xSemaphoreCreateMutex();
-    char ns[16]; snprintf(ns, sizeof(ns), "dev_%lu", (unsigned long)device_id);
+    char ns[16]; 
+    snprintf(ns, sizeof(ns), "dev_%lu", (unsigned long)device_id);
     Preferences prefs;
     
     if (prefs.begin(ns, true)) {
-        BACnetPersistenceDev* data = (BACnetPersistenceDev*)malloc(sizeof(BACnetPersistenceDev));
-        if (data == NULL) { prefs.end(); return; }
-        
-        bool loaded = false;
-        if (prefs.isKey("blob_v2")) {
-            if (prefs.getBytes("blob_v2", data, sizeof(BACnetPersistenceDev)) > 0) loaded = true;
-        } 
-        else if (prefs.isKey("blob")) {
-            // Migration legacy
-            BACnetPersistenceDev_v1* old = (BACnetPersistenceDev_v1*)malloc(sizeof(BACnetPersistenceDev_v1));
-            if (old != NULL) {
-                if (prefs.getBytes("blob", old, sizeof(BACnetPersistenceDev_v1)) > 0) {
-                    memset(data, 0, sizeof(BACnetPersistenceDev));
-                    data->device_id = old->device_id;
-                    data->mac_address = old->mac_address;
-                    data->enabled = old->enabled;
-                    strlcpy(data->name, old->name, 32);
-                    strlcpy(data->vendor, old->vendor, 32);
-                    data->count = old->count;
-                    data->discovery_done = old->discovery_done;
-                    for (int i = 0; i < std::min((int)old->count, 100); i++) {
-                        data->objects[i].val = old->objects[i].val;
-                        data->objects[i].poll = old->objects[i].poll;
-                        strlcpy(data->objects[i].name, old->objects[i].name, 20);
-                        String u = get_unit_text(old->objects[i].units);
-                        strlcpy(data->objects[i].unit_text, u.c_str(), 11);
-                    }
-                    prefs.end(); prefs.begin(ns, false);
-                    prefs.putBytes("blob_v2", data, sizeof(BACnetPersistenceDev));
-                    prefs.remove("blob");
-                    loaded = true;
-                }
-                free(old);
-            }
-        }
-
-        if (loaded) {
+        // 1. Lire le Header
+        BACnetPersistenceDev head;
+        if (prefs.getBytes("head", &head, sizeof(head)) > 0) {
+            
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(1000))) {
+                // Vérifier si le device existe déjà
                 bool exists = false;
                 for(auto& d : bacnet_network_cache) if(d.device_id == device_id) exists = true;
+                
                 if (!exists) {
                     BACnetDevice dev;
-                    dev.device_id = data->device_id;
-                    dev.mac_address = data->mac_address;
-                    dev.enabled = data->enabled;
-                    dev.name = String(data->name);
-                    dev.vendor = String(data->vendor);
-                    dev.discovery_done = data->discovery_done;
-                    dev.disc_step = (DISC_STEP_T)data->disc_step;
-                    dev.disc_obj_idx = data->disc_obj_idx;
-
-                    for (int i = 0; i < std::min((int)data->count, 100); i++) {
-                        BACnetObject obj;
-                        obj.type = data->objects[i].val >> 22;
-                        obj.instance = data->objects[i].val & 0x3FFFFF;
-                        obj.name = String(data->objects[i].name);
-                        obj.enabled = data->objects[i].poll;
-                        obj.unit_text = String(data->objects[i].unit_text);
-                        obj.present_value = 0.0f;
-                        dev.objects.push_back(obj);
-                    }
+                    dev.device_id = head.device_id;
+                    dev.mac_address = head.mac_address;
+                    dev.enabled = head.enabled;
+                    dev.name = String(head.name);
+                    dev.vendor = String(head.vendor);
+                    dev.discovery_done = head.discovery_done;
+                    dev.disc_step = (DISC_STEP_T)head.disc_step;
+                    dev.disc_obj_idx = head.disc_obj_idx;
                     dev.last_seen = millis();
+
+                    // 2. Charger les objets par pages
+                    // On boucle tant qu'on trouve des pages "p0", "p1", etc.
+                    for (int p = 0; p * 20 < head.count; p++) {
+                        char key[16]; snprintf(key, 16, "p%d", p);
+                        BACnetPersistencePage page;
+                        
+                        if (prefs.getBytes(key, &page, sizeof(page)) > 0) {
+                            // On vérifie que la page appartient bien au bon device
+                            if (page.device_id != device_id) continue;
+
+                            for (int i = 0; i < 20 && (p * 20 + i) < head.count; i++) {
+                                BACnetObject obj;
+                                obj.type = page.objects[i].val >> 22;
+                                obj.instance = page.objects[i].val & 0x3FFFFF;
+                                obj.enabled = page.objects[i].poll;
+                                obj.name_published = page.objects[i].name_published;
+                                
+                                // Copie sécurisée des char[] vers String (ou char[])
+                                strlcpy(obj.name, page.objects[i].name, sizeof(obj.name));
+                                strlcpy(obj.unit_text, page.objects[i].unit_text, sizeof(obj.unit_text));
+                                strlcpy(obj.last_mqtt_name, page.objects[i].name, sizeof(obj.last_mqtt_name));
+                                
+                                obj.present_value = 0.0f;
+                                dev.objects.push_back(obj);
+                            }
+                        }
+                    }
+                    dev.last_seen = millis();   
                     bacnet_network_cache.push_back(dev);
                     z_log("[NVS] Restored Device %lu (%d objs)\n", (unsigned long)device_id, (int)dev.objects.size());
+                
                 }
+                
+                
+                
                 xSemaphoreGive(cache_mutex);
             }
         }
-        free(data);
         prefs.end();
     }
 }
@@ -235,50 +226,79 @@ void save_configuration() {
  * Doit être appelée alors que cache_mutex est déjà détenu.
  */
 void save_device_objects_locked(uint32_t device_id) {
-    char ns[16]; snprintf(ns, sizeof(ns), "dev_%lu", (unsigned long)device_id);
+    char ns[16]; 
+    snprintf(ns, sizeof(ns), "dev_%lu", (unsigned long)device_id);
     Preferences prefs;
+    
     for (auto& dev : bacnet_network_cache) {
         if (dev.device_id == device_id) {
             if (prefs.begin(ns, false)) {
-                BACnetPersistenceDev* data = (BACnetPersistenceDev*)malloc(sizeof(BACnetPersistenceDev));
-                if (data != NULL) {
-                    memset(data, 0, sizeof(BACnetPersistenceDev));
-                    data->device_id = dev.device_id;
-                    data->mac_address = dev.mac_address;
-                    data->enabled = dev.enabled;
-                    data->discovery_done = dev.discovery_done;
-                    data->disc_step = (uint8_t)dev.disc_step;
-                    data->disc_obj_idx = dev.disc_obj_idx;
-                    strlcpy(data->name, dev.name.c_str(), 32);
-                    strlcpy(data->vendor, dev.vendor.c_str(), 32);
-                    data->count = (uint8_t)std::min((int)dev.objects.size(), 100);
-                    for (int i = 0; i < data->count; i++) {
-                        data->objects[i].val = ((uint32_t)dev.objects[i].type << 22) | (dev.objects[i].instance & 0x3FFFFF);
-                        strlcpy(data->objects[i].name, dev.objects[i].name.c_str(), 20);
-                        strlcpy(data->objects[i].unit_text, dev.objects[i].unit_text.c_str(), 11);
-                        data->objects[i].poll = dev.objects[i].enabled;
+                // 1. Sauvegarde Header (Statique, plus de malloc)
+                BACnetPersistenceDev head;
+                memset(&head, 0, sizeof(head));
+                head.device_id = dev.device_id;
+                head.mac_address = dev.mac_address;
+                head.enabled = dev.enabled;
+                head.discovery_done = dev.discovery_done;
+                head.disc_step = (uint8_t)dev.disc_step;
+                head.disc_obj_idx = dev.disc_obj_idx;
+                strlcpy(head.name, dev.name.c_str(), 32);
+                strlcpy(head.vendor, dev.vendor.c_str(), 32);
+                head.count = (uint8_t)std::min((int)dev.objects.size(), 100);
+                
+                prefs.putBytes("head", &head, sizeof(head));
+
+                // 2. Sauvegarde des objets par pages de 20 (Pagination)
+                // Chaque page fait ~960 octets, bien en dessous des 1984 octets NVS
+                for (int p = 0; p * 20 < head.count; p++) {
+                    BACnetPersistencePage page;
+                    memset(&page, 0, sizeof(page));
+                    page.device_id = dev.device_id;
+                    page.page_index = p;
+
+                    for (int i = 0; i < 20 && (p * 20 + i) < head.count; i++) {
+                        auto& o = dev.objects[p * 20 + i];
+                        page.objects[i].val = ((uint32_t)o.type << 22) | (o.instance & 0x3FFFFF);
+                        strlcpy(page.objects[i].name, o.name, 32); // Utilisation char[]
+                        strlcpy(page.objects[i].unit_text, o.unit_text, 12);
+                        page.objects[i].poll = o.enabled;
+                        page.objects[i].name_published = o.name_published;
+
+                        // Publication MQTT conditionnelle
+                        if (o.enabled && !o.name_published) {
+                            MQTTPublishJob pub;
+                            pub.device_id = dev.device_id; 
+                            pub.obj_type = o.type;
+                            pub.obj_instance = o.instance; 
+                            pub.prop_id = 77; 
+                            strlcpy(pub.value_string, o.name, sizeof(pub.value_string));
+                            pub.retain = true;
+                            enqueue_mqtt_publish(pub);
+                            
+                            o.name_published = true;
+                            strlcpy(o.last_mqtt_name, o.name, 50);
+                            z_log("[MQTT] Enqueue publish: %s\n", o.name);
+                        }
                     }
-                    prefs.putBytes("blob_v2", data, sizeof(BACnetPersistenceDev));
-                    free(data);
+                    
+                    char key[16]; snprintf(key, 16, "p%d", p);
+                    prefs.putBytes(key, &page, sizeof(page));
                 }
                 prefs.end();
-                
-                // Mise à jour du registre global
+
+                // 3. Mise à jour du registre global (inchangé)
                 Preferences reg;
                 if (reg.begin("registry", false)) {
                     String list = reg.getString("dev_list", "");
-                    String id_str = String(device_id);
-                    String check_list = ";" + list + ";";
-                    if (check_list.indexOf(";" + id_str + ";") == -1) {
-                        if (list.length() > 0) list += ";";
-                        list += id_str;
+                    if (list.indexOf(String(device_id)) == -1) {
+                        list += (list.length() > 0 ? ";" : "") + String(device_id);
                         reg.putString("dev_list", list);
                     }
                     reg.end();
                 }
-                z_log("[NVS] SUCCESS: Saved %lu to v2\n", (unsigned long)device_id);
+                z_log("[NVS] SUCCESS: Saved Device %lu\n", (unsigned long)device_id);
             }
-            break;
+            break; 
         }
     }
 }
@@ -458,22 +478,36 @@ void setup_network_infrastructure() {
                                     for (auto& obj : dev.objects) {
                                         if (obj.instance == inst && obj.type == type) {
                                             if (o.containsKey("name")) {
-                                                String new_name = o["name"].as<String>();
-                                                if (new_name != obj.name) {
-                                                    obj.name = new_name;
+                                                char new_name[50];
+                                                // CORRECTION : .as<const char*>() et non .as<String>()
+                                                strlcpy(new_name, o["name"].as<const char*>(), sizeof(new_name));
+
+                                                if (strcmp(obj.name, new_name) != 0) {
+                                                    // CORRECTION : Copie directe de new_name (char[]), pas de .c_str()
+                                                    strlcpy(obj.name, new_name, sizeof(obj.name));
+                                                    
                                                     MQTTPublishJob pub;
-                                                    pub.device_id = dev.device_id; pub.obj_type = obj.type;
-                                                    pub.obj_instance = obj.instance; pub.prop_id = 77; 
-                                                    strlcpy(pub.value_string, new_name.c_str(), sizeof(pub.value_string));
+                                                    pub.device_id = dev.device_id; 
+                                                    pub.obj_type = obj.type;
+                                                    pub.obj_instance = obj.instance; 
+                                                    pub.prop_id = 77; 
+                                                    
+                                                    // CORRECTION : Pas de .c_str() sur new_name
+                                                    strlcpy(pub.value_string, new_name, sizeof(pub.value_string));
                                                     pub.retain = true;
                                                     enqueue_mqtt_publish(pub);
-                                                    BACnetJob job; job.type = JOB_WRITE_PROP; job.target_mac = dev.mac_address;
-                                                    job.obj_type = obj.type; job.obj_instance = obj.instance;
-                                                    job.prop_id = 77; job.name = new_name;
+                                                    
+                                                    BACnetJob job; 
+                                                    job.type = JOB_WRITE_PROP; 
+                                                    job.target_mac = dev.mac_address;
+                                                    job.obj_type = obj.type; 
+                                                    job.obj_instance = obj.instance;
+                                                    job.prop_id = 77; 
+                                                    job.name = String(new_name);
                                                     enqueue_bacnet_job(job);
                                                 }
                                             }
-                                            if (o.containsKey("unit")) obj.unit_text = o["unit"].as<String>();
+                                            if (o.containsKey("unit")) strlcpy(obj.unit_text, o["unit"].as<const char*>(), sizeof(obj.unit_text));
                                             if (o.containsKey("poll")) obj.enabled = o["poll"].as<bool>();
                                             break;
                                         }

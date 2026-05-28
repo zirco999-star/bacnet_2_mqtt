@@ -5,6 +5,7 @@
 #include "driver/uart.h"
 #include "z_network.h" 
 #include "rom/ets_sys.h"
+#include "z_mqtt.h"
 
 extern void z_log(const char* format, ...);
 extern void save_device_objects(uint32_t device_id);
@@ -16,10 +17,10 @@ QueueHandle_t mqtt_publish_queue = NULL;
 QueueHandle_t uart_evt_queue = NULL;
 SemaphoreHandle_t cache_mutex = NULL;
 
-static uint8_t last_apdu[512]; // Buffer pour le retry
+static uint8_t last_apdu[512];
 static uint16_t last_apdu_len = 0;
-static uint8_t current_invoke_id = 0; // Pour filtrer les erreurs
-static uint8_t retry_count = 0;       // Compteur de tentatives
+static uint8_t current_invoke_id = 0;
+static uint8_t retry_count = 0;
 
 // --- UTILS CRC ---
 static uint8_t calc_header_crc(uint8_t *data, size_t len) {
@@ -87,26 +88,21 @@ static void uart_tx(const uint8_t *buffer, uint16_t length) {
 }
 
 static void send_mstp_frame(uint8_t target_mac, uint8_t type, const uint8_t* apdu, uint16_t len) {
-    // Sauvegarde pour usage futur (Retry)
     if (apdu != NULL && len > 0) {
         memcpy(last_apdu, apdu, len);
         last_apdu_len = len;
-        current_invoke_id = apdu[1]; // Sauvegarde de l'InvokeID (généralement index 1 dans APDU)
+        current_invoke_id = apdu[1];
     }
-
     uint8_t buffer[512+10];
     buffer[0]=0x55; buffer[1]=0xFF; buffer[2]=type; buffer[3]=target_mac; buffer[4]=sysCfg.mac_address;
     buffer[5]=(len>>8)&0xFF; buffer[6]=len&0xFF;
     buffer[7]=calc_header_crc(&buffer[2], 5);
-    
     if (len > 0) {
         memcpy(&buffer[8], apdu, len);
         uint16_t crc16 = calc_data_crc(&buffer[8], len);
         buffer[8+len]=crc16&0xFF; buffer[8+len+1]=(crc16>>8)&0xFF;
         uart_tx(buffer, 8+len+2);
-    } else {
-        uart_tx(buffer, 8);
-    }
+    } else { uart_tx(buffer, 8); }
 }
 
 uint16_t build_read_property_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, uint8_t property_id, int32_t array_index) {
@@ -120,28 +116,22 @@ uint16_t build_read_property_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t o
     return len;
 }
 
-// FIX v5.6: Encodage WriteProperty pour Object_Name (Prop 77) conforme ASHRAE 135
-uint16_t build_write_property_name_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, const String& new_name) {
+uint16_t build_write_property_name_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, const char* new_name) {
     uint16_t len = 0;
-    buffer[len++] = 0x01; // Version
-    buffer[len++] = 0x04; // Control (Data Expecting Reply)
-    buffer[len++] = 0x02; // PDU Type 0 (Confirmed Request)
-    buffer[len++] = 0x03; // Max Segments & Max APDU
-    buffer[len++] = invoke_id;
-    buffer[len++] = 0x0F; // Service Choice 15 (WriteProperty)
-    buffer[len++] = 0x0C; // Context Tag 0 (Object Identifier)
+    buffer[len++] = 0x01; buffer[len++] = 0x04; buffer[len++] = 0x02; buffer[len++] = 0x03;
+    buffer[len++] = invoke_id; buffer[len++] = 0x0F; buffer[len++] = 0x0C;
     uint32_t oid = ((uint32_t)obj_type << 22) | (obj_instance & 0x3FFFFF);
     buffer[len++] = (oid >> 24) & 0xFF; buffer[len++] = (oid >> 16) & 0xFF; buffer[len++] = (oid >> 8) & 0xFF; buffer[len++] = oid & 0xFF;
-    buffer[len++] = 0x19; buffer[len++] = 0x4D; // Context Tag 1 (Prop 77: Object_Name)
-    buffer[len++] = 0x3E; // Context Tag 3 (Property Value) Opening
-    uint32_t str_len = new_name.length();
-    uint32_t payload_len = str_len + 1; // +1 pour Charset
+    buffer[len++] = 0x19; buffer[len++] = 0x4D; 
+    buffer[len++] = 0x3E; 
+    uint32_t str_len = strlen(new_name);
+    uint32_t payload_len = str_len + 1;
     if (payload_len <= 4) buffer[len++] = 0x70 | (uint8_t)payload_len;
     else { buffer[len++] = 0x75; buffer[len++] = (uint8_t)payload_len; }
-    buffer[len++] = 0x00; // Charset UTF-8
-    memcpy(&buffer[len], new_name.c_str(), str_len);
+    buffer[len++] = 0x00; 
+    memcpy(&buffer[len], new_name, str_len);
     len += str_len;
-    buffer[len++] = 0x3F; // Closing
+    buffer[len++] = 0x3F;
     return len;
 }
 
@@ -368,7 +358,7 @@ static void bacnet_task(void *pv) {
                             mstp_state = MSTP_DONE_WITH_TOKEN;
                         } else if (has_job && current_job.type == JOB_WRITE_PROP) {
                             uint8_t buffer[256];
-                            uint16_t apdu_len = build_write_property_name_apdu(buffer, current_invoke_id, current_job.obj_type, current_job.obj_instance, current_job.name);
+                            uint16_t apdu_len = build_write_property_name_apdu(buffer, current_invoke_id, current_job.obj_type, current_job.obj_instance, current_job.name.c_str());
                             token_skip_count = 0; retry_count=0; waiting_for_reply = true;
                             send_mstp_frame(current_job.target_mac, 0x05, buffer, apdu_len);
                             mstp_state = MSTP_WAIT_FOR_REPLY;
@@ -401,14 +391,21 @@ static void bacnet_task(void *pv) {
                                         // Publication immédiate de TOUS les noms à la fin de la découverte
                                         for (auto& obj : dev.objects) {
                                             if (obj.type == 65535) continue;
-                                            MQTTPublishJob pub;
-                                            pub.device_id = dev.device_id;
-                                            pub.obj_type = obj.type;
-                                            pub.obj_instance = obj.instance;
-                                            pub.prop_id = 77; 
-                                            strlcpy(pub.value_string, obj.name.c_str(), sizeof(pub.value_string));
-                                            pub.retain = true;
-                                            enqueue_mqtt_publish(pub);
+                                            // --- LIVE SYNC : Publication MQTT du nom ---
+                                            // On ne publie que si l'objet est activé ET qu'il n'a pas encore été publié 
+                                            // (ou si le nom a été modifié depuis la dernière publication)
+                                            if (!obj.name_published || strcmp(obj.name, obj.last_mqtt_name) != 0) {
+                                                
+                                                // Utilisation de la fonction centralisée
+                                                publish_mqtt_topic(dev.device_id, obj, 77, true);
+
+                                                // Mise à jour de l'état de synchronisation
+                                                obj.name_published = true;
+                                                strlcpy(obj.last_mqtt_name, obj.name, sizeof(obj.last_mqtt_name)); // On met à jour le cache local
+
+                                                z_log("[MQTT] Sync nom OK : %s\n", obj.name);
+                                            }
+                                            
                                         }
                                     }
                                 } else {
@@ -502,7 +499,13 @@ static void bacnet_task(void *pv) {
                                                         uint32_t count = 0; for(int i=0; i<val_tag.len; i++) count = (count << 8) | apdu[apdu_pos+i];
                                                         z_log("[BACNET] Object Count: %lu\n", (unsigned long)count);
                                                         dev.objects.clear(); dev.objects.reserve(count);
-                                                        for(int i=0; i<count; i++) { BACnetObject o; o.name="Unknown"; o.enabled=false; o.type=65535; dev.objects.push_back(o); }
+                                                        for(int i=0; i<count; i++) { 
+                                                            BACnetObject o; 
+                                                            strlcpy(o.name, "Unknown", sizeof(o.name)); 
+                                                            o.enabled=false; 
+                                                            o.type=65535; 
+                                                            dev.objects.push_back(o); 
+                                                        }
                                                         dev.disc_obj_idx = 0; dev.disc_step = DISC_OBJ_OID;
                                                     } else if (dev.disc_obj_idx < dev.objects.size()) {
                                                         auto& o = dev.objects[dev.disc_obj_idx];
@@ -517,26 +520,21 @@ static void bacnet_task(void *pv) {
                                                             char n[33]; uint8_t enc = apdu[apdu_pos]; 
                                                             if (enc == 0) { uint16_t slen = std::min((int)val_tag.len - 1, 32); memcpy(n, &apdu[apdu_pos+1], slen); n[slen]=0; } 
                                                             else { int slen=0; for(int i=2; i<val_tag.len && slen<32; i+=2) n[slen++]=apdu[apdu_pos+i]; n[slen]=0; } 
-                                                            o.name = String(n); z_log("[BACNET] Obj %u Name: %s\n", dev.disc_obj_idx+1, n); 
+                                                            strlcpy(o.name, n, sizeof(o.name)); z_log("[BACNET] Obj %u Name: %s\n", dev.disc_obj_idx+1, n); 
                                                             
-                                                            // LIVE SYNC : Publication MQTT immédiate du nom découvert
-                                                            MQTTPublishJob pub;
-                                                            pub.device_id = dev.device_id;
-                                                            pub.obj_type = o.type;
-                                                            pub.obj_instance = o.instance;
-                                                            pub.prop_id = 77; // Object_Name
-                                                            strlcpy(pub.value_string, n, sizeof(pub.value_string));
-                                                            pub.retain = true;
-                                                            enqueue_mqtt_publish(pub);
-
                                                             if(o.type <= 2 || o.type == 23 || o.type == 24 || o.type == 46) dev.disc_step = DISC_OBJ_UNITS; 
                                                             else if(o.type == 13 || o.type == 14 || o.type == 19) { o.state_texts.clear(); o.expected_states_count = 0; dev.disc_step = DISC_OBJ_STATES; }
                                                             else if(o.enabled) dev.disc_step = DISC_OBJ_VALUE;
                                                             else { dev.disc_obj_idx++; dev.disc_step = DISC_OBJ_OID; if (dev.disc_obj_idx % 10 == 0) save_device_objects(dev.device_id); if(dev.disc_obj_idx >= dev.objects.size()) { dev.discovery_done=true; save_device_objects(dev.device_id); publish_all_names(); } }
                                                         }
                                                         else if (dev.disc_step == DISC_OBJ_UNITS) { 
-                                                            uint32_t u=0; for(int i=0; i<val_tag.len; i++) u = (u << 8) | apdu[apdu_pos+i]; 
-                                                            o.units = u; o.unit_text = get_unit_text(u); 
+                                                            uint32_t u=0; 
+                                                            for(int i=0; i<val_tag.len; i++) u = (u << 8) | apdu[apdu_pos+i]; 
+                                                            o.units = u; 
+                                                            String unitStr = get_unit_text(u);
+                                                            if (unitStr.length() > 0) strlcpy(o.unit_text, unitStr.c_str(), sizeof(o.unit_text)); 
+                                                            else strlcpy(o.unit_text, "Unknown", sizeof(o.unit_text)); 
+                                                            z_log("[BACNET] Obj %u Units: %s\n", dev.disc_obj_idx+1, o.unit_text); 
                                                             if(o.type == 13 || o.type == 14 || o.type == 19) { o.state_texts.clear(); o.expected_states_count = 0; dev.disc_step = DISC_OBJ_STATES; }
                                                             else dev.disc_step = DISC_OBJ_VALUE; 
                                                         }
@@ -556,32 +554,53 @@ static void bacnet_task(void *pv) {
                                                                 if (o.state_texts.size() >= o.expected_states_count) dev.disc_step = DISC_OBJ_VALUE;
                                                             }
                                                         }
+                                                        // --- TRAITEMENT DE LA VALEUR DE L'OBJET ---
                                                         else if (dev.disc_step == DISC_OBJ_VALUE) {
-                                                            if (val_tag.number == 4) { float v; uint32_t tmp; memcpy(&tmp, &apdu[apdu_pos], 4); tmp = __builtin_bswap32(tmp); memcpy(&v, &tmp, 4); o.present_value = v; }
-                                                            else { uint32_t v=0; for(int i=0; i<val_tag.len; i++) v = (v << 8) | apdu[apdu_pos+i]; o.present_value = (float)v; }
-                                                            o.last_update = millis(); z_log("[BACNET] Obj %u Value: %.2f\n", dev.disc_obj_idx+1, o.present_value);
-                                                            dev.disc_obj_idx++; dev.disc_step = DISC_OBJ_OID;
-                                                            if (dev.disc_obj_idx % 10 == 0) save_device_objects(dev.device_id);
-                                                            if(dev.disc_obj_idx >= dev.objects.size()) { dev.discovery_done=true; save_device_objects(dev.device_id); }
+                                                            if (val_tag.number == 4) { 
+                                                                float v; uint32_t tmp; memcpy(&tmp, &apdu[apdu_pos], 4); 
+                                                                tmp = __builtin_bswap32(tmp); memcpy(&v, &tmp, 4); o.present_value = v; 
+                                                            } else { 
+                                                                uint32_t v=0; for(int i=0; i<val_tag.len; i++) v = (v << 8) | apdu[apdu_pos+i]; 
+                                                                o.present_value = (float)v; 
+                                                            }
+                                                            o.last_update = millis(); 
+                                                            z_log("[BACNET] Obj %u Value: %.2f\n", dev.disc_obj_idx+1, o.present_value);
+
+                                                            // 1. Incrémentation de l'index et réinitialisation de l'étape pour le prochain objet
+                                                            dev.disc_obj_idx++;
+                                                            dev.disc_step = DISC_OBJ_OID;
+
+                                                            // 2. LOGIQUE DE SAUVEGARDE NVS CENTRALISÉE
+                                                            // Sauvegarde tous les 10 objets OU si c'est le tout dernier objet de la liste
+                                                            if (dev.disc_obj_idx % 10 == 0 || dev.disc_obj_idx >= dev.objects.size()) {
+                                                                save_device_objects(dev.device_id);
+                                                                z_log("[BACNET] Intermediate save NVS (Index: %u)\n", dev.disc_obj_idx);
+                                                            }
+
+                                                            // 3. LOGIQUE DE FIN DE DÉCOUVERTE
+                                                            if (dev.disc_obj_idx >= dev.objects.size()) {
+                                                                dev.discovery_done = true;
+                                                                // La sauvegarde finale est redondante mais sécurisée
+                                                                save_device_objects(dev.device_id); 
+                                                                publish_all_names();
+                                                                z_log("[BACNET] End of discovery for ID %lu\n", (unsigned long)dev.device_id);
+                                                            }
                                                         }
                                                     }
                                                 } else {
                                                     // --- POLLING PROCESSING ---
                                                     if (val_tag.number == 4) { 
-                                                        float v; uint32_t tmp; memcpy(&tmp, &apdu[apdu_pos], 4); tmp = __builtin_bswap32(tmp); memcpy(&v, &tmp, 4); 
+                                                        float v; 
+                                                        uint32_t tmp; 
+                                                        memcpy(&tmp, &apdu[apdu_pos], 4); 
+                                                        tmp = __builtin_bswap32(tmp); 
+                                                        memcpy(&v, &tmp, 4); 
                                                         if(current_poll_idx < dev.objects.size()){ 
                                                             auto& o=dev.objects[current_poll_idx]; 
                                                             o.present_value=v; o.last_update=millis(); 
-                                                            if (o.enabled) {
-                                                                MQTTPublishJob pub;
-                                                                pub.device_id = dev.device_id;
-                                                                pub.obj_type = o.type;
-                                                                pub.obj_instance = o.instance;
-                                                                pub.prop_id = 85;
-                                                                snprintf(pub.value_string, sizeof(pub.value_string), "%.2f", v);
-                                                                pub.retain = false;
-                                                                enqueue_mqtt_publish(pub);
-                                                                z_log("[BACNET] Polling - '%s' value %s\n",o.name.c_str(), pub.value_string);
+                                                            if (o.enabled) { 
+                                                                publish_mqtt_topic(dev.device_id, o, 85, false); 
+                                                                z_log("[BACNET] Polling - '%s' value %.2f\n",o.name, o.present_value);
                                                             }
                                                         } 
                                                     }
@@ -591,15 +610,8 @@ static void bacnet_task(void *pv) {
                                                             auto& o=dev.objects[current_poll_idx]; 
                                                             o.present_value=(float)v; o.last_update=millis(); 
                                                             if (o.enabled) {
-                                                                MQTTPublishJob pub;
-                                                                pub.device_id = dev.device_id;
-                                                                pub.obj_type = o.type;
-                                                                pub.obj_instance = o.instance;
-                                                                pub.prop_id = 85;
-                                                                snprintf(pub.value_string, sizeof(pub.value_string), "%.0f", (float)v);
-                                                                pub.retain = false;
-                                                                enqueue_mqtt_publish(pub);
-                                                                z_log("[BACNET] Polling - Obj %u Value: %.0f\n", current_poll_idx+1, (float)v);
+                                                                publish_mqtt_topic(dev.device_id, o, 85, false); 
+                                                                z_log("[BACNET] Polling - '%s' value %.2f\n",o.name, o.present_value);
                                                             }
                                                         } 
                                                     }
@@ -738,15 +750,17 @@ void publish_all_names() {
     if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
         for (auto& dev : bacnet_network_cache) {
             for (auto& obj : dev.objects) {
+                // On saute les objets non valides ou désactivés
                 if (obj.type == 65535 || obj.enabled == false) continue;
-                MQTTPublishJob pub;
-                pub.device_id = dev.device_id;
-                pub.obj_type = obj.type;
-                pub.obj_instance = obj.instance;
-                pub.prop_id = 77; // Object_Name
-                strlcpy(pub.value_string, obj.name.c_str(), sizeof(pub.value_string));
-                pub.retain = true; // ACTIVATION DE LA RÉTENTION
-                enqueue_mqtt_publish(pub);
+
+                // --- LOGIQUE DE SYNCHRO MQTT ---
+                // comparaison avec strcmp pour char[]
+                if (!obj.name_published || (strcmp(obj.name, obj.last_mqtt_name) != 0)) {
+                    publish_mqtt_topic(dev.device_id, obj, 77, true);
+                    obj.name_published = true;
+                    strlcpy(obj.last_mqtt_name, obj.name, sizeof(obj.last_mqtt_name));
+                    z_log("[MQTT] Sync nom OK : %s\n", obj.name);
+                }
             }
         }
         xSemaphoreGive(cache_mutex);
