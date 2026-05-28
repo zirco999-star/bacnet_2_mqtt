@@ -9,6 +9,7 @@
 
 extern void z_log(const char* format, ...);
 extern void save_device_objects(uint32_t device_id);
+extern void save_device_objects_locked(uint32_t device_id);
 
 BACnet_Stats bacnetStats = {0, 0, 0, 0, 0, 0, 0};
 std::vector<BACnetDevice> bacnet_network_cache;
@@ -199,6 +200,7 @@ static void bacnet_task(void *pv) {
     enum RX_STATE { RX_IDLE, RX_PREAMBLE_55, RX_HEADER, RX_DATA, RX_CRC16_L, RX_CRC16_H };
     RX_STATE rx_state = RX_IDLE;
     MSTP_MASTER_STATE mstp_state = MSTP_INITIALIZE;
+    static unsigned frame_count = 0;
     uint32_t last_rx_time = millis(); uint32_t timer_silence = millis();
     uint8_t token_skip_count = 0; bool waiting_for_reply = false, ReceivedValidFrame = false;
     uint8_t frame_type = 0, dest_mac = 0, src_mac = 0;
@@ -293,7 +295,12 @@ static void bacnet_task(void *pv) {
                 break;
             case MSTP_IDLE:
                 if (ReceivedValidFrame) {
-                    if (frame_type == 0x00 && dest_mac == sysCfg.mac_address) { bacnetStats.tokens_seen++; next_station = (src_mac + 1) % (sysCfg.max_master + 1); mstp_state = MSTP_USE_TOKEN; }
+                    if (frame_type == 0x00 && dest_mac == sysCfg.mac_address) { 
+                        bacnetStats.tokens_seen++; 
+                        next_station = (src_mac + 1) % (sysCfg.max_master + 1); 
+                        frame_count = 0;
+                        mstp_state = MSTP_USE_TOKEN; 
+                    }
                     else if (frame_type == 0x01 && dest_mac == sysCfg.mac_address) { uint8_t f[8] = { 0x55, 0xFF, 0x02, src_mac, sysCfg.mac_address, 0, 0, 0 }; f[7] = calc_header_crc(&f[2], 5); uart_tx(f, 8); mstp_state = MSTP_IDLE; }
                     else if (dest_mac == sysCfg.mac_address && frame_type >= 0x05) { mstp_state = MSTP_ANSWER_DATA_REQUEST; }
                     else if (dest_mac == 0xFF && (frame_type == 0x05 || frame_type == 0x06)) {
@@ -355,12 +362,14 @@ static void bacnet_task(void *pv) {
                             buffer[len++] = 0x08; // Service Choice: Who-Is
                             send_mstp_frame(0xFF, 0x06, buffer, len);
                             token_skip_count = 0;
+                            frame_count++;
                             mstp_state = MSTP_DONE_WITH_TOKEN;
                         } else if (has_job && current_job.type == JOB_WRITE_PROP) {
                             uint8_t buffer[256];
                             uint16_t apdu_len = build_write_property_name_apdu(buffer, current_invoke_id, current_job.obj_type, current_job.obj_instance, current_job.name.c_str());
                             token_skip_count = 0; retry_count=0; waiting_for_reply = true;
                             send_mstp_frame(current_job.target_mac, 0x05, buffer, apdu_len);
+                            frame_count++;
                             mstp_state = MSTP_WAIT_FOR_REPLY;
                         } else if (!bacnet_network_cache.empty()) {
                             uint8_t apdu[64]; uint16_t apdu_len = 0;
@@ -386,26 +395,16 @@ static void bacnet_task(void *pv) {
                                         }
                                         else if (dev.disc_step == DISC_OBJ_VALUE) apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, 85, -1);
                                     } else { 
-                                        dev.discovery_done = true; save_device_objects(dev.device_id); 
+                                        dev.discovery_done = true; save_device_objects_locked(dev.device_id); 
                                         z_log("[BACNET] Discovery Successfully Finalized for ID:%lu.\n", dev.device_id);
-                                        // Publication immédiate de TOUS les noms à la fin de la découverte
                                         for (auto& obj : dev.objects) {
                                             if (obj.type == 65535) continue;
-                                            // --- LIVE SYNC : Publication MQTT du nom ---
-                                            // On ne publie que si l'objet est activé ET qu'il n'a pas encore été publié 
-                                            // (ou si le nom a été modifié depuis la dernière publication)
                                             if (!obj.name_published || strcmp(obj.name, obj.last_mqtt_name) != 0) {
-                                                
-                                                // Utilisation de la fonction centralisée
                                                 publish_mqtt_topic(dev.device_id, obj, 77, true);
-
-                                                // Mise à jour de l'état de synchronisation
                                                 obj.name_published = true;
-                                                strlcpy(obj.last_mqtt_name, obj.name, sizeof(obj.last_mqtt_name)); // On met à jour le cache local
-
+                                                strlcpy(obj.last_mqtt_name, obj.name, sizeof(obj.last_mqtt_name));
                                                 z_log("[MQTT] Sync nom OK : %s\n", obj.name);
                                             }
-                                            
                                         }
                                     }
                                 } else {
@@ -414,7 +413,6 @@ static void bacnet_task(void *pv) {
                                     if (count > 0) {
                                         current_poll_idx = (current_poll_idx + 1) % count;
                                         auto& o = dev.objects[current_poll_idx];
-                                        // Selective Polling: Only if enabled in UI AND last update > configurable interval
                                         if (o.enabled && o.type != 8 && o.type != 65535 && (millis() - o.last_update > (sysCfg.bacnet_poll_interval * 1000))) { 
                                             apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, 85, -1); 
                                         }
@@ -427,16 +425,27 @@ static void bacnet_task(void *pv) {
                                 retry_count=0; 
                                 waiting_for_reply = true; 
                                 send_mstp_frame(dev.mac_address, 0x05, apdu, apdu_len); 
+                                frame_count++;
                                 mstp_state = MSTP_WAIT_FOR_REPLY; 
                             }
                             else { 
                                 current_dev_idx = (current_dev_idx + 1) % bacnet_network_cache.size();
+                                frame_count = sysCfg.max_info_frames;
                                 mstp_state = MSTP_DONE_WITH_TOKEN; 
                             }
-                        } else { mstp_state = MSTP_DONE_WITH_TOKEN; }
+                        } else { 
+                            frame_count = sysCfg.max_info_frames;
+                            mstp_state = MSTP_DONE_WITH_TOKEN; 
+                        }
                         xSemaphoreGive(cache_mutex);
-                    } else { mstp_state = MSTP_DONE_WITH_TOKEN; }
-                } else { mstp_state = MSTP_DONE_WITH_TOKEN; }
+                    } else { 
+                        frame_count = sysCfg.max_info_frames;
+                        mstp_state = MSTP_DONE_WITH_TOKEN; 
+                    }
+                } else { 
+                    frame_count = sysCfg.max_info_frames;
+                    mstp_state = MSTP_DONE_WITH_TOKEN; 
+                }
                 break;
             case MSTP_WAIT_FOR_REPLY:
                 if (ReceivedValidFrame) {
@@ -525,7 +534,7 @@ static void bacnet_task(void *pv) {
                                                             if(o.type <= 2 || o.type == 23 || o.type == 24 || o.type == 46) dev.disc_step = DISC_OBJ_UNITS; 
                                                             else if(o.type == 13 || o.type == 14 || o.type == 19) { o.state_texts.clear(); o.expected_states_count = 0; dev.disc_step = DISC_OBJ_STATES; }
                                                             else if(o.enabled) dev.disc_step = DISC_OBJ_VALUE;
-                                                            else { dev.disc_obj_idx++; dev.disc_step = DISC_OBJ_OID; if (dev.disc_obj_idx % 10 == 0) save_device_objects(dev.device_id); if(dev.disc_obj_idx >= dev.objects.size()) { dev.discovery_done=true; save_device_objects(dev.device_id); publish_all_names(); } }
+                                                            else { dev.disc_obj_idx++; dev.disc_step = DISC_OBJ_OID; if (dev.disc_obj_idx % 10 == 0) save_device_objects_locked(dev.device_id); if(dev.disc_obj_idx >= dev.objects.size()) { dev.discovery_done=true; save_device_objects_locked(dev.device_id); publish_all_names(); } }
                                                         }
                                                         else if (dev.disc_step == DISC_OBJ_UNITS) { 
                                                             uint32_t u=0; 
@@ -573,15 +582,16 @@ static void bacnet_task(void *pv) {
                                                             // 2. LOGIQUE DE SAUVEGARDE NVS CENTRALISÉE
                                                             // Sauvegarde tous les 10 objets OU si c'est le tout dernier objet de la liste
                                                             if (dev.disc_obj_idx % 10 == 0 || dev.disc_obj_idx >= dev.objects.size()) {
-                                                                save_device_objects(dev.device_id);
-                                                                z_log("[BACNET] Intermediate save NVS (Index: %u)\n", dev.disc_obj_idx);
+                                                                z_log("[DEBUG] dev.device.id: %lu\n", (unsigned long)dev.device_id);
+                                                                save_device_objects_locked(dev.device_id);
+                                                                z_log("[BACNET] Intermediate save NVS device_id: %lu (Index: %u)\n", (unsigned long)dev.device_id, dev.disc_obj_idx);
                                                             }
 
                                                             // 3. LOGIQUE DE FIN DE DÉCOUVERTE
                                                             if (dev.disc_obj_idx >= dev.objects.size()) {
                                                                 dev.discovery_done = true;
                                                                 // La sauvegarde finale est redondante mais sécurisée
-                                                                save_device_objects(dev.device_id); 
+                                                                save_device_objects_locked(dev.device_id); 
                                                                 publish_all_names();
                                                                 z_log("[BACNET] End of discovery for ID %lu\n", (unsigned long)dev.device_id);
                                                             }
@@ -699,7 +709,13 @@ static void bacnet_task(void *pv) {
             
 
             case MSTP_ANSWER_DATA_REQUEST: z_log("[MSTP] Serving request...\n"); mstp_state = MSTP_IDLE; break;
-            case MSTP_DONE_WITH_TOKEN: mstp_state = MSTP_PASS_TOKEN; break;
+            case MSTP_DONE_WITH_TOKEN: 
+                if (frame_count < sysCfg.max_info_frames) {
+                    mstp_state = MSTP_USE_TOKEN;
+                } else {
+                    mstp_state = MSTP_PASS_TOKEN;
+                }
+                break;
             case MSTP_PASS_TOKEN: { 
                 uint8_t f[8] = { 0x55, 0xFF, 0x00, next_station, sysCfg.mac_address, 0, 0, 0 }; 
                 f[7] = calc_header_crc(&f[2], 5); uart_tx(f, 8); 

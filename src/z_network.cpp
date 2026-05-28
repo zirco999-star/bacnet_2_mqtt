@@ -169,6 +169,8 @@ void load_configuration() {
         if (prefs.isKey("hbeat")) sysCfg.heartbeat_interval = prefs.getUInt("hbeat", DEFAULT_HEARBEAT_INTERVAL);
         if (prefs.isKey("tskip")) sysCfg.token_skip = prefs.getUChar("tskip", DEFAULT_TOKEN_SKIP);
         if (prefs.isKey("mpi")) sysCfg.mqtt_poll_interval = prefs.getUShort("mpi", DEFAULT_MQTT_POLL);
+        if (prefs.isKey("mif")) sysCfg.max_info_frames = prefs.getUChar("mif", DEFAULT_MAX_INFO_FRAMES);
+        else sysCfg.max_info_frames = DEFAULT_MAX_INFO_FRAMES;
         prefs.end();
         z_log("[NVS] Configuration Loaded\n");
     }
@@ -216,6 +218,7 @@ void save_configuration() {
         prefs.putString("mqpr", sysCfg.mqtt_prefix);
         prefs.putUShort("mpi", sysCfg.mqtt_poll_interval);
         prefs.putUShort("bpi", sysCfg.bacnet_poll_interval);
+        prefs.putUChar("mif", sysCfg.max_info_frames);
         prefs.end();
         z_log("[NVS] Configuration System Saved\n");
     }

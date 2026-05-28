@@ -25,6 +25,7 @@
 #define DEFAULT_MQTT_SERVER "192.168.1.11"
 #define DEFAULT_MQTT_POLL 30
 
+#define DEFAULT_MAX_INFO_FRAMES 3
 #define DEFAULT_HEARBEAT_INTERVAL 50000
 #define DEFAULT_TOKEN_SKIP  0
 
@@ -58,6 +59,7 @@ struct Config {
     char admin_pass[64];
     uint32_t heartbeat_interval;
     uint8_t token_skip;
+    uint8_t max_info_frames;
 };
 extern Config sysCfg;
 extern AsyncWebServer webServer;

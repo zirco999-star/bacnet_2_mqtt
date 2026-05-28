@@ -1,5 +1,22 @@
 # TRACE - BACnet2MQTT (v2026)
 
+## État au 28 Mai 2026 (Mise à jour Majeure - v5.7.2)
+- **Version actuelle** : v5.7.2 (Robustness & Memory Safety)
+- **Succès Technologiques** :
+    - **Anti-Fragmentation (Zero-String Strategy)** : Suppression massive de la classe `String` dans les structures d'objets au profit de `char[]`. Cette approche élimine les risques de fragmentation du tas lors du traitement de centaines d'objets BACnet.
+    - **Gestion par Blocs (Pagination NVS/RAM)** : Implémentation d'une logique de traitement et de sauvegarde par blocs de 20 objets (`BACnetPersistencePage`). Cette segmentation garantit la stabilité lors de l'écriture en NVS (respect de la limite de 1984 octets) et fluidifie l'allocation mémoire.
+    - **Self-Healing NVS** : Routine de démarrage avec détection de corruption et auto-formatage de la partition NVS pour garantir un boot sécurisé.
+    - **Circuit Breaker MQTT** : Disjoncteur logiciel protégeant le Core 0. Suspension des tentatives après 3 échecs pour éviter la saturation LwIP.
+    - **Support Multi-State & Unités** : Décodage des `State_Texts` et traduction automatique des unités ASHRAE 135 (°C, Pa, kW...) sur les topics MQTT.
+    - **Pilotage Bidirectionnel** : Support des écritures MQTT (topics `/set`) pour les valeurs et les noms.
+    - **UI v3.9 (UX Refresh)** : Onglets persistants (Sticky Tabs), Echo Radar Wi-Fi et édition en direct du polling/naming.
+- **Prochaine Étape** : Finaliser l'export EDE avec métadonnées et stabiliser la lecture itérative des textes d'états pour les équipements très lents.
+
+## Historique des Incidents Résolus
+- [v5.7.2] NVS Header Mismatch -> Correction via la nouvelle structure `BACnetPersistenceDev` alignée.
+- [v5.7.2] MQTT Storm on Boot -> Publication des noms déléguée au Core 0 avec pacing.
+- [v5.7.1] MSV Null States -> Initialisation sécurisée du vecteur `state_texts` en cas de lecture échouée.
+
 ## État au 27 Mai 2026 (Fin de journée - v5.6.8)
 - **Version actuelle** : v5.6.8 (Smart Sync & MQTT Pro)
 - **Succès Technologiques** : 
