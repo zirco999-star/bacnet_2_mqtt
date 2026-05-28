@@ -1,0 +1,11 @@
+{
+  "command": "uv",
+  "args": [
+    "--directory",
+    "/home/dev/mcp-servers/src/git",
+    "run",
+    "mcp-server-git",
+    "--repository",
+    "{{PROJECT_ROOT}}"
+  ]
+}

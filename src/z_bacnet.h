@@ -210,6 +210,7 @@ extern QueueHandle_t mqtt_publish_queue;
 extern QueueHandle_t bacnet_job_queue;
 
 void setup_bacnet_engine();
+void bacnet_abort_current_transaction();
 bool enqueue_bacnet_job(BACnetJob job);
 bool enqueue_mqtt_publish(MQTTPublishJob pubJob);
 void publish_all_names();

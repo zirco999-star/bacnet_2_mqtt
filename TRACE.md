@@ -1,4 +1,42 @@
-- **Prochaine Étape** : Test de charge avec plusieurs automates physiques et validation de la persistence NVS sur le long terme.
+- **Prochaine Étape** : Surveillance de la stabilité de la file MQTT et validation du pacing.
+
+## État au 28 Mai 2026 (Optimisation MQTT & Logs - v5.7.19) - EN COURS
+- **Version** : v5.7.19
+- **MQTT** : Ajout d'un pacing de 5ms dans `mqtt_gatekeeper_task` pour éviter la saturation `AsyncTCP`.
+- **BACnet** : Restriction des logs `Complex-ACK Property ID` au mode debug (`sysCfg.debug`).
+- **Réseau** : Confirmation de la Gateway `192.168.1.254` par défaut.
+- **UI** : Bouton EDE absent (déjà supprimé).
+- **Statut** : Prêt pour compilation et flash.
+
+## État au 28 Mai 2026 (MQTT Auto-Discovery - v5.7.18) - DÉPLOYÉ
+- **Version actuelle** : v5.7.18
+- **Succès Technologiques** :
+    - **MQTT Auto-Discovery** : Implémentation du payload conforme Home Assistant avec abréviations (`~`, `stat_t`, etc.) pour minimiser l'usage mémoire.
+    - **Mapping Multi-State** : Injection dynamique de templates Jinja2 (`value_template` / `command_template`) gérant le décalage d'index BACnet (1-based).
+    - **MQTT Gatekeeper** : Création d'une tâche dédiée sur le **Core 1** (Priorité 10) pour isoler le traitement JSON et les publications, protégeant ainsi la réactivité de la pile WiFi sur le Core 0.
+    - **Gestion LWT** : Configuration du Last Will and Testament (`tele/%PREFIX%/LWT`) pour un suivi précis de la disponibilité.
+
+## État au 28 Mai 2026 (Stabilisation & Stratégie Multi-State - v5.7.17) - DÉPLOYÉ
+- **Version actuelle** : v5.7.17
+- **Succès Technologiques** :
+    - **Validation Stratégie Multi-State** : Décision de publier uniquement les **index numériques** sur MQTT pour économiser les ressources de l'ESP32. La conversion texte (State_Text) sera gérée par Home Assistant via les `value_template` et `command_template` dans le payload d'Auto-Discovery.
+    - **Abandon EDE** : La fonctionnalité d'export EDE (CSV) est officiellement abandonnée pour simplifier le firmware.
+    - **Test de Robustesse Découverte** : Validation de la stabilité après 3 cycles de suppression/re-découverte complète du device 364004 (98 objets). Le crash "LoadProhibited" observé ponctuellement ne s'est pas reproduit.
+- **Note de Reprise** : La structure des objets en RAM et NVS est saine. Le prochain chantier est le peaufinage du JSON Discovery dans `z_mqtt.cpp`.
+
+## État au 28 Mai 2026 (Fix State_Text One-Shot - v5.7.16) - DÉPLOYÉ
+- **Version actuelle** : v5.7.16
+- **Succès Technologiques** :
+    - **Découverte State_Text "One-Shot"** : Migration vers une lecture complète du tableau `State_Text` (Index -1) en une seule transaction. Résout le problème des états dupliqués (ex: 'Eco' répété) sur les automates Distech.
+    - **Parsing Complex-ACK Avancé** : Support des séquences de tags multiples dans une seule réponse ReadProperty, permettant de reconstruire la liste des états instantanément.
+    - **Conformité ASHRAE 135** : Utilisation stricte des mécanismes `BACnetARRAY` pour minimiser la latence sur le bus MS/TP.
+
+## État au 28 Mai 2026 (Optimisation Mobile UI - v5.7.13) - DÉPLOYÉ
+- **Version actuelle** : v5.7.13
+- **Succès Technologiques** :
+    - **Optimisation de l'espace Mobile** : Réduction drastique des marges et largeurs de colonnes (Reload, OBJ, VAL, POLL) dans le tableau des objets BACnet.
+    - **Gain de lisibilité** : Plus d'espace alloué à la colonne `NAME / UNIT`, facilitant la saisie et la lecture sur smartphone.
+    - **Ajustement CSS** : Réduction du padding interne des cellules (`0.5rem` -> `0.4rem 0.2rem`).
 
 ## État au 28 Mai 2026 (Refonte complète des Settings - v5.7.12) - DÉPLOYÉ
 - **Version actuelle** : v5.7.12
@@ -15,7 +53,7 @@
     - **Logs Dual-Core (Architecture Segmentée)** : Refonte de la fonction `z_log` pour préfixer chaque message par l'ID du cœur (`0|` pour Core 0 / `1|` pour Core 1). Cette innovation permet un diagnostic séparé et en temps réel des couches système (WiFi/MQTT) et protocolaire (BACnet FSM).
     - **API Status Enrichie** : Extension de `/api/status` pour fournir des métadonnées réseau complètes (Mask, GW), statistiques MS/TP (RX/TX/Tokens) et l'état d'avancement de la découverte par automate (Progress Bar data).
     - **Refonte UI Mobile-Friendly (v5.7.7)** : Passage à une interface ultra-compacte optimisée pour iPhone. Utilisation d'accordéons (`<details>`) pour les réglages et d'un tableau compressé pour les objets BACnet.
-    - **Dashboard Temps Réel** : Visualisation immédiate de la santé du réseau (Heap, RSSI, MS/TP Traffic) et barre de progression dynamique de la découverte par automate.
+    - **Dashboard Temps Réel** : Visualisation immédiate de la santé du réseau (Heap, RSSI, MS/TP Traffic) du Waveshare.
     - **Gestion Unitaire des Objets** : Ajout d'endpoints API dédiés (`/api/save_object`, `/api/reload_object`, `/api/reload_device`, `/api/delete_device`) permettant des actions granulaires sans perturber le reste du réseau.
     - **Validation OTA** : Compilation et Flash réussis. Système opérationnel avec monitoring dual-core actif.
 
@@ -58,7 +96,7 @@
     - **FSM ASHRAE Strict** : Restauration de la FSM à 9 états (base commit 3713ac1). Ring stable avec ECB_203 (MAC 4).
     - **Découverte Prop 110 (State_Text)** : Implémentation d'une lecture itérative (Index 0 puis 1..N) conforme à l'ASHRAE 135. Récupération réussie des libellés (ex: "Confort", "Eco") pour les objets Multi-State (MSV).
     - **Observabilité MQTT** : Logs de debug ajoutés pour chaque publication (Topic + Valeur), permettant un suivi en temps réel de la diffusion.
-- **Prochaine Étape** : Intégrer les textes d'états dans les publications MQTT (Optionnel) et finaliser l'export EDE avec les métadonnées.
+- **Prochaine Étape** : Intégrer les textes d'états dans les publications MQTT (Optionnel).
 
 ## Historique des Incidents Résolus
 - [v5.6.7] RX Deafness -> Reboot de l'automate et restauration de la FSM stricte ont rétabli la communication.

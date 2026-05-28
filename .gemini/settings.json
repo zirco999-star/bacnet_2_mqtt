@@ -1,0 +1,110 @@
+{
+  "mcpServers": {
+    "mcp-docs": {
+      "type": "http",
+      "url": "https://modelcontextprotocol.io/mcp"
+    },
+    "google-ai-search": {
+      "command": "xvfb-run",
+      "args": [
+        "-a",
+        "npx",
+        "-y",
+        "google-ai-mode-mcp@latest"
+      ]
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/home/dev"
+      ]
+    },
+    "sequential-thinking": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ]
+    },
+    "memory": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-memory"
+      ]
+    },
+    "fetch": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/home/dev/mcp-servers/src/fetch",
+        "run",
+        "mcp-server-fetch"
+      ]
+    },
+    "git": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/home/dev/mcp-servers/src/git",
+        "run",
+        "mcp-server-git",
+        "--repository",
+        "/home/dev/alfr3d"
+      ]
+    },
+    "time": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/home/dev/mcp-servers/src/time",
+        "run",
+        "mcp-server-time"
+      ]
+    },
+    "gdrive": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-v",
+        "/home/dev/gcp-oauth.keys.json:/gdrive-server/credentials.json",
+        "-v",
+        "/home/dev/gdrive-token.json:/gdrive-server/token.json",
+        "-e",
+        "GDRIVE_CREDENTIALS_PATH=/gdrive-server/credentials.json",
+        "-e",
+        "GDRIVE_TOKEN_PATH=/gdrive-server/token.json",
+        "mcp/gdrive"
+      ]
+    },
+    "whatsapp-notifier": {
+      "command": "/home/dev/venv/bin/python",
+      "args": [
+        "/home/dev/whatsapp-notifier/notifier.py"
+      ]
+    },
+    "homeassistant": {
+      "command": "uvx",
+      "args": [
+        "ha-mcp@latest"
+      ],
+      "env": {
+        "HOMEASSISTANT_URL": "http://192.168.1.11:8123",
+        "HOMEASSISTANT_TOKEN": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiIyYjcwMzgxYjUyZjA0NTQ0YTJiNGM2ZWZmNTIzMjljMSIsImlhdCI6MTc3ODE2Mzg4MywiZXhwIjoyMDkzNTIzODgzfQ.RaPwMCVqb9e26Yqvx2Pt4qAFrdjRBGDoUM4zeagFwCw"
+      }
+    },
+    "notebooklm": {
+      "command": "/home/dev/venv/bin/notebooklm-mcp",
+      "args": []
+    },
+    "espressif-docs": {
+      "type": "http",
+      "url": "https://mcp.espressif.com/docs"
+    }
+  },
+  "general": {}
+}

@@ -594,9 +594,10 @@ void setup_network_infrastructure() {
                     if(dev.device_id == did) {
                         for(int i=0; i<dev.objects.size(); i++) {
                             if(dev.objects[i].instance == inst && dev.objects[i].type == type) {
+                                bacnet_abort_current_transaction(); // Annuler tout ce qui est en cours
                                 dev.discovery_done = false;
                                 dev.reload_single = true; // Demande de s'arrêter après cet objet
-                                dev.disc_step = DISC_OBJ_OID; // On recommence par l'OID pour être sûr
+                                dev.disc_step = DISC_OBJ_OID; 
                                 dev.disc_obj_idx = i;
                                 break;
                             }

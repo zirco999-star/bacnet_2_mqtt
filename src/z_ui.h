@@ -76,8 +76,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         .dev-actions { display: flex; gap: 0.4rem; }
         
         .compact-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-        .compact-table th { font-size: 0.55rem; text-transform: uppercase; color: var(--muted); padding: 0.5rem; background: #141416; text-align: left; }
-        .compact-table td { padding: 0.5rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+        .compact-table th { font-size: 0.55rem; text-transform: uppercase; color: var(--muted); padding: 0.4rem 0.2rem; background: #141416; text-align: left; }
+        .compact-table td { padding: 0.4rem 0.2rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
         
         .obj-badge { font-family: monospace; font-size: 0.6rem; font-weight: 800; background: #27272a; color: var(--primary); padding: 2px 4px; border-radius: 4px; }
         .val-text { font-weight: 800; font-size: 0.85rem; font-family: monospace; color: var(--success); }
@@ -357,7 +357,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                         </summary>
                         <div class="card-b" style="padding:0">
                             <table class="compact-table">
-                                <thead><tr><th style="width:30px"></th><th style="width:70px">OBJ</th><th>NAME / UNIT</th><th style="width:60px">VAL</th><th style="width:40px">POLL</th></tr></thead>
+                                <thead><tr><th style="width:22px"></th><th style="width:50px">OBJ</th><th>NAME / UNIT</th><th style="width:55px">VAL</th><th style="width:35px">POLL</th></tr></thead>
                                 <tbody>`;
                     if (Array.isArray(dev.objects)) {
                         dev.objects.forEach((o, idx) => {

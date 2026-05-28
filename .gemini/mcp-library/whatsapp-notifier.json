@@ -1,0 +1,6 @@
+{
+  "command": "/home/dev/venv/bin/python",
+  "args": [
+    "/home/dev/whatsapp-notifier/notifier.py"
+  ]
+}
