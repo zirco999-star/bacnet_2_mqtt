@@ -35,9 +35,12 @@ static void websocket_log_task(void *pvParameters) {
 // Fonction de log thread-safe et non-bloquante
 void z_log(const char* format, ...) {
     LogMessage log_msg;
+    int core = xPortGetCoreID();
+    int prefix_len = snprintf(log_msg.message, sizeof(log_msg.message), "%d|", core);
+    
     va_list arg;
     va_start(arg, format);
-    vsnprintf(log_msg.message, sizeof(log_msg.message), format, arg);
+    vsnprintf(log_msg.message + prefix_len, sizeof(log_msg.message) - prefix_len, format, arg);
     va_end(arg);
     
     printf("%s", log_msg.message); 
@@ -170,7 +173,8 @@ void load_configuration() {
         if (prefs.isKey("tskip")) sysCfg.token_skip = prefs.getUChar("tskip", DEFAULT_TOKEN_SKIP);
         if (prefs.isKey("mpi")) sysCfg.mqtt_poll_interval = prefs.getUShort("mpi", DEFAULT_MQTT_POLL);
         if (prefs.isKey("mif")) sysCfg.max_info_frames = prefs.getUChar("mif", DEFAULT_MAX_INFO_FRAMES);
-        else sysCfg.max_info_frames = DEFAULT_MAX_INFO_FRAMES;
+        if (prefs.isKey("adu")) prefs.getString("adu", sysCfg.admin_user, 32);
+        if (prefs.isKey("adp")) prefs.getString("adp", sysCfg.admin_pass, 64);
         prefs.end();
         z_log("[NVS] Configuration Loaded\n");
     }
@@ -219,6 +223,8 @@ void save_configuration() {
         prefs.putUShort("mpi", sysCfg.mqtt_poll_interval);
         prefs.putUShort("bpi", sysCfg.bacnet_poll_interval);
         prefs.putUChar("mif", sysCfg.max_info_frames);
+        prefs.putString("adu", sysCfg.admin_user);
+        prefs.putString("adp", sysCfg.admin_pass);
         prefs.end();
         z_log("[NVS] Configuration System Saved\n");
     }
@@ -393,19 +399,46 @@ void setup_network_infrastructure() {
         doc["ver"] = VERSION_GLOBAL;
         doc["rssi"] = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
         doc["ip"] = is_ap_mode ? "192.168.4.1" : WiFi.localIP().toString();
+        doc["mask"] = is_ap_mode ? "255.255.255.0" : sysCfg.subnet; 
+        doc["gw"] = is_ap_mode ? "192.168.4.1" : sysCfg.gateway;
+        doc["static"] = sysCfg.static_ip;
         doc["mqtt"] = is_mqtt_connected();
+        doc["mqs"] = sysCfg.mqtt_server;
+        doc["mqu"] = sysCfg.mqtt_user;
+        doc["mqpr"] = sysCfg.mqtt_prefix;
+        doc["mpi"] = sysCfg.mqtt_poll_interval;
+        doc["bpi"] = sysCfg.bacnet_poll_interval;
         doc["heap"] = ESP.getFreeHeap() / 1024;
-        doc["mac_id"] = sysCfg.mac_address;
+        doc["uptime"] = millis() / 1000;
+        doc["mac"] = sysCfg.mac_address;
+        doc["mm"] = sysCfg.max_master;
+        doc["did"] = sysCfg.device_id;
+        doc["to"] = sysCfg.apdu_timeout;
         doc["mstp_t"] = (bacnetStats.tokens_seen > 0 || bacnetStats.ms_msgs_rx > 0); 
         doc["mstp_cnt"] = bacnetStats.tokens_seen;
+        doc["mstp_rx"] = bacnetStats.ms_msgs_rx;
+        doc["mstp_tx"] = bacnetStats.ms_msgs_tx;
+        doc["mstp_err"] = bacnetStats.errors_crc;
+        doc["ret"] = sysCfg.max_retries;
+        doc["hbeat"] = sysCfg.heartbeat_interval;
+        doc["tskip"] = sysCfg.token_skip;
+        doc["mif"] = sysCfg.max_info_frames;
+        doc["adu"] = sysCfg.admin_user;
         doc["ssid"] = sysCfg.wifi_ssid;
-        doc["static"] = sysCfg.static_ip;
-        doc["gw"] = sysCfg.gateway; doc["sn"] = sysCfg.subnet;
-        doc["mqh"] = sysCfg.mqtt_server; doc["mqpr"] = sysCfg.mqtt_prefix;
-        doc["mm"] = sysCfg.max_master; doc["did"] = sysCfg.device_id;
-        doc["to"] = sysCfg.apdu_timeout; doc["ret"] = sysCfg.max_retries;
-        doc["hbeat"] = sysCfg.heartbeat_interval; doc["tskip"] = sysCfg.token_skip;
-        doc["mpi"] = sysCfg.mqtt_poll_interval;
+        
+        JsonArray dev_arr = doc["devices"].to<JsonArray>();
+        if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
+            for (auto& dev : bacnet_network_cache) {
+                JsonObject d = dev_arr.add<JsonObject>();
+                d["id"] = dev.device_id;
+                d["step"] = (int)dev.disc_step;
+                d["idx"] = dev.disc_obj_idx;
+                d["total"] = dev.objects.size();
+                d["done"] = dev.discovery_done;
+            }
+            xSemaphoreGive(cache_mutex);
+        }
+
         String res; serializeJson(doc, res);
         request->send(200, "application/json", res);
         delete doc_ptr;
@@ -530,6 +563,122 @@ void setup_network_infrastructure() {
         }
     });
 
+    webServer.on("/api/reload_device", HTTP_POST, [](AsyncWebServerRequest *request) {
+        if(!is_authenticated(request)) return;
+        if(request->hasParam("id", true)) {
+            uint32_t id = request->getParam("id", true)->value().toInt();
+            if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
+                for(auto& dev : bacnet_network_cache) {
+                    if(dev.device_id == id) {
+                        dev.discovery_done = false;
+                        dev.disc_step = DISC_OBJ_COUNT; // CORRECTION : Forcer le re-comptage
+                        dev.disc_obj_idx = 0;
+                        dev.objects.clear();
+                        break;
+                    }
+                }
+                xSemaphoreGive(cache_mutex);
+                request->send(200, "text/plain", "RELOAD ENQUEUED");
+            } else request->send(503, "text/plain", "Busy");
+        } else request->send(400, "text/plain", "Missing ID");
+    });
+
+    webServer.on("/api/reload_object", HTTP_POST, [](AsyncWebServerRequest *request) {
+        if(!is_authenticated(request)) return;
+        if(request->hasParam("did", true) && request->hasParam("inst", true) && request->hasParam("type", true)) {
+            uint32_t did = request->getParam("did", true)->value().toInt();
+            uint32_t inst = request->getParam("inst", true)->value().toInt();
+            uint16_t type = request->getParam("type", true)->value().toInt();
+            if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
+                for(auto& dev : bacnet_network_cache) {
+                    if(dev.device_id == did) {
+                        for(int i=0; i<dev.objects.size(); i++) {
+                            if(dev.objects[i].instance == inst && dev.objects[i].type == type) {
+                                dev.discovery_done = false;
+                                dev.reload_single = true; // Demande de s'arrêter après cet objet
+                                dev.disc_step = DISC_OBJ_OID; // On recommence par l'OID pour être sûr
+                                dev.disc_obj_idx = i;
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                }
+                xSemaphoreGive(cache_mutex);
+                request->send(200, "text/plain", "OBJ RELOAD ENQUEUED");
+            } else request->send(503, "text/plain", "Busy");
+        } else request->send(400, "text/plain", "Missing params");
+    });
+
+    webServer.on("/api/delete_device", HTTP_POST, [](AsyncWebServerRequest *request) {
+        if(!is_authenticated(request)) return;
+        if(request->hasParam("id", true)) {
+            uint32_t id = request->getParam("id", true)->value().toInt();
+            if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(1000))) {
+                for(auto it = bacnet_network_cache.begin(); it != bacnet_network_cache.end(); ++it) {
+                    if(it->device_id == id) {
+                        bacnet_network_cache.erase(it);
+                        break;
+                    }
+                }
+                char ns[16]; snprintf(ns, sizeof(ns), "dev_%lu", (unsigned long)id);
+                Preferences p; p.begin(ns, false); p.clear(); p.end();
+                Preferences reg;
+                if (reg.begin("registry", false)) {
+                    String list = reg.getString("dev_list", "");
+                    String sid = String(id);
+                    int idx = list.indexOf(sid);
+                    if (idx != -1) {
+                        if (idx > 0 && list[idx-1] == ';') list.remove(idx-1, sid.length()+1);
+                        else if (idx + sid.length() < list.length() && list[idx + sid.length()] == ';') list.remove(idx, sid.length()+1);
+                        else list.remove(idx, sid.length());
+                        reg.putString("dev_list", list);
+                    }
+                    reg.end();
+                }
+                xSemaphoreGive(cache_mutex);
+                request->send(200, "text/plain", "DELETED");
+            } else request->send(503, "text/plain", "Busy");
+        } else request->send(400, "text/plain", "Missing ID");
+    });
+
+    webServer.on("/api/save_object", HTTP_POST, [](AsyncWebServerRequest *request) {
+        if(!is_authenticated(request)) return;
+        if(request->hasParam("did", true) && request->hasParam("inst", true) && request->hasParam("type", true)) {
+            uint32_t did = request->getParam("did", true)->value().toInt();
+            uint32_t inst = request->getParam("inst", true)->value().toInt();
+            uint16_t type = request->getParam("type", true)->value().toInt();
+            if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(1000))) {
+                for(auto& dev : bacnet_network_cache) {
+                    if(dev.device_id == did) {
+                        for(auto& obj : dev.objects) {
+                            if(obj.instance == inst && obj.type == type) {
+                                if(request->hasParam("poll", true)) obj.enabled = request->getParam("poll", true)->value() == "1";
+                                if(request->hasParam("unit", true)) strlcpy(obj.unit_text, request->getParam("unit", true)->value().c_str(), sizeof(obj.unit_text));
+                                if(request->hasParam("name", true)) {
+                                    String new_name = request->getParam("name", true)->value();
+                                    if(new_name != obj.name) {
+                                        strlcpy(obj.name, new_name.c_str(), sizeof(obj.name));
+                                        BACnetJob job; job.type = JOB_WRITE_PROP; 
+                                        job.target_mac = dev.mac_address;
+                                        job.obj_type = obj.type; job.obj_instance = obj.instance;
+                                        job.prop_id = 77; strlcpy(job.name, obj.name, sizeof(job.name));
+                                        enqueue_bacnet_job(job);
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                        save_device_objects_locked(did);
+                        break;
+                    }
+                }
+                xSemaphoreGive(cache_mutex);
+                request->send(200, "text/plain", "OK");
+            } else request->send(503, "text/plain", "Busy");
+        } else request->send(400, "text/plain", "Missing params");
+    });
+
     webServer.on("/save", HTTP_POST, [](AsyncWebServerRequest *request) {
         if(!is_authenticated(request)) return;
         auto check = [&](const char* p, char* t, size_t m) {
@@ -543,6 +692,7 @@ void setup_network_infrastructure() {
         check("subnet", sysCfg.subnet, 16); check("mqh", sysCfg.mqtt_server, 32);
         check("mqu", sysCfg.mqtt_user, 32); check("mqp", sysCfg.mqtt_pass, 32);
         check("mqpr", sysCfg.mqtt_prefix, 64);
+        check("admin_u", sysCfg.admin_user, 32); check("admin_p", sysCfg.admin_pass, 64);
         if(request->hasParam("mpi", true)) sysCfg.mqtt_poll_interval = request->getParam("mpi", true)->value().toInt();
         if(request->hasParam("static_ip", true)) sysCfg.static_ip = true;
         else if(request->hasParam("form_type", true) && request->getParam("form_type", true)->value() == "wifi") sysCfg.static_ip = false;
@@ -553,6 +703,8 @@ void setup_network_infrastructure() {
         if(request->hasParam("retries", true)) sysCfg.max_retries = request->getParam("retries", true)->value().toInt();
         if(request->hasParam("hbeat", true)) sysCfg.heartbeat_interval = request->getParam("hbeat", true)->value().toInt();
         if(request->hasParam("tskip", true)) sysCfg.token_skip = request->getParam("tskip", true)->value().toInt();
+        if(request->hasParam("mif", true)) sysCfg.max_info_frames = request->getParam("mif", true)->value().toInt();
+        if(request->hasParam("bpi", true)) sysCfg.bacnet_poll_interval = request->getParam("bpi", true)->value().toInt();
         save_configuration();
         request->send(200, "text/plain", "OK");
         if(request->hasParam("form_type", true)) {

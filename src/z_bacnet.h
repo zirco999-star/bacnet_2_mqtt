@@ -152,11 +152,12 @@ struct BACnetDevice {
     bool enabled = true;
     std::vector<BACnetObject> objects;
     uint32_t last_seen = 0;
-    bool discovery_done = false; // scan_done
+    bool discovery_done = false;
     DISC_STEP_T disc_step = DISC_DEV_ID;
     uint16_t disc_obj_idx = 0;
+    bool reload_single = false;
 
-    BACnetDevice() {} // Constructeur par défaut
+    BACnetDevice() {} 
 };
 
 extern std::vector<BACnetDevice> bacnet_network_cache;

@@ -8,312 +8,414 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>BACNET2MQTT - )rawliteral" VERSION_GLOBAL R"rawliteral(</title>
     <style>
         :root { 
             --bg: #09090b; --card: #18181b; --primary: #3b82f6; --accent: #6366f1; 
             --text: #fafafa; --muted: #a1a1aa; --border: #27272a; --success: #22c55e; --error: #ef4444; --warning: #f59e0b;
-            --glass: rgba(24, 24, 27, 0.8);
+            --glass: rgba(24, 24, 27, 0.9);
         }
-        body { background: var(--bg); color: var(--text); font-family: -apple-system, system-ui, sans-serif; margin: 0; line-height: 1.2; -webkit-tap-highlight-color: transparent; }
+        body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; line-height: 1.4; -webkit-tap-highlight-color: transparent; overflow-x: hidden; }
         
-        nav { background: var(--glass); backdrop-filter: blur(12px); padding: 0.5rem 1rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 100; }
+        nav { background: var(--glass); backdrop-filter: blur(12px); padding: 0.6rem 1rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 100; }
         .logo-box { display: flex; flex-direction: column; }
-        .logo { font-weight: 800; font-size: 0.9rem; letter-spacing: -0.03em; text-decoration: none; }
+        .logo { font-weight: 800; font-size: 1rem; letter-spacing: -0.03em; text-decoration: none; display: flex; align-items: center; gap: 0.3rem; }
         .logo .b { color: var(--primary); } .logo .n { color: var(--success); } .logo .m { color: var(--accent); }
-        .credits { font-size: 0.55rem; color: var(--muted); font-weight: 500; }
+        .credits { font-size: 0.55rem; color: var(--muted); font-weight: 500; margin-top: -2px; }
         .credits a { color: var(--primary); text-decoration: none; font-weight: 700; }
 
         .status-group { display: flex; gap: 0.4rem; }
-        .badge { padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.6rem; font-weight: 800; background: #27272a; color: var(--muted); text-transform: uppercase; }
-        .badge-ok { background: #052e16; color: #4ade80; border: 1px solid #14532d; }
-        .badge-fail { background: #450a0a; color: #f87171; border: 1px solid #7f1d1d; }
+        .badge { padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.6rem; font-weight: 800; background: #27272a; color: var(--muted); text-transform: uppercase; border: 1px solid transparent; }
+        .badge-ok { background: rgba(34, 197, 94, 0.1); color: var(--success); border-color: rgba(34, 197, 94, 0.2); }
+        .badge-fail { background: rgba(239, 68, 68, 0.1); color: var(--error); border-color: rgba(239, 68, 68, 0.2); }
 
-        .tabs { display: flex; gap: 0.2rem; background: #000; padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); overflow-x: auto; position: sticky; top: 41px; z-index: 99; }
-        .tab-btn { padding: 0.4rem 0.6rem; background: transparent; border: none; color: var(--muted); font-size: 0.65rem; font-weight: 700; cursor: pointer; border-radius: 4px; white-space: nowrap; text-transform: uppercase; }
-        .tab-btn.active { background: var(--primary); color: #fff; }
+        .tabs { display: flex; gap: 0.2rem; background: #000; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border); overflow-x: auto; position: sticky; top: 48px; z-index: 99; scrollbar-width: none; }
+        .tabs::-webkit-scrollbar { display: none; }
+        .tab-btn { padding: 0.5rem 0.8rem; background: transparent; border: none; color: var(--muted); font-size: 0.7rem; font-weight: 700; cursor: pointer; border-radius: 6px; white-space: nowrap; text-transform: uppercase; transition: all 0.2s; }
+        .tab-btn.active { background: var(--primary); color: #fff; box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3); }
 
-        .container { max-width: 1200px; margin: 0.5rem auto; padding: 0 0.4rem; }
+        .container { max-width: 1200px; margin: 0.5rem auto; padding: 0 0.6rem 2rem 0.6rem; }
         .tab-content { display: none; }
-        .tab-content.active { display: block; }
+        .tab-content.active { display: block; animation: fadeIn 0.3s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 
-        .grid-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem; margin-bottom: 0.5rem; }
-        @media (max-width: 600px) { .grid-stats { grid-template-columns: 1fr 1fr; } .stat-card:last-child { grid-column: span 2; } }
+        /* DASHBOARD GRID */
+        .dashboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.6rem; margin-bottom: 0.8rem; }
+        .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+        .card-h { background: rgba(255,255,255,0.03); padding: 0.5rem 0.8rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+        .card-t { font-size: 0.65rem; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+        .card-b { padding: 0.6rem 0.8rem; }
 
-        .stat-card { background: var(--card); border: 1px solid var(--border); padding: 0.5rem 0.6rem; border-radius: 8px; display: flex; flex-direction: column; min-height: 60px; justify-content: center; }
-        .stat-label { font-size: 0.5rem; color: var(--muted); text-transform: uppercase; font-weight: 800; letter-spacing: 0.04em; margin-bottom: 1px; }
-        .stat-value { font-size: 0.8rem; font-weight: 700; color: var(--text); font-family: monospace; }
-        
-        .echo-radar { display: flex; gap: 2px; height: 5px; align-items: center; margin-top: 4px; width: 100%; }
+        .info-row { display: flex; justify-content: space-between; margin-bottom: 0.3rem; font-size: 0.75rem; }
+        .info-l { color: var(--muted); font-weight: 500; }
+        .info-v { color: var(--text); font-weight: 700; font-family: monospace; }
+
+        /* WIFI RADAR */
+        .echo-radar { display: flex; gap: 2px; height: 5px; align-items: center; margin-top: 6px; width: 100%; }
         .echo-segment { flex: 1; height: 100%; background: #27272a; border-radius: 1px; transition: all 0.3s ease; }
         .echo-segment.active { box-shadow: 0 0 3px currentColor; }
 
-        .full-banner { background: linear-gradient(90deg, #1e1e1e, #111); border: 1px solid var(--border); padding: 0.5rem 0.75rem; border-radius: 8px; margin-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: center; }
-        .banner-label { font-size: 0.5rem; color: var(--muted); font-weight: 800; text-transform: uppercase; }
-        .banner-value { font-size: 0.9rem; font-weight: 800; color: var(--primary); font-family: monospace; }
+        /* PROGRESS BAR */
+        .prog-box { margin-bottom: 0.6rem; }
+        .prog-label { display: flex; justify-content: space-between; font-size: 0.6rem; font-weight: 800; text-transform: uppercase; margin-bottom: 3px; }
+        .prog-cont { width: 100%; background: #27272a; border-radius: 6px; height: 12px; position: relative; overflow: hidden; border: 1px solid var(--border); }
+        .prog-bar { height: 100%; background: linear-gradient(90deg, var(--primary), var(--accent)); width: 0%; transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1); }
+        .prog-text { position: absolute; width: 100%; text-align: center; font-size: 0.5rem; font-weight: 900; color: #fff; line-height: 12px; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
 
-        .cmd-group { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; margin-bottom: 0.75rem; }
-        .btn { padding: 0.5rem; border-radius: 5px; font-weight: 800; cursor: pointer; font-size: 0.65rem; border: none; text-transform: uppercase; transition: filter 0.2s; }
-        .btn-p { background: var(--primary); color: #fff; }
+        /* DUAL CONSOLE */
+        .console-split { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
+        @media (max-width: 800px) { .console-split { grid-template-columns: 1fr; } }
+        .console-box { background: #000; border: 1px solid var(--border); border-radius: 8px; height: 250px; overflow-y: auto; padding: 0.5rem; font-size: 0.65rem; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; white-space: pre-wrap; word-break: break-all; }
+        .c0 { border-left: 3px solid var(--success); }
+        .c1 { border-left: 3px solid var(--primary); }
+
+        /* BACNET TABLE */
+        .dev-card { margin-bottom: 1rem; }
+        .dev-header { display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0.8rem; background: #1a1a1c; border-bottom: 1px solid var(--border); }
+        .dev-actions { display: flex; gap: 0.4rem; }
+        
+        .compact-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+        .compact-table th { font-size: 0.55rem; text-transform: uppercase; color: var(--muted); padding: 0.5rem; background: #141416; text-align: left; }
+        .compact-table td { padding: 0.5rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+        
+        .obj-badge { font-family: monospace; font-size: 0.6rem; font-weight: 800; background: #27272a; color: var(--primary); padding: 2px 4px; border-radius: 4px; }
+        .val-text { font-weight: 800; font-size: 0.85rem; font-family: monospace; color: var(--success); }
+        .in-text { background: #09090b; border: 1px solid var(--border); color: var(--text); padding: 4px 6px; border-radius: 4px; width: 100%; font-size: 0.75rem; box-sizing: border-box; transition: border 0.2s; }
+        .in-text:focus { border-color: var(--primary); outline: none; background: #000; }
+        
+        select { background: #09090b; border: 1px solid var(--border); color: var(--accent); padding: 3px 4px; border-radius: 4px; font-size: 0.65rem; width: 100%; font-weight: 700; cursor: pointer; }
+
+        /* SETTINGS ACCORDIONS */
+        details { background: var(--card); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 0.6rem; transition: all 0.2s; }
+        details[open] { border-color: var(--primary); }
+        summary { padding: 1rem; font-size: 0.75rem; font-weight: 800; cursor: pointer; text-transform: uppercase; color: var(--muted); list-style: none; display: flex; justify-content: space-between; align-items: center; outline: none; }
+        summary::-webkit-details-marker { display: none; }
+        summary::after { content: '＋'; font-size: 0.8rem; color: var(--muted); transition: transform 0.2s; }
+        details[open] summary::after { content: '－'; transform: rotate(180deg); }
+        details[open] summary { border-bottom: 1px solid var(--border); margin-bottom: 0.5rem; color: var(--text); }
+        
+        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; padding: 0 1rem 1rem 1rem; }
+        @media (max-width: 500px) { .form-grid { grid-template-columns: 1fr; } .span-2 { grid-column: span 2 !important; } }
+        .span-2 { grid-column: span 2; }
+        .f-item { display: flex; flex-direction: column; gap: 0.3rem; }
+        .f-item label { font-size: 0.55rem; font-weight: 800; color: var(--muted); text-transform: uppercase; }
+
+        /* BUTTONS */
+        .btn { padding: 0.6rem 0.8rem; border-radius: 8px; font-weight: 800; font-size: 0.65rem; border: none; text-transform: uppercase; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; }
+        .btn-p { background: var(--primary); color: #fff; box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3); }
         .btn-s { background: #27272a; color: var(--muted); border: 1px solid var(--border); }
-        .btn-d { background: #450a0a; color: #f87171; }
-        .btn:hover { filter: brightness(1.2); }
+        .btn-d { background: rgba(239, 68, 68, 0.1); color: var(--error); border: 1px solid rgba(239, 68, 68, 0.2); }
+        .btn-sm { padding: 0.4rem 0.6rem; font-size: 0.6rem; }
+        .btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
+        .btn:active { transform: translateY(0); }
 
-        .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 0.75rem; }
-        .card-header { background: #1e1e1e; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
-        .card-title { font-size: 0.65rem; font-weight: 800; color: var(--muted); text-transform: uppercase; }
-        
-        .controller-block { margin-bottom: 1rem; border: 1px solid var(--border); border-radius: 8px; background: #0c0c0e; overflow: hidden; }
-        .controller-header { background: #1a1a1c; padding: 0.6rem 0.75rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); }
-        .header-actions { display: flex; gap: 0.6rem; align-items: center; }
-        .btn-lg { padding: 0.5rem 0.8rem; font-size: 0.7rem; }
-        
-        table { width: 100%; border-collapse: collapse; font-size: 0.7rem; }
-        th { text-align: left; color: var(--muted); background: #141416; padding: 0.5rem; font-weight: 700; }
-        td { padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
-        
-        .tag-obj { font-family: monospace; background: #27272a; padding: 1px 3px; border-radius: 3px; font-weight: 700; color: var(--primary); font-size: 0.6rem; }
-        .in-edit { background: transparent; border: 1px solid transparent; color: var(--text); font-size: 0.7rem; width: 100%; padding: 2px; border-radius: 3px; }
-        .in-edit:focus { background: #000; border-color: var(--primary); outline: none; }
-
-        #console-out { background: #000; color: #a1a1aa; height: 220px; overflow-y: auto; padding: 0.5rem; font-size: 0.65rem; font-family: monospace; }
-        
-        .switch { position: relative; display: inline-block; width: 28px; height: 16px; }
+        /* SWITCH */
+        .switch { position: relative; display: inline-block; width: 34px; height: 18px; }
         .switch input { opacity: 0; width: 0; height: 0; }
-        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #27272a; transition: .3s; border-radius: 16px; }
-        .slider:before { position: absolute; content: ""; height: 12px; width: 12px; left: 2px; bottom: 2px; background-color: white; transition: .3s; border-radius: 50%; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #3f3f46; transition: .3s; border-radius: 18px; }
+        .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 2px; bottom: 2px; background-color: white; transition: .3s; border-radius: 50%; }
         input:checked + .slider { background-color: var(--success); }
-        input:checked + .slider:before { transform: translateX(12px); }
+        input:checked + .slider:before { transform: translateX(16px); }
 
-        .grid-form { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; padding: 0.6rem; }
-        .full-w { grid-column: span 2; }
-        input[type="text"], input[type="number"], input[type="password"] { background: #09090b; border: 1px solid var(--border); padding: 0.4rem; color: var(--text); border-radius: 5px; width: 100%; box-sizing: border-box; font-size: 0.75rem; }
-        label { display: block; font-size: 0.55rem; font-weight: 800; color: var(--muted); margin-bottom: 0.2rem; margin-top: 0.5rem; text-transform: uppercase; }
+        .grisé > td:not(:last-child) { opacity: 0.4; transition: opacity 0.3s; }
     </style>
 </head>
 <body>
     <nav>
         <div class="logo-box">
-            <div style="display:flex; align-items:center; gap:0.5rem">
-                <a href="https://github.com/zirco999-star" target="_blank" class="logo"><span class="b">BACNET</span><span class="n">2</span><span class="m">MQTT</span></a>
-                <span style="font-size:0.7rem; font-weight:800; color:var(--muted)">- )rawliteral" VERSION_GLOBAL R"rawliteral(</span>
-            </div>
-            <div class="credits">by <a href="https://github.com/zirco999-star" target="_blank">Z1rc0n1um</a></div>
+            <a href="#" class="logo"><span class="b">BACNET</span><span class="n">2</span><span class="m">MQTT</span></a>
+            <div class="credits">by <a href="https://github.com/zirco999-star" target="_blank">Z1rc0n1um</a> - v)rawliteral" VERSION_GLOBAL R"rawliteral(</div>
         </div>
         <div class="status-group">
-            <div id="b-tag" class="badge">BACNET</div>
+            <div id="b-tag" class="badge">MSTP</div>
             <div id="m-tag" class="badge">MQTT</div>
         </div>
     </nav>
+
     <div class="tabs">
-        <button class="tab-btn active" onclick="openTab(event, 't-dash')">Dashboard</button>
-        <button class="tab-btn" onclick="openTab(event, 't-bac')">BACnet</button>
-        <button class="tab-btn" onclick="openTab(event, 't-conf')">Settings</button>
+        <button class="tab-btn active" id="btn-dash" onclick="openTab(event, 't-dash')">Dashboard</button>
+        <button class="tab-btn" id="btn-bac" onclick="openTab(event, 't-bac')">BACNET</button>
+        <button class="tab-btn" id="btn-conf" onclick="openTab(event, 't-conf')">Settings</button>
     </div>
+
     <div class="container">
-        <!-- DASHBOARD -->
+        <!-- TAB: DASHBOARD -->
         <div id="t-dash" class="tab-content active">
-            <div class="grid-stats">
-                <div class="stat-card">
-                    <div class="stat-label">WiFi Radio</div>
-                    <div id="s-rssi-val" class="stat-value">-- dBm</div>
-                    <div class="echo-radar" id="radar">
-                        <div class="echo-segment"></div><div class="echo-segment"></div><div class="echo-segment"></div><div class="echo-segment"></div><div class="echo-segment"></div><div class="echo-segment"></div><div class="echo-segment"></div><div class="echo-segment"></div>
+            <div class="dashboard-grid">
+                <!-- Network Card -->
+                <div class="card">
+                    <div class="card-h"><div class="card-t">Network Info</div><div class="badge badge-ok" id="s-rssi">-- dBm</div></div>
+                    <div class="card-b">
+                        <div class="info-row"><span class="info-l">IP Address</span><span class="info-v" id="s-ip">0.0.0.0</span></div>
+                        <div class="info-row"><span class="info-l">Gateway</span><span class="info-v" id="s-gw">0.0.0.0</span></div>
+                        <div class="info-row"><span class="info-l">Subnet Mask</span><span class="info-v" id="s-sn">0.0.0.0</span></div>
+                        <div class="info-row"><span class="info-l">MQTT Server</span><span class="info-v" id="s-mqs">---</span></div>
+                        <div class="echo-radar" id="radar">
+                            <div class="echo-segment"></div><div class="echo-segment"></div><div class="echo-segment"></div><div class="echo-segment"></div><div class="echo-segment"></div><div class="echo-segment"></div><div class="echo-segment"></div><div class="echo-segment"></div>
+                        </div>
                     </div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-label">Node Network</div>
-                    <div id="s-ip" class="stat-value" style="color:var(--primary)">0.0.0.0</div>
-                    <div id="s-sn" style="font-size:0.45rem; color:var(--muted); font-family:monospace; margin-top:1px">M: 0.0.0.0</div>
+                <!-- MS/TP Card -->
+                <div class="card">
+                    <div class="card-h"><div class="card-t">MS/TP Info</div><div class="badge" id="s-mstp-state">--</div></div>
+                    <div class="card-b">
+                        <div class="info-row"><span class="info-l">Tokens / RX / TX</span><span class="info-v"><span id="s-tokens">0</span> | <span id="s-rx">0</span> | <span id="s-tx">0</span></span></div>
+                        <div class="info-row"><span class="info-l">CRC Errors</span><span class="info-v" id="s-err">0</span></div>
+                        <div class="info-row"><span class="info-l">Active Nodes</span><span class="info-v" id="s-nodes">0</span></div>
+                    </div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-label">MQTT Broker</div>
-                    <div id="s-mqtt-host" class="stat-value" style="font-size:0.75rem">---</div>
-                    <div id="s-mqtt-status" style="font-size:0.65rem; font-weight:800; margin-top:1px">OFFLINE</div>
+                <!-- System Card -->
+                <div class="card">
+                    <div class="card-h"><div class="card-t">System Status</div></div>
+                    <div class="card-b">
+                        <div class="info-row"><span class="info-l">Free Heap</span><span class="info-v" id="s-heap">-- KB</span></div>
+                        <div class="info-row"><span class="info-l">Uptime</span><span class="info-v" id="s-uptime">0s</span></div>
+                        <div class="info-row"><span class="info-l">Task Cores</span><span class="info-v">0:SYS | 1:BAC</span></div>
+                    </div>
+                </div>
+                <!-- Discovery Card -->
+                <div class="card">
+                    <div class="card-h"><div class="card-t">Discovery Status</div></div>
+                    <div class="card-b" id="progress-list" style="max-height: 100px; overflow-y: auto; padding: 0.6rem 0.8rem;">
+                        <div style="text-align:center; color:var(--muted); font-size:0.7rem; padding:0.5rem">Waiting...</div>
+                    </div>
                 </div>
             </div>
 
-            <div class="full-banner">
-                <div class="banner-label">MS/TP Traffic Observation</div>
-                <div class="banner-value" id="s-tokens">0 <span style="font-size:0.6rem; opacity:0.5">TOKENS</span></div>
+            <div class="cmd-group" style="display:flex; gap:0.6rem; margin-bottom:1rem">
+                <button class="btn btn-p" style="flex:1" onclick="fetch('/api/whois', {method:'POST'})">Send Who-Is</button>
+                <button class="btn btn-s" style="flex:1" onclick="fetch('/api/iam', {method:'POST'})">Send I-Am</button>
             </div>
 
-            <div class="cmd-group">
-                <button class="btn btn-p" onclick="sendWhoIs()">Send Who-is</button>
-                <button class="btn btn-s" onclick="sendIAm()">Send I-am</button>
-            </div>
-
-            <div class="card">
-                <div class="card-header"><div class="card-title">Diagnostic Stream</div><div class="badge" id="s-heap">-- KB</div></div>
-                <div id="console-out"></div>
+            <div class="console-split">
+                <div class="card">
+                    <div class="card-h"><div class="card-t">Terminal Core 0 (System)</div></div>
+                    <div id="log-c0" class="console-box c0"></div>
+                </div>
+                <div class="card">
+                    <div class="card-h"><div class="card-t">Terminal Core 1 (BACnet)</div></div>
+                    <div id="log-c1" class="console-box c1"></div>
+                </div>
             </div>
         </div>
 
-        <!-- BACNET -->
+        <!-- TAB: BACNET -->
         <div id="t-bac" class="tab-content">
-            <div id="discovery-container"></div>
+            <div id="bac-list"></div>
         </div>
 
-        <!-- SETTINGS -->
+        <!-- TAB: SETTINGS -->
         <div id="t-conf" class="tab-content">
-            <div class="card">
-                <div class="card-header"><div class="card-title">Network Configuration</div><button class="btn btn-p" onclick="doSaveNet()">Save</button></div>
-                <form id="f-net" class="grid-form">
+            <details open>
+                <summary>Network Configuration</summary>
+                <form id="f-net" class="form-grid">
                     <input type="hidden" name="form_type" value="wifi">
-                    <div class="form-group"><label>WiFi SSID</label><input type="text" name="ssid" id="in-ssid"></div>
-                    <div class="form-group"><label>WiFi Password</label><input type="password" name="pass" id="in-pass"></div>
-                    <div class="full-w"><label class="checkbox-row" style="background:#000; border-radius:6px; padding:0.5rem; display:flex; align-items:center; gap:0.5rem; cursor:pointer"><input type="checkbox" name="static_ip" id="in-static" onchange="toggleStatic()"><span style="font-size:0.65rem; font-weight:700">STATIC IP MODE</span></label></div>
-                    <div id="div-static" class="full-w grid-form" style="display:none; padding:0; gap:0.5rem; margin-top:0.5rem">
-                        <div class="form-group"><label>Node IP</label><input type="text" name="local_ip" id="in-ip"></div>
-                        <div class="form-group"><label>Gateway</label><input type="text" name="gateway" id="in-gw"></div>
-                        <div class="form-group"><label>Subnet Mask</label><input type="text" name="subnet" id="in-sn"></div>
+                    <div class="f-item"><label>WiFi SSID</label><input type="text" name="ssid" id="in-ssid"></div>
+                    <div class="f-item"><label>WiFi Password</label><input type="password" name="pass" id="in-pass" placeholder="******"></div>
+                    <div class="span-2"><label class="btn btn-s" style="width:100%; box-sizing:border-box; justify-content:flex-start"><input type="checkbox" name="static_ip" id="in-static" onchange="toggleStatic()"> STATIC IP MODE</label></div>
+                    <div id="div-static" class="span-2 form-grid" style="padding:0; gap:0.8rem; display:none">
+                        <div class="f-item"><label>Local IP</label><input type="text" name="local_ip" id="in-ip"></div>
+                        <div class="f-item"><label>Gateway</label><input type="text" name="gateway" id="in-gw"></div>
+                        <div class="f-item"><label>Subnet Mask</label><input type="text" name="subnet" id="in-sn"></div>
                     </div>
+                    <div class="span-2"><button type="button" class="btn btn-p" style="width:100%" onclick="saveForm('f-net')">Apply Network Settings</button></div>
                 </form>
-            </div>
-            <div class="card">
-                <div class="card-header"><div class="card-title">BACnet MS/TP Engine</div><button class="btn btn-p" onclick="doSaveBac()">Save</button></div>
-                <form id="f-bac" class="grid-form">
-                    <div class="form-group"><label>Station MAC</label><input type="number" name="mac" id="in-mac"></div>
-                    <div class="form-group"><label>Device Instance (GW)</label><input type="number" name="did" id="in-did"></div>
-                    <div class="form-group"><label>Max Master</label><input type="number" name="mm" id="in-mm"></div>
-                    <div class="form-group"><label>Max Retries</label><input type="number" name="retries" id="in-retries"></div>
-                    <div class="form-group"><label>APDU Timeout (ms)</label><input type="number" name="timeout" id="in-timeout"></div>
-                    <div class="form-group"><label>Token Skip (Pacing)</label><input type="number" name="tskip" id="in-tskip"></div>
-                    <div class="full-w"><label>Internal Heartbeat (ms)</label><input type="number" name="hbeat" id="in-hbeat"></div>
+            </details>
+
+            <details>
+                <summary>MQTT Server Configuration</summary>
+                <form id="f-mqtt" class="form-grid">
+                    <input type="hidden" name="form_type" value="mqtt">
+                    <div class="span-2 f-item"><label>Broker Server IP</label><input type="text" name="mqh" id="in-mqh"></div>
+                    <div class="f-item"><label>MQTT User</label><input type="text" name="mqu" id="in-mqu"></div>
+                    <div class="f-item"><label>MQTT Password</label><input type="password" name="mqp" id="in-mqp" placeholder="******"></div>
+                    <div class="span-2 f-item"><label>Topic Prefix</label><input type="text" name="mqpr" id="in-mqpr"></div>
+                    <div class="span-2"><button type="button" class="btn btn-p" style="width:100%" onclick="saveForm('f-mqtt')">Apply MQTT Settings</button></div>
                 </form>
-            </div>
-            <div class="card">
-                <div class="card-header"><div class="card-title">MQTT Bridge Protocol</div><button class="btn btn-p" onclick="doSaveMqtt()">Save</button></div>
-                <form id="f-mqtt" class="grid-form">
-                    <div class="full-w"><label>Broker Server IP</label><input type="text" name="mqh" id="in-mqh"></div>
-                    <div class="form-group"><label>MQTT User</label><input type="text" name="mqu" id="in-mqu"></div>
-                    <div class="form-group"><label>MQTT Password</label><input type="password" name="mqp" id="in-mqp"></div>
-                    <div class="full-w"><label>Root Topic Prefix</label><input type="text" name="mqpr" id="in-mqpr"></div>
-                    <div class="full-w"><label>MQTT Poll Interval (s)</label><input type="number" name="mpi" id="in-mpi"></div>
+            </details>
+
+            <details>
+                <summary>BACnet MS/TP Configuration</summary>
+                <form id="f-bac" class="form-grid">
+                    <div class="f-item"><label>MAC Address</label><input type="number" name="mac" id="in-mac"></div>
+                    <div class="f-item"><label>Device Instance</label><input type="number" name="did" id="in-did"></div>
+                    <div class="f-item"><label>Max Master</label><input type="number" name="mm" id="in-mm"></div>
+                    <div class="f-item"><label>Max Retries</label><input type="number" name="retries" id="in-retries"></div>
+                    <div class="f-item"><label>APDU Timeout (ms)</label><input type="number" name="timeout" id="in-timeout"></div>
+                    <div class="f-item"><label>Token Skip</label><input type="number" name="tskip" id="in-tskip"></div>
+                    <div class="f-item"><label>Max Info Frames</label><input type="number" name="mif" id="in-mif"></div>
+                    <div class="f-item"><label>Heartbeat (ms)</label><input type="number" name="hbeat" id="in-hbeat"></div>
+                    <div class="span-2"><button type="button" class="btn btn-p" style="width:100%" onclick="saveForm('f-bac')">Apply BACnet Settings</button></div>
                 </form>
-            </div>
-            <div class="grid-stats" style="margin-top:1rem; grid-template-columns: 1fr 1fr 1fr;">
-                <button class="btn btn-d" onclick="doResetCache()">CLEAR BACNET cache</button>
-                <button class="btn btn-s" onclick="fetch('/reboot')">REBOOT GATEWAY</button>
-                <button class="btn btn-d" style="background:#7f1d1d" onclick="doResetFactory()">RESET FACTORY</button>
+            </details>
+
+            <details>
+                <summary>Polling Configuration</summary>
+                <form id="f-poll" class="form-grid">
+                    <div class="f-item"><label>MQTT Polling (sec)</label><input type="number" name="mpi" id="in-mpi"></div>
+                    <div class="f-item"><label>BACnet Polling (sec)</label><input type="number" name="bpi" id="in-bpi"></div>
+                    <div class="span-2"><button type="button" class="btn btn-p" style="width:100%" onclick="saveForm('f-poll')">Apply Polling Settings</button></div>
+                </form>
+            </details>
+
+            <details>
+                <summary>Security Configuration</summary>
+                <form id="f-sec" class="form-grid">
+                    <div class="f-item"><label>Admin User</label><input type="text" name="admin_u" id="in-adu"></div>
+                    <div class="f-item"><label>Admin Password</label><input type="password" name="admin_p" id="in-adp" placeholder="******"></div>
+                    <div class="span-2"><button type="button" class="btn btn-p" style="width:100%" onclick="saveForm('f-sec')">Apply Security Settings</button></div>
+                </form>
+            </details>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.6rem; margin-top:1rem">
+                <button class="btn btn-s" onclick="confirmAction('/api/reset_cache', 'Clear BACnet Cache?')">Clear BACNET Cache</button>
+                <button class="btn btn-s" onclick="fetch('/reboot')">Reboot</button>
+                <button class="btn btn-d span-2" style="width:100%" onclick="confirmAction('/api/factory_reset', 'DANGER: Factory Reset?')">Factory Reset</button>
             </div>
         </div>
     </div>
+
     <script>
+        const UNITS = {
+            95: "No Units", 62: "%", 64: "°C", 98: "ppm", 5: "V", 2: "A", 19: "W", 48: "kW", 50: "Wh", 51: "kWh", 17: "Pa", 18: "kPa", 31: "m³", 82: "l/s", 160: "ms", 73: "s", 72: "min", 28: "h"
+        };
+        const progHysteresis = {}; 
+        const devBoxState = {};
+        let currentTab = 't-dash';
+
         function openTab(e, id) {
-            const c=document.getElementsByClassName("tab-content"); for(let i=0; i<c.length; i++)c[i].style.display="none";
-            const b=document.getElementsByClassName("tab-btn"); for(let i=0; i<b.length; i++)b[i].classList.remove("active");
-            document.getElementById(id).style.display="block"; e.currentTarget.classList.add("active");
-            if(id === 't-bac') refreshDiscovery(); if(id === 't-conf') loadConfig();
+            currentTab = id;
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById(id).classList.add('active');
+            e.currentTarget.classList.add('active');
+            if(id === 't-bac') refreshBACnet();
+            if(id === 't-conf') loadConfig();
         }
+
         function toggleStatic() { document.getElementById('div-static').style.display = document.getElementById('in-static').checked ? 'grid' : 'none'; }
+
         function loadConfig() {
             fetch('/api/status').then(r=>r.json()).then(d=>{
                 document.getElementById('in-ssid').value = d.ssid || "";
-                document.getElementById('in-pass').value = "******";
                 document.getElementById('in-static').checked = d.static || false;
                 document.getElementById('in-ip').value = d.ip || "";
                 document.getElementById('in-gw').value = d.gw || "";
-                document.getElementById('in-sn').value = d.sn || "";
-                document.getElementById('in-mac').value = d.mac_id || 1;
-                document.getElementById('in-mm').value = d.mm || 127;
-                document.getElementById('in-mqh').value = d.mqh || "";
+                document.getElementById('in-sn').value = d.mask || "";
+                document.getElementById('in-mqh').value = d.mqs || "";
                 document.getElementById('in-mqu').value = d.mqu || "";
-                document.getElementById('in-mqp').value = d.mqp_set ? "******" : "";
                 document.getElementById('in-mqpr').value = d.mqpr || "bacnet";
                 document.getElementById('in-mpi').value = d.mpi || 30;
+                document.getElementById('in-bpi').value = d.bpi || 30;
+                document.getElementById('in-mac').value = d.mac || 1;
+                document.getElementById('in-mm').value = d.mm || 127;
                 document.getElementById('in-did').value = d.did || 123;
-                document.getElementById('in-timeout').value = d.to || 1000;
+                document.getElementById('in-timeout').value = d.to || 500;
                 document.getElementById('in-retries').value = d.ret || 3;
                 document.getElementById('in-hbeat').value = d.hbeat || 50000;
                 document.getElementById('in-tskip').value = d.tskip || 0;
+                document.getElementById('in-mif').value = d.mif || 3;
+                document.getElementById('in-adu').value = d.adu || "admin";
                 toggleStatic();
-            });
+            }).catch(e => console.error("Config load error", e));
         }
-        function sendWhoIs() { fetch('/api/whois', {method:'POST'}).then(()=>alert("Who-is Broadcast sent.")); }
-        function sendIAm() { fetch('/api/iam', {method:'POST'}).then(()=>alert("I-am Response sent.")); }
-        function doSaveNet() { fetch('/save', {method:'POST', body:new FormData(document.getElementById('f-net'))}).then(()=>alert("Network Saved.")); }
-        function doSaveBac() { fetch('/save', {method:'POST', body:new FormData(document.getElementById('f-bac'))}).then(()=>alert("BACnet Saved.")); }
-        function doSaveMqtt() { fetch('/save', {method:'POST', body:new FormData(document.getElementById('f-mqtt'))}).then(()=>alert("MQTT Saved.")); }
-        function doResetCache() { if(confirm("Clear BACnet Cache?")) fetch('/api/reset_cache', {method:'POST'}).then(()=>alert("Cache cleared. Rebooting...")); }
-        function doResetFactory() { if(confirm("DANGER: Factory Reset?")) fetch('/api/factory_reset', {method:'POST'}).then(()=>alert("Factory Reset OK. Rebooting to AP mode...")); }
-        
-        function toggleDevice(id, enabled) {
-            const data = { device_id: id, enabled: enabled, objects: [] };
-            fetch('/api/save_objects', {method:'POST', body:JSON.stringify(data), headers:{'Content-Type':'application/json'}}).then(() => {
-                const block = document.querySelector(`[data-dev="${id}"] table`);
-                if(block) block.style.opacity = enabled ? '1' : '0.4';
-                if(block) block.style.pointerEvents = enabled ? 'auto' : 'none';
+
+        function saveForm(id) {
+            fetch('/save', {method:'POST', body:new FormData(document.getElementById(id))})
+            .then(r => r.text()).then(t => { if(t==="OK") alert("Settings Applied"); });
+        }
+
+        function confirmAction(url, msg) { if(confirm(msg)) fetch(url, {method:'POST'}).then(()=>alert("Action triggered.")); }
+
+        function refreshBACnet() {
+            if (currentTab !== 't-bac') return;
+            
+            // Bloquer le refresh si l'utilisateur a le focus sur un champ de saisie
+            if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'SELECT')) {
+                if (document.activeElement.closest('#bac-list')) return;
+            }
+
+            // Save accordion states before redrawing
+            document.querySelectorAll('.dev-card').forEach(det => {
+                const id = det.dataset.did;
+                if(id) devBoxState[id] = det.open;
+            });
+
+            fetch('/api/objects').then(r=>r.json()).then(data => {
+                let html = '';
+                if (!Array.isArray(data)) return;
+                data.forEach(dev => {
+                    const isOpen = devBoxState[dev.device_id] !== undefined ? devBoxState[dev.device_id] : true;
+                    html += `<details class="card dev-card" data-did="${dev.device_id}" ${isOpen ? 'open' : ''}>
+                        <summary class="dev-header">
+                            <div><span style="color:var(--primary); font-weight:800">ID:${dev.device_id}</span> | <span style="font-size:0.75rem">${dev.name || 'Unnamed Device'}</span></div>
+                            <div class="dev-actions">
+                                <button class="btn btn-s btn-sm" onclick="event.stopPropagation(); reloadDevice(${dev.device_id})">↻ Reload</button>
+                                <button class="btn btn-d btn-sm" onclick="event.stopPropagation(); deleteDevice(${dev.device_id})">🗑 Delete</button>
+                            </div>
+                        </summary>
+                        <div class="card-b" style="padding:0">
+                            <table class="compact-table">
+                                <thead><tr><th style="width:30px"></th><th style="width:70px">OBJ</th><th>NAME / UNIT</th><th style="width:60px">VAL</th><th style="width:40px">POLL</th></tr></thead>
+                                <tbody>`;
+                    if (Array.isArray(dev.objects)) {
+                        dev.objects.forEach((o, idx) => {
+                            if(o.type === 8) return;
+                            let typeStr = ["AI","AO","AV","BI","BO","BV","CAL","CMD","DEV","EVN","FIL","GRP","LP","MSI","MSO","NOT","PRG","SCH","AVG","MSV"][o.type] || "OBJ";
+                            let rowClass = o.poll ? '' : 'grisé';
+                            let valDisplay = (o.val !== null && !isNaN(o.val)) ? o.val.toFixed(2) : '--';
+                            
+                            html += `<tr data-did="${dev.device_id}" data-inst="${o.inst}" data-type="${o.type}" class="${rowClass}">
+                                <td style="text-align:center"><button class="btn btn-s btn-sm" style="padding:2px 4px" onclick="reloadObject(${dev.device_id}, ${o.inst}, ${o.type})" title="Reload Object Properties">↻</button></td>
+                                <td><span class="obj-badge">${typeStr}:${o.inst}</span></td>
+                                <td>
+                                    <input type="text" class="in-text" value="${o.name || ''}" onchange="saveObj(this)">
+                                    <select onchange="saveObj(this)" style="margin-top:4px">`;
+                            for(let u in UNITS) html += `<option value="${u}" ${o.unit===UNITS[u]?'selected':''}>${UNITS[u]}</option>`;
+                            html += `</select></td>
+                                <td><span class="val-text">${valDisplay}</span></td>
+                                <td><label class="switch"><input type="checkbox" ${o.poll?'checked':''} onchange="saveObj(this, true)"><span class="slider"></span></label></td>
+                            </tr>`;
+                        });
+                    }
+                    html += `</tbody></table></div></details>`;
+                });
+                document.getElementById('bac-list').innerHTML = html || "<div style='text-align:center;padding:2rem;color:var(--muted)'>No devices found.</div>";
+            }).catch(e => {
+                console.error("BACnet list error", e);
+                document.getElementById('bac-list').innerHTML = "<div style='text-align:center;padding:2rem;color:var(--error)'>API Error (Check Terminal)</div>";
             });
         }
 
-        function downloadEDE(id) {
-            window.location.href = "/api/download_ede";
+        function saveObj(el, isToggle = false) {
+            const tr = el.closest('tr');
+            const did = tr.dataset.did;
+            const inst = tr.dataset.inst;
+            const type = tr.dataset.type;
+            const name = tr.querySelector('.in-text').value;
+            const unit = tr.querySelector('select').value;
+            const poll = tr.querySelector('input[type="checkbox"]').checked;
+            if(isToggle) tr.classList.toggle('grisé', !poll);
+            const params = new URLSearchParams({ did, inst, type, name, unit: UNITS[unit], poll: poll?1:0 });
+            fetch('/api/save_object', {method:'POST', body:params});
         }
-        function saveDeviceChanges(id) {
-            const block = document.querySelector(`[data-dev="${id}"]`);
-            const rows = block.querySelectorAll('tbody tr');
-            const objects = [];
-            rows.forEach(r => {
-                const poll_sw = r.querySelector('.poll-sw');
-                objects.push({
-                    inst: parseInt(r.getAttribute('data-inst')),
-                    type: parseInt(r.getAttribute('data-type')),
-                    name: r.querySelector('.name-edit').value,
-                    unit: r.querySelector('.unit-edit') ? r.querySelector('.unit-edit').value : "",
-                    poll: poll_sw.checked
-                });
-            });
-            const data = { device_id: id, objects: objects };
-            fetch('/api/save_objects', {method:'POST', body:JSON.stringify(data), headers:{'Content-Type':'application/json'}}).then(() => alert("Saved."));
-        }
-        function refreshDiscovery() {
-            fetch('/api/objects').then(r=>r.json()).then(controllers=>{
-                const container = document.getElementById('discovery-container');
-                if(!controllers || controllers.length === 0) { container.innerHTML = "<div style='padding:2rem; text-align:center; color:var(--muted)'>Listening MS/TP Traffic...</div>"; return; }
-                let html = '';
-                controllers.forEach(c => {
-                    html += `<div class="controller-block" data-dev="${c.device_id}">
-                        <div class="controller-header">
-                            <div style="display:flex; flex-direction:column">
-                                <span style="font-weight:800; color:var(--primary); font-size:0.75rem">ID:${c.device_id} | ${c.name}</span>
-                                <span style="font-size:0.45rem; color:var(--muted)">${c.vendor}</span>
-                            </div>
-                            <div class="header-actions">
-                                <button class="btn btn-s btn-lg" onclick="downloadEDE(${c.device_id})">EDE</button>
-                                <button class="btn btn-p btn-lg" onclick="saveDeviceChanges(${c.device_id})">SAVE</button>
-                                <label class="switch"><input type="checkbox" ${c.enabled?'checked':''} onchange="toggleDevice(${c.device_id}, this.checked)"><span class="slider"></span></label>
-                            </div>
-                        </div>
-                        <table style="${c.enabled?'':'opacity:0.4;pointer-events:none'}"><thead><tr><th>OBJ</th><th>NAME</th><th>VALUE</th><th>UNIT</th><th>POLL</th></tr></thead><tbody>`;
-                    c.objects.forEach(o => {
-                        if (o.type === 8) return; 
-                        let isUseful = (o.type <= 5 || o.type == 12 || o.type == 13 || o.type == 14 || o.type == 19 || o.type == 23 || o.type == 24 || (o.type >= 39 && o.type <= 50) || o.type == 54 || o.type == 55);
-                        let tStr = o.type == 0 ? "AI" : o.type == 1 ? "AO" : o.type == 2 ? "AV" : o.type == 3 ? "BI" : o.type == 4 ? "BO" : o.type == 5 ? "BV" : o.type == 13 ? "MSI" : o.type == 14 ? "MSO" : o.type == 19 ? "MSV" : "OBJ";
-                        let valStr = (o.val !== null && o.val !== undefined) ? o.val.toFixed(2) : "---";
-                        html += `<tr data-inst="${o.inst}" data-type="${o.type}" style="${isUseful?'':'opacity:0.5'}">
-                            <td><span class="tag-obj">${tStr}:${o.inst}</span></td>
-                            <td><input type="text" class="in-edit name-edit" value="${o.name}" ${o.poll?'':'disabled'} style="${o.poll?'':'opacity:0.5'}"></td>
-                            <td style="color:var(--success); font-weight:700; font-family:monospace">${valStr}</td>
-                            <td><input type="text" class="in-edit unit-edit" value="${o.unit || ''}" style="width:50px; text-align:center; font-size:0.6rem; color:var(--accent)"></td>
-                            <td><label class="switch"><input type="checkbox" class="poll-sw" ${o.poll?'checked':''} ${isUseful?'':'disabled'} onchange="this.closest('tr').querySelector('.name-edit').disabled = !this.checked; this.closest('tr').querySelector('.name-edit').style.opacity = this.checked ? '1' : '0.5'"><span class="slider"></span></label></td>
-                        </tr>`;
-                    });
-                    html += `</tbody></table>
-                        <div style="padding:0.6rem; border-top:1px solid var(--border); background:#141416">
-                            <button class="btn btn-p btn-lg" style="width:100%" onclick="saveDeviceChanges(${c.device_id})">SAVE CHANGES FOR THIS DEVICE</button>
-                        </div>
-                    </div>`;
-                });
-                container.innerHTML = html;
-            });
+
+        function reloadDevice(id) { if(confirm("Reload all objects for this device?")) { delete progHysteresis[id]; fetch('/api/reload_device', {method:'POST', body:new URLSearchParams({id})}); } }
+        function reloadObject(did, inst, type) { fetch('/api/reload_object', {method:'POST', body:new URLSearchParams({did, inst, type})}); }
+        function deleteDevice(id) { if(confirm("Permanently delete this device and its cache?")) fetch('/api/delete_device', {method:'POST', body:new URLSearchParams({id})}).then(()=>refreshBACnet()); }
+
+        function formatUptime(s) {
+            let d = Math.floor(s / 86400); s %= 86400;
+            let h = Math.floor(s / 3600); s %= 3600;
+            let m = Math.floor(s / 60); s %= 60;
+            return (d>0?d+'d ':'')+(h>0?h+'h ':'')+(m>0?m+'m ':'')+s+'s';
         }
 
         function updateStatus() {
-            fetch('/api/status').then(r=>r.json()).then(d=>{
+            fetch('/api/status').then(r=>r.json()).then(d => {
                 const rssi = d.rssi;
-                document.getElementById('s-rssi-val').innerText = rssi + " dBm";
+                document.getElementById('s-rssi').innerText = rssi + " dBm";
                 const radar = document.getElementById('radar').children;
                 const activeCount = Math.round(((rssi + 100) / 60) * 8);
                 for(let i=0; i<8; i++) {
@@ -323,32 +425,69 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                         radar[i].style.backgroundColor = color; radar[i].classList.add('active');
                     } else { radar[i].style.backgroundColor = '#27272a'; }
                 }
-                document.getElementById('s-ip').innerText=d.ip;
-                document.getElementById('s-sn').innerText="M: " + (d.sn || "255.255.255.0");
-                document.getElementById('s-tokens').innerHTML=(d.mstp_cnt || 0) + ' <span style="font-size:0.6rem; opacity:0.5">TOKENS</span>';
-                document.getElementById('s-mqtt-host').innerText = d.mqh || "UNDEFINED";
-                const mqS = document.getElementById('s-mqtt-status');
-                mqS.innerText = d.mqtt ? "SYNC" : "OFFLINE";
-                mqS.style.color = d.mqtt ? "var(--success)" : "var(--error)";
-                document.getElementById('s-heap').innerText=(d.heap) + " KB";
+                document.getElementById('s-ip').innerText = d.ip || '---';
+                document.getElementById('s-gw').innerText = d.gw || '---';
+                document.getElementById('s-sn').innerText = d.mask || '---';
+                document.getElementById('s-mqs').innerText = d.mqs || '---';
+                document.getElementById('s-tokens').innerText = d.mstp_cnt || 0;
+                document.getElementById('s-rx').innerText = d.mstp_rx || 0;
+                document.getElementById('s-tx').innerText = d.mstp_tx || 0;
+                const errEl = document.getElementById('s-err');
+                errEl.innerText = d.mstp_err || 0;
+                errEl.style.color = (d.mstp_err > 0) ? 'var(--error)' : 'var(--text)';
+                document.getElementById('s-heap').innerText = (d.heap || 0) + " KB";
+                document.getElementById('s-uptime').innerText = formatUptime(d.uptime || 0);
+                document.getElementById('b-tag').className = 'badge ' + (d.mstp_t ? 'badge-ok' : 'badge-fail');
+                document.getElementById('m-tag').className = 'badge ' + (d.mqtt ? 'badge-ok' : 'badge-fail');
+                document.getElementById('s-mstp-state').innerText = d.mstp_t ? "RUNNING" : "STOPPED";
+                document.getElementById('s-mstp-state').className = 'badge ' + (d.mstp_t ? 'badge-ok' : 'badge-fail');
+
+                const pList = document.getElementById('progress-list');
+                if(d.devices && d.devices.length > 0) {
+                    let phtml = '';
+                    d.devices.forEach(dev => {
+                        let pct = 0;
+                        let status = "Discovery...";
+                        if(dev.done) { pct = 100; status = "Completed"; }
+                        else {
+                            if(dev.step === 4) pct = 10;
+                            else if(dev.step > 4) pct = 20 + Math.min(80, (dev.idx / (dev.total || 1)) * 80);
+                        }
+                        if (!progHysteresis[dev.id] || pct > progHysteresis[dev.id]) progHysteresis[dev.id] = pct;
+                        let displayPct = Math.max(pct, progHysteresis[dev.id] || 0);
+
+                        phtml += `<div class="prog-box">
+                            <div class="prog-label"><span>Dev ${dev.id} (${dev.total} objs)</span><span>${status}</span></div>
+                            <div class="prog-cont">
+                                <div class="prog-bar" style="width:${displayPct}%"></div>
+                                <div class="prog-text">${Math.round(displayPct)}%</div>
+                            </div>
+                        </div>`;
+                    });
+                    pList.innerHTML = phtml;
+                    document.getElementById('s-nodes').innerText = d.devices.length;
+                }
                 
-                const bTag = document.getElementById('b-tag');
-                const mTag = document.getElementById('m-tag');
-                bTag.className = 'badge ' + (d.mstp_t ? 'badge-ok' : 'badge-fail');
-                mTag.className = 'badge ' + (d.mqtt ? 'badge-ok' : 'badge-fail');
-            });
+                if (currentTab === 't-bac') refreshBACnet();
+                
+            }).catch(e => console.error("Status update error", e));
         }
-        let ws_url = `ws://${window.location.host}/ws-logs`;
+
         try {
-            let ws = new WebSocket(ws_url);
+            let ws = new WebSocket(`ws://${window.location.host}/ws-logs`);
             ws.onmessage = (e) => {
-                const c = document.getElementById('console-out');
-                if(!c) return;
-                const line = document.createElement('div');
-                line.textContent = e.data; c.appendChild(line); c.scrollTop = c.scrollHeight;
-                if(c.childNodes.length > 300) c.removeChild(c.firstChild);
+                const data = e.data;
+                let target = null; let text = data;
+                if(data.startsWith("0|")) { target = document.getElementById('log-c0'); text = data.substring(2); }
+                else if(data.startsWith("1|")) { target = document.getElementById('log-c1'); text = data.substring(2); }
+                if(target) {
+                    const line = document.createElement('div');
+                    line.textContent = text; target.appendChild(line);
+                    target.scrollTop = target.scrollHeight;
+                    if(target.childNodes.length > 200) target.removeChild(target.firstChild);
+                }
             };
-        } catch(err) {}
+        } catch(e) {}
         setInterval(updateStatus, 3000); updateStatus();
     </script>
 </body>

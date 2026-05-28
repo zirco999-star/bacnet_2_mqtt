@@ -408,7 +408,7 @@ static void bacnet_task(void *pv) {
                                                 publish_mqtt_topic(dev.device_id, obj, 77, true);
                                                 obj.name_published = true;
                                                 strlcpy(obj.last_mqtt_name, obj.name, sizeof(obj.last_mqtt_name));
-                                                z_log("[MQTT] Sync nom OK : %s\n", obj.name);
+                                                z_log("[BACNET] Sync MQTT Name OK : %s\n", obj.name);
                                             }
                                         }
                                     }
@@ -532,15 +532,27 @@ static void bacnet_task(void *pv) {
                                                         if (dev.disc_step == DISC_OBJ_OID) { 
                                                             uint32_t oid = (apdu[apdu_pos]<<24)|(apdu[apdu_pos+1]<<16)|(apdu[apdu_pos+2]<<8)|apdu[apdu_pos+3]; 
                                                             o.type = oid >> 22; o.instance = oid & 0x3FFFFF; 
-                                                            o.enabled = false;
-                                                            z_log("[BACNET] Obj %u OID: T%u I%lu (POLL:OFF)\n", dev.disc_obj_idx+1, o.type, (unsigned long)o.instance); 
+                                                            // Ne pas toucher à o.enabled ici pour préserver le réglage de polling utilisateur lors d'un reload partiel
+                                                            z_log("[BACNET] Obj %u (BACnet Idx:%d) OID: T%u I%lu\n", dev.disc_obj_idx+1, dev.disc_obj_idx+1, o.type, (unsigned long)o.instance); 
                                                             dev.disc_step = DISC_OBJ_NAME; 
                                                         }
                                                         else if (dev.disc_step == DISC_OBJ_NAME) { 
                                                             char n[33]; uint8_t enc = apdu[apdu_pos]; 
                                                             if (enc == 0) { uint16_t slen = std::min((int)val_tag.len - 1, 32); memcpy(n, &apdu[apdu_pos+1], slen); n[slen]=0; } 
                                                             else { int slen=0; for(int i=2; i<val_tag.len && slen<32; i+=2) n[slen++]=apdu[apdu_pos+i]; n[slen]=0; } 
-                                                            strlcpy(o.name, n, sizeof(o.name)); z_log("[BACNET] Obj %u Name: %s\n", dev.disc_obj_idx+1, n); 
+                                                            
+                                                            // Fallback robuste si le nom est vide ou générique
+                                                            String ns = String(n); ns.trim();
+                                                            if (ns.length() == 0 || ns.equalsIgnoreCase("Unknown") || ns.equalsIgnoreCase("Untitled")) {
+                                                                String typeStr = (o.type == 0) ? "AI" : (o.type == 1) ? "AO" : (o.type == 2) ? "AV" : 
+                                                                                (o.type == 3) ? "BI" : (o.type == 4) ? "BO" : (o.type == 5) ? "BV" : 
+                                                                                (o.type == 13) ? "MSI" : (o.type == 14) ? "MSO" : (o.type == 19) ? "MSV" : "OBJ";
+                                                                snprintf(o.name, sizeof(o.name), "%s:%lu", typeStr.c_str(), (unsigned long)o.instance);
+                                                                z_log("[BACNET] Obj %u Name Fallback: %s (Raw: '%s')\n", dev.disc_obj_idx+1, o.name, n);
+                                                            } else {
+                                                                strlcpy(o.name, n, sizeof(o.name));
+                                                                z_log("[BACNET] Obj %u Name: %s\n", dev.disc_obj_idx+1, o.name); 
+                                                            }
                                                             
                                                             if(o.type <= 2 || o.type == 23 || o.type == 24 || o.type == 46) dev.disc_step = DISC_OBJ_UNITS; 
                                                             else if(o.type == 13 || o.type == 14 || o.type == 19) { o.state_texts.clear(); o.expected_states_count = 0; dev.disc_step = DISC_OBJ_STATES; }
@@ -602,8 +614,14 @@ static void bacnet_task(void *pv) {
                                                                 z_log("[BACNET] Intermediate save NVS device_id: %lu (Index: %u)\n", (unsigned long)dev.device_id, dev.disc_obj_idx);
                                                             }
 
-                                                            // 3. LOGIQUE DE FIN DE DÉCOUVERTE
-                                                            if (dev.disc_obj_idx >= dev.objects.size()) {
+                                                            // 3. LOGIQUE DE FIN DE DÉCOUVERTE OU RELOAD UNITAIRE
+                                                            if (dev.reload_single) {
+                                                                dev.discovery_done = true;
+                                                                dev.reload_single = false;
+                                                                save_device_objects_locked(dev.device_id);
+                                                                z_log("[BACNET] Single Obj Reload finished for ID %lu\n", (unsigned long)dev.device_id);
+                                                            }
+                                                            else if (dev.disc_obj_idx >= dev.objects.size()) {
                                                                 dev.discovery_done = true;
                                                                 // La sauvegarde finale est redondante mais sécurisée
                                                                 save_device_objects_locked(dev.device_id); 
@@ -790,7 +808,7 @@ void publish_all_names() {
                 publish_mqtt_topic(dev.device_id, obj, 77, true);
                 obj.name_published = true;
                 strlcpy(obj.last_mqtt_name, obj.name, sizeof(obj.last_mqtt_name));
-                z_log("[MQTT] Sync nom OK : %s\n", obj.name);
+                z_log("[BACNET] Sync MQTT Name OK : %s\n", obj.name);
             }
         }
     }

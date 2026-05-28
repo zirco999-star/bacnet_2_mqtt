@@ -1,4 +1,25 @@
-# TRACE - BACnet2MQTT (v2026)
+- **Prochaine Étape** : Test de charge avec plusieurs automates physiques et validation de la persistence NVS sur le long terme.
+
+## État au 28 Mai 2026 (Refonte complète des Settings - v5.7.12) - DÉPLOYÉ
+- **Version actuelle** : v5.7.12
+- **Succès Technologiques** :
+    - **Refonte UI Settings** : Organisation granulaire des paramètres en 5 sections (Network, MQTT, BACnet, Polling, Security).
+    - **Persistance Admin** : Les identifiants d'accès à l'interface (User/Pass) sont désormais persistés dans le NVS et configurables via l'onglet Security.
+    - **Dashboard Enrichi** : Affichage de la Gateway et du Mask dans la carte Network du Dashboard pour un diagnostic rapide.
+    - **Corrections Ergonomiques** : Suppression de la colonne `BACnet Idx` (jugée encombrante sur mobile) et renommage explicite de l'action de vidage de cache (`Clear BACNET Cache`).
+    - **MQTT User Fix** : Correction de la remontée du nom d'utilisateur MQTT dans l'interface de configuration.
+
+## État au 28 Mai 2026 (Refonte UI & Logs Dual-Core - v5.7.7) - DÉPLOYÉ
+- **Version actuelle** : v5.7.7
+- **Succès Technologiques** :
+    - **Logs Dual-Core (Architecture Segmentée)** : Refonte de la fonction `z_log` pour préfixer chaque message par l'ID du cœur (`0|` pour Core 0 / `1|` pour Core 1). Cette innovation permet un diagnostic séparé et en temps réel des couches système (WiFi/MQTT) et protocolaire (BACnet FSM).
+    - **API Status Enrichie** : Extension de `/api/status` pour fournir des métadonnées réseau complètes (Mask, GW), statistiques MS/TP (RX/TX/Tokens) et l'état d'avancement de la découverte par automate (Progress Bar data).
+    - **Refonte UI Mobile-Friendly (v5.7.7)** : Passage à une interface ultra-compacte optimisée pour iPhone. Utilisation d'accordéons (`<details>`) pour les réglages et d'un tableau compressé pour les objets BACnet.
+    - **Dashboard Temps Réel** : Visualisation immédiate de la santé du réseau (Heap, RSSI, MS/TP Traffic) et barre de progression dynamique de la découverte par automate.
+    - **Gestion Unitaire des Objets** : Ajout d'endpoints API dédiés (`/api/save_object`, `/api/reload_object`, `/api/reload_device`, `/api/delete_device`) permettant des actions granulaires sans perturber le reste du réseau.
+    - **Validation OTA** : Compilation et Flash réussis. Système opérationnel avec monitoring dual-core actif.
+
+- **Prochaine Étape** : Compilation finale et Flash OTA pour validation sur site.
 
 ## État au 28 Mai 2026 (Mise à jour Majeure - v5.7.2)
 - **Version actuelle** : v5.7.2 (Robustness & Memory Safety)

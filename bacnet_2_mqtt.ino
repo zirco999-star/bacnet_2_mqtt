@@ -15,32 +15,41 @@ bool is_ap_mode = false;
 bool pending_reboot = false;
 uint32_t reboot_timer = 0;
 
+// Tâche Système pour le Core 0 (WiFi, MQTT, OTA)
+void system_task(void *pvParameters) {
+    z_log("[SYS] System Task started on Core %d\n", xPortGetCoreID());
+    for(;;) {
+        handle_network();
+        handle_mqtt();
+        vTaskDelay(pdMS_TO_TICKS(10)); // Pacing pour laisser du temps au stack WiFi
+    }
+}
+
 void setup() {
     Serial.begin(115200);
     delay(1000);
-    Serial.println("\n\n>>> " + String(VERSION_GLOBAL) + " - MODULAR START <<<");
+    Serial.println("\n\n>>> " + String(VERSION_GLOBAL) + " - DUAL CORE MODE <<<");
 
-    // --- CORRECTION : Routine de Self-Healing NVS ---
+    // --- Routine de Self-Healing NVS ---
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND || err == ESP_ERR_NVS_NOT_FOUND) {
         Serial.println("[NVS] Corruption critique ou partition absente. Formatage...");
         nvs_flash_erase();
         err = nvs_flash_init();
     }
-    if (err != ESP_OK) {
-        Serial.printf("[NVS] ERREUR FATALE : 0x%x\n", err);
-    }
-    // ------------------------------------------------
     
-    setup_network_infrastructure(); // WiFi + OTA + NVS Load
-    setup_bacnet_engine();          // RS485 + MS/TP
-    //setup_mqtt();                   // Broker connection
+    // Initialisation infrastructure
+    setup_network_infrastructure(); // Prépare WiFi + WebServer
+    setup_bacnet_engine();          // Démarre BACnet sur Core 1
     
+    // Création de la tâche Système sur Core 0
+    xTaskCreatePinnedToCore(system_task, "SystemTask", 8192, NULL, 5, NULL, 0);
+
     Serial.println("[" + String(VERSION_GLOBAL) + "] System Operational.");
 }
 
 void loop() {
-    handle_network();
-    handle_mqtt();
-    vTaskDelay(pdMS_TO_TICKS(1));
+    // La loop tourne sur Core 1 par défaut.
+    // On la laisse vide pour ne pas interférer avec la tâche BACnet (Core 1).
+    vTaskDelete(NULL); // Supprime la tâche loop pour libérer des ressources
 }
