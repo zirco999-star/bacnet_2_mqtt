@@ -174,8 +174,11 @@ void handle_mqtt() {
 
     // 2. Exécution de la publication différée des noms (Thread Safe)
     if (pending_name_publish && mqtt_is_connected) {
-        extern void publish_all_names();
-        publish_all_names();
+        if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
+            extern void publish_all_names();
+            publish_all_names();
+            xSemaphoreGive(cache_mutex);
+        }
         pending_name_publish = false;
     }
 

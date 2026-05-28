@@ -193,7 +193,7 @@ struct BACnetJob {
     uint16_t array_index; // Pour State_Text
     float write_value;
     uint8_t priority;
-    String name; 
+    char name[50]; 
 };
 
 struct MQTTPublishJob {

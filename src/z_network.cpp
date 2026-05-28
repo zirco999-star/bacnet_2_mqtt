@@ -506,7 +506,7 @@ void setup_network_infrastructure() {
                                                     job.obj_type = obj.type; 
                                                     job.obj_instance = obj.instance;
                                                     job.prop_id = 77; 
-                                                    job.name = String(new_name);
+                                                    strlcpy(job.name, new_name, sizeof(job.name));
                                                     enqueue_bacnet_job(job);
                                                 }
                                             }

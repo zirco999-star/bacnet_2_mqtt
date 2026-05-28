@@ -20,7 +20,8 @@ SemaphoreHandle_t cache_mutex = NULL;
 
 static uint8_t last_apdu[512];
 static uint16_t last_apdu_len = 0;
-static uint8_t current_invoke_id = 0;
+static uint8_t last_sent_invoke_id = 0;
+static uint8_t next_invoke_id = 10;
 static uint8_t retry_count = 0;
 
 // --- UTILS CRC ---
@@ -92,7 +93,9 @@ static void send_mstp_frame(uint8_t target_mac, uint8_t type, const uint8_t* apd
     if (apdu != NULL && len > 0) {
         memcpy(last_apdu, apdu, len);
         last_apdu_len = len;
-        current_invoke_id = apdu[1];
+        // L'Invoke ID est à l'index 4 de l'APDU car il y a 4 octets de NPDU (01 04 02 73)
+        if (len > 4) last_sent_invoke_id = apdu[4];
+        else last_sent_invoke_id = 0xFF; 
     }
     uint8_t buffer[512+10];
     buffer[0]=0x55; buffer[1]=0xFF; buffer[2]=type; buffer[3]=target_mac; buffer[4]=sysCfg.mac_address;
@@ -118,6 +121,7 @@ uint16_t build_read_property_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t o
 }
 
 uint16_t build_write_property_name_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, const char* new_name) {
+    if (new_name == NULL) return 0;
     uint16_t len = 0;
     buffer[len++] = 0x01; buffer[len++] = 0x04; buffer[len++] = 0x02; buffer[len++] = 0x03;
     buffer[len++] = invoke_id; buffer[len++] = 0x0F; buffer[len++] = 0x0C;
@@ -204,7 +208,7 @@ static void bacnet_task(void *pv) {
     uint32_t last_rx_time = millis(); uint32_t timer_silence = millis();
     uint8_t token_skip_count = 0; bool waiting_for_reply = false, ReceivedValidFrame = false;
     uint8_t frame_type = 0, dest_mac = 0, src_mac = 0;
-    uint8_t current_invoke_id = 10, current_poll_idx = 0, current_dev_idx = 0;
+    uint8_t current_poll_idx = 0, current_dev_idx = 0;
     uint32_t heartbeat_timer = 0;
     static uint32_t last_who_is_time = 0;
     static uint8_t next_station;
@@ -212,7 +216,7 @@ static void bacnet_task(void *pv) {
 
     uart_event_t event;
 
-    z_log("[BACNET] Engine v5.6 - Expert Phased Remediation\n");
+    z_log("[BACNET] Engine %s - TSM Enabled (No-Ghost Strategy)\n", VERSION_GLOBAL);
 
     for (;;) {
         if (xQueueReceive(uart_evt_queue, (void *)&event, 0) == pdTRUE) {
@@ -366,7 +370,7 @@ static void bacnet_task(void *pv) {
                             mstp_state = MSTP_DONE_WITH_TOKEN;
                         } else if (has_job && current_job.type == JOB_WRITE_PROP) {
                             uint8_t buffer[256];
-                            uint16_t apdu_len = build_write_property_name_apdu(buffer, current_invoke_id, current_job.obj_type, current_job.obj_instance, current_job.name.c_str());
+                            uint16_t apdu_len = build_write_property_name_apdu(buffer, next_invoke_id++, current_job.obj_type, current_job.obj_instance, current_job.name);
                             token_skip_count = 0; retry_count=0; waiting_for_reply = true;
                             send_mstp_frame(current_job.target_mac, 0x05, buffer, apdu_len);
                             frame_count++;
@@ -379,22 +383,23 @@ static void bacnet_task(void *pv) {
                             if (dev.enabled) {
                                 if (!dev.discovery_done) {
                                     // --- DISCOVERY LOGIC ---
-                                    if (dev.disc_step == DISC_DEV_ID) apdu_len = build_read_property_apdu(apdu, current_invoke_id++, 8, 4194303, 75, -1);
-                                    else if (dev.disc_step == DISC_DEV_NAME) apdu_len = build_read_property_apdu(apdu, current_invoke_id++, 8, dev.device_id, 77, -1);
-                                    else if (dev.disc_step == DISC_DEV_VENDOR) apdu_len = build_read_property_apdu(apdu, current_invoke_id++, 8, dev.device_id, 121, -1);
-                                    else if (dev.disc_step == DISC_OBJ_COUNT) apdu_len = build_read_property_apdu(apdu, current_invoke_id++, 8, dev.device_id, 76, 0);
+                                    if (dev.disc_step == DISC_DEV_ID) apdu_len = build_read_property_apdu(apdu, next_invoke_id++, 8, 4194303, 75, -1);
+                                    else if (dev.disc_step == DISC_DEV_NAME) apdu_len = build_read_property_apdu(apdu, next_invoke_id++, 8, dev.device_id, 77, -1);
+                                    else if (dev.disc_step == DISC_DEV_VENDOR) apdu_len = build_read_property_apdu(apdu, next_invoke_id++, 8, dev.device_id, 121, -1);
+                                    else if (dev.disc_step == DISC_OBJ_COUNT) apdu_len = build_read_property_apdu(apdu, next_invoke_id++, 8, dev.device_id, 76, 0);
                                     else if (dev.disc_obj_idx < dev.objects.size()) {
                                         auto& o = dev.objects[dev.disc_obj_idx];
-                                        if (dev.disc_step == DISC_OBJ_OID) apdu_len = build_read_property_apdu(apdu, current_invoke_id++, 8, dev.device_id, 76, dev.disc_obj_idx + 1);
-                                        else if (dev.disc_step == DISC_OBJ_NAME) apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, 77, -1);
-                                        else if (dev.disc_step == DISC_OBJ_UNITS) apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, 117, -1);
+                                        if (dev.disc_step == DISC_OBJ_OID) apdu_len = build_read_property_apdu(apdu, next_invoke_id++, 8, dev.device_id, 76, dev.disc_obj_idx + 1);
+                                        else if (dev.disc_step == DISC_OBJ_NAME) apdu_len = build_read_property_apdu(apdu, next_invoke_id++, o.type, o.instance, 77, -1);
+                                        else if (dev.disc_step == DISC_OBJ_UNITS) apdu_len = build_read_property_apdu(apdu, next_invoke_id++, o.type, o.instance, 117, -1);
                                         else if (dev.disc_step == DISC_OBJ_STATES) {
-                                            if (o.expected_states_count == 0) apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, 110, 0);
-                                            else if (o.state_texts.size() < o.expected_states_count) apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, 110, o.state_texts.size() + 1);
-                                            else { dev.disc_step = DISC_OBJ_VALUE; apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, 85, -1); }
+                                            if (o.expected_states_count == 0) apdu_len = build_read_property_apdu(apdu, next_invoke_id++, o.type, o.instance, 110, 0);
+                                            else if (o.state_texts.size() < o.expected_states_count) apdu_len = build_read_property_apdu(apdu, next_invoke_id++, o.type, o.instance, 110, o.state_texts.size() + 1);
+                                            else { dev.disc_step = DISC_OBJ_VALUE; apdu_len = build_read_property_apdu(apdu, next_invoke_id++, o.type, o.instance, 85, -1); }
                                         }
-                                        else if (dev.disc_step == DISC_OBJ_VALUE) apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, 85, -1);
-                                    } else { 
+                                        else if (dev.disc_step == DISC_OBJ_VALUE) apdu_len = build_read_property_apdu(apdu, next_invoke_id++, o.type, o.instance, 85, -1);
+                                    }
+ else { 
                                         dev.discovery_done = true; save_device_objects_locked(dev.device_id); 
                                         z_log("[BACNET] Discovery Successfully Finalized for ID:%lu.\n", dev.device_id);
                                         for (auto& obj : dev.objects) {
@@ -414,7 +419,7 @@ static void bacnet_task(void *pv) {
                                         current_poll_idx = (current_poll_idx + 1) % count;
                                         auto& o = dev.objects[current_poll_idx];
                                         if (o.enabled && o.type != 8 && o.type != 65535 && (millis() - o.last_update > (sysCfg.bacnet_poll_interval * 1000))) { 
-                                            apdu_len = build_read_property_apdu(apdu, current_invoke_id++, o.type, o.instance, 85, -1); 
+                                            apdu_len = build_read_property_apdu(apdu, next_invoke_id++, o.type, o.instance, 85, -1); 
                                         }
                                     }
                                 }
@@ -489,8 +494,14 @@ static void bacnet_task(void *pv) {
                     if (dest_mac == sysCfg.mac_address) {
                         if (pdu_type == 0x20) { // Simple-ACK (Succès WriteProperty)
                             z_log("[BACNET] WriteProperty SUCCESS (Invoke ID %d)\n", apdu[1]);
+                            last_sent_invoke_id = 0xFF; 
                         } 
                         else if (pdu_type == 0x30) { // Complex-ACK (Succès ReadProperty)
+                            uint8_t invoke_id = apdu[1];
+                            if (invoke_id != last_sent_invoke_id) {
+                                z_log("[BACNET] Complex-ACK ignored (InvokeID mismatch: %d != %d)\n", invoke_id, last_sent_invoke_id);
+                                waiting_for_reply = true; break;
+                            }
                             uint16_t apdu_pos = 3; BACnetTag t;
                             while (apdu_pos < apdu_len && decode_next_tag(apdu, &apdu_pos, apdu_len, &t)) {
                                 if (t.isOpening && t.number == 3) {
@@ -558,9 +569,13 @@ static void bacnet_task(void *pv) {
                                                                 char n[33]; uint8_t enc = apdu[apdu_pos]; 
                                                                 if (enc == 0) { uint16_t slen = std::min((int)val_tag.len - 1, 32); memcpy(n, &apdu[apdu_pos+1], slen); n[slen]=0; } 
                                                                 else { int slen=0; for(int i=2; i<val_tag.len && slen<32; i+=2) n[slen++]=apdu[apdu_pos+i]; n[slen]=0; }
-                                                                o.state_texts.push_back(String(n));
-                                                                z_log("[BACNET] Obj %u State %u/%u: %s\n", dev.disc_obj_idx+1, (uint32_t)o.state_texts.size(), (uint32_t)o.expected_states_count, n);
-                                                                if (o.state_texts.size() >= o.expected_states_count) dev.disc_step = DISC_OBJ_VALUE;
+                                                                
+                                                                // PROTECTION IDEMPOTENCE : On ne push que si on attend encore cet index
+                                                                if (o.state_texts.size() < o.expected_states_count) {
+                                                                    o.state_texts.push_back(String(n));
+                                                                    z_log("[BACNET] Obj %u State %u/%u: %s\n", dev.disc_obj_idx+1, (uint32_t)o.state_texts.size(), (uint32_t)o.expected_states_count, n);
+                                                                    if (o.state_texts.size() >= o.expected_states_count) dev.disc_step = DISC_OBJ_VALUE;
+                                                                }
                                                             }
                                                         }
                                                         // --- TRAITEMENT DE LA VALEUR DE L'OBJET ---
@@ -633,14 +648,15 @@ static void bacnet_task(void *pv) {
                                     }
                                 } else apdu_pos += t.len;
                             }
+                            last_sent_invoke_id = 0xFF;
                         }
                         else if (pdu_type == 0x50 || pdu_type == 0x70 || pdu_type == 0x40) { 
-                            // pdu_type 0x50 = Error, 0x70 = Abort, 0x40 = Segment-ACK
                             uint8_t invoke_id = apdu[1];
 
                             // 1. Vérification que cette erreur concerne notre requête en cours
-                            if (invoke_id == current_invoke_id) {
+                            if (invoke_id == last_sent_invoke_id) {
                                 z_log("[BACNET] TSM: Réception Erreur/Abort 0x%02X, InvokeID: %d\n", pdu_type, invoke_id);
+
                                 
                                 // 2. Logique de Retry
                                 if (retry_count < sysCfg.max_retries) {
@@ -669,7 +685,7 @@ static void bacnet_task(void *pv) {
                                     // Pas de break ici, on laisse tomber plus bas pour clôturer le jeton
                                 }
                             } else { // inconsistency trame received
-                                z_log("[BACNET] ignored inconsistency frame : %d != %d\n", invoke_id, current_invoke_id);
+                                z_log("[BACNET] ignored inconsistency frame : %d != %d\n", invoke_id, last_sent_invoke_id);
                                 waiting_for_reply = true; // On maintient l'attente
                                 break;                    // On sort du switch pour ne pas clôturer le jeton
                             }
@@ -763,22 +779,19 @@ uint8_t get_error_reason(uint8_t* apdu) {
 }
 
 void publish_all_names() {
-    if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
-        for (auto& dev : bacnet_network_cache) {
-            for (auto& obj : dev.objects) {
-                // On saute les objets non valides ou désactivés
-                if (obj.type == 65535 || obj.enabled == false) continue;
+    // Note : Cette fonction est appelée par bacnet_task qui détient déjà le mutex
+    for (auto& dev : bacnet_network_cache) {
+        for (auto& obj : dev.objects) {
+            // On saute les objets non valides ou désactivés
+            if (obj.type == 65535 || obj.enabled == false) continue;
 
-                // --- LOGIQUE DE SYNCHRO MQTT ---
-                // comparaison avec strcmp pour char[]
-                if (!obj.name_published || (strcmp(obj.name, obj.last_mqtt_name) != 0)) {
-                    publish_mqtt_topic(dev.device_id, obj, 77, true);
-                    obj.name_published = true;
-                    strlcpy(obj.last_mqtt_name, obj.name, sizeof(obj.last_mqtt_name));
-                    z_log("[MQTT] Sync nom OK : %s\n", obj.name);
-                }
+            // --- LOGIQUE DE SYNCHRO MQTT ---
+            if (!obj.name_published || (strcmp(obj.name, obj.last_mqtt_name) != 0)) {
+                publish_mqtt_topic(dev.device_id, obj, 77, true);
+                obj.name_published = true;
+                strlcpy(obj.last_mqtt_name, obj.name, sizeof(obj.last_mqtt_name));
+                z_log("[MQTT] Sync nom OK : %s\n", obj.name);
             }
         }
-        xSemaphoreGive(cache_mutex);
     }
 }
