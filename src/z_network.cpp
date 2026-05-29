@@ -151,7 +151,7 @@ void load_configuration() {
     sysCfg.token_skip = DEFAULT_TOKEN_SKIP;
     sysCfg.mqtt_poll_interval = DEFAULT_MQTT_POLL;
     sysCfg.bacnet_poll_interval = DEFAULT_BACNET_POLL;
-    sysCfg.log_level = LOG_INFO; // Niveau par défaut
+    sysCfg.log_level = LOG_INFO; 
     sysCfg.max_info_frames = DEFAULT_MAX_INFO_FRAMES;
     strlcpy(sysCfg.admin_user, "admin", 32);
     strlcpy(sysCfg.admin_pass, "admin1234", 64);

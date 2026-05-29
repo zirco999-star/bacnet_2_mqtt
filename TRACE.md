@@ -1,3 +1,13 @@
+## État au 29 Mai 2026 (Version de Production Stable - v5.8.1) - DÉPLOYÉ
+- **Version** : v5.8.1 (Finale)
+- **Polling Optimisé** : 
+    - Le moteur MS/TP scanne désormais toute la liste des objets à chaque jeton pour servir immédiatement les points expirés.
+    - Correction du deadlock FSM (token hogging) qui bloquait le ring en cas d'absence de données.
+    - Intervalle de polling BACnet et MQTT respecté (testé avec 6 objets @ 15/20s).
+- **Stabilité Mutex** : Toutes les routes API Web sont sécurisées et thread-safe.
+- **Observabilité** : Logs normalisés horodatés. Mode INFO par défaut, DEBUG disponible pour analyse granulaire du polling.
+- **Validation** : Confirmée par monitoring WebSocket et agent Home Assistant.
+
 ## État au 29 Mai 2026 (Visibilité Logs & Stabilité Mutex - v5.8.1) - DÉPLOYÉ
 - **Version** : v5.8.1
 - **Mutex** : Remédiation complète des deadlocks sur les routes API (`/api/objects`, `/api/save_objects`, `/api/delete_device`, `/api/save_object`).

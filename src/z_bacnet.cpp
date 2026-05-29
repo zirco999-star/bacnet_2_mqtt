@@ -292,20 +292,28 @@ static void bacnet_task(void *pv) {
                                     } else {
                                         size_t count = dev.objects.size();
                                         if (count > 0) {
-                                            uint8_t prev_poll_idx = current_poll_idx;
-                                            current_poll_idx = (current_poll_idx + 1) % count; 
-                                            auto& o = dev.objects[current_poll_idx];
-                                            
-                                            if (current_poll_idx == 0 && prev_poll_idx == count - 1) {
-                                                current_dev_idx = (current_dev_idx + 1) % bacnet_network_cache.size();
-                                                if (current_dev_idx == 0) {
-                                                    z_log(LOG_INFO, "BACNET", "Cycle Complete: All devices and objects polled.\n");
-                                                }
-                                            }
+                                            for (size_t i = 0; i < count; i++) {
+                                                uint8_t prev_idx = current_poll_idx;
+                                                current_poll_idx = (current_poll_idx + 1) % count;
+                                                auto& o = dev.objects[current_poll_idx];
 
-                                            if (o.enabled && o.type != 8 && (millis() - o.last_update > (sysCfg.bacnet_poll_interval * 1000))) { 
-                                                z_log(LOG_DEBUG, "BACNET", "Polling Dev %lu Obj %u.%lu\n", (unsigned long)dev.device_id, o.type, (unsigned long)o.instance);
-                                                apdu_len = build_read_property_apdu(apdu, next_invoke_id++, o.type, o.instance, 85, -1);
+                                                if (current_poll_idx == 0 && prev_idx == count - 1) {
+                                                    current_dev_idx = (current_dev_idx + 1) % bacnet_network_cache.size();
+                                                    static uint32_t last_cycle_log_t = 0;
+                                                    if (millis() - last_cycle_log_t > (sysCfg.mqtt_poll_interval * 1000)) {
+                                                        z_log(LOG_INFO, "BACNET", "Cycle Complete: Device %lu scanned.\n", (unsigned long)dev.device_id);
+                                                        last_cycle_log_t = millis();
+                                                    }
+                                                }
+
+                                                if (o.enabled && o.type != 8) {
+                                                    uint32_t elapsed = millis() - o.last_update;
+                                                    if (o.last_update == 0 || elapsed > (sysCfg.bacnet_poll_interval * 1000)) { 
+                                                        z_log(LOG_DEBUG, "BACNET", "Polling Dev %lu Obj %u.%lu\n", (unsigned long)dev.device_id, o.type, (unsigned long)o.instance);
+                                                        apdu_len = build_read_property_apdu(apdu, next_invoke_id++, o.type, o.instance, 85, -1);
+                                                        break; 
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -318,9 +326,9 @@ static void bacnet_task(void *pv) {
                             send_mstp_frame(target_mac, 0x05, apdu, apdu_len); 
                             frame_count++; mstp_state = MSTP_WAIT_FOR_REPLY; 
                         }
-                        else mstp_state = MSTP_DONE_WITH_TOKEN;
+                        else mstp_state = MSTP_PASS_TOKEN; 
                     }
-                } else mstp_state = MSTP_DONE_WITH_TOKEN;
+                } else mstp_state = MSTP_PASS_TOKEN; 
                 break;
             case MSTP_WAIT_FOR_REPLY:
                 if (ReceivedValidFrame) {
