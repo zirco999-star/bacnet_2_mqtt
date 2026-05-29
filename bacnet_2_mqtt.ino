@@ -30,6 +30,9 @@ void setup() {
     delay(1000);
     Serial.println("\n\n>>> " + String(VERSION_GLOBAL) + " - DUAL CORE MODE <<<");
 
+    // Initialisation prioritaire des Mutex (pour le NVS)
+    setup_system_mutexes();
+
     // --- Routine de Self-Healing NVS ---
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND || err == ESP_ERR_NVS_NOT_FOUND) {

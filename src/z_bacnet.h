@@ -109,7 +109,6 @@ enum DISC_STEP_T {
     DISC_OBJ_OID,     
     DISC_OBJ_NAME,    
     DISC_OBJ_UNITS,
-    DISC_OBJ_STATES,   
     DISC_OBJ_VALUE    
 };
 
@@ -155,6 +154,8 @@ struct BACnetDevice {
     bool discovery_done = false;
     DISC_STEP_T disc_step = DISC_DEV_ID;
     uint16_t disc_obj_idx = 0;
+    uint16_t total_slots = 0;
+    uint32_t debug_oid = 0;
     bool reload_single = false;
 
     BACnetDevice() {} 
@@ -210,6 +211,7 @@ extern QueueHandle_t mqtt_publish_queue;
 extern QueueHandle_t bacnet_job_queue;
 
 void setup_bacnet_engine();
+void setup_system_mutexes();
 void bacnet_abort_current_transaction();
 bool enqueue_bacnet_job(BACnetJob job);
 bool enqueue_mqtt_publish(MQTTPublishJob pubJob);

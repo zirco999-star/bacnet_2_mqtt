@@ -1,3 +1,12 @@
+## État au 29 Mai 2026 (Finalisation & Robustesse Discovery - v5.9.6) - DÉPLOYÉ
+- **Version** : v5.9.6 (PROJET FINALISÉ)
+- **Découverte Intégrale** : Succès de l'énumération des 98 objets du Distech MAC 4 (ECB-203). Filtrage robuste des slots vides (0xFFFFFFFF) et capture des noms réels (Object_Name).
+- **Stabilité NVS** : Correction du débordement de buffer dans `save_device_objects_locked`. Le compteur d'objets est désormais dynamiquement aligné sur le nombre d'objets valides trouvés.
+- **Nuclear Reset** : Implémentation de `/api/reset_cache` utilisant `nvs_flash_erase()` pour une remise à zéro garantie du système sans crash.
+- **Optimisation Timings** : Passage du `apdu_timeout` à 1000ms et conformité NPCI `0x01 0x04` pour une interopérabilité maximale avec les automates lents.
+- **Polling Précoce** : Activation du polling automatique pour les types Analog et Binary dès la détection de l'OID, assurant une publication MQTT immédiate après découverte.
+- **Validation** : Système stable, sans fuite mémoire, opérant sur les deux cœurs de l'ESP32-S3.
+
 ## État au 29 Mai 2026 (Version de Production Stable - v5.8.1) - DÉPLOYÉ
 - **Version** : v5.8.1 (Finale)
 - **Polling Optimisé** : 
