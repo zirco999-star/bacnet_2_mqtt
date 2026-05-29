@@ -1,0 +1,41 @@
+Connecté au WebSocket logs...
+Log: [58082][1][DBG][MUTEX] Take [bacnet_task_discovery] OK
+
+Log: [58082][1][DBG][MUTEX] Give [bacnet_task_discovery] OK
+
+Log: [58133][1][DBG][MUTEX] Take [bacnet_task_discovery] OK
+
+Log: [58133][1][DBG][MUTEX] Give [bacnet_task_discovery] OK
+
+Log: [58143][1][DBG][MUTEX] Take [bacnet_task_discovery] OK
+
+Log: [58143][1][DBG][MUTEX] Give [bacnet_task_discovery] OK
+
+Log: [58143][1][DBG][MUTEX] Take [bacnet_task_use_token] OK
+
+Log: [58146][1][DBG][BACNET] Polling Obj 96 (T19 I2)
+
+Log: [58151][1][DBG][MUTEX] Give [bacnet_task_use_token] OK
+
+Log: [58171][1][DBG][MUTEX] Take [bacnet_task_discovery] OK
+
+Log: [58171][1][DBG][MUTEX] Give [bacnet_task_discovery] OK
+
+Log: [58172][1][DBG][MUTEX] Take [complex_ack] OK
+
+Log: [58174][1][DBG][MUTEX] Give [complex_ack] OK
+
+Log: [58178][1][DBG][MUTEX] Take [bacnet_task_use_token] OK
+
+Log: [58183][1][DBG][BACNET] Polling Obj 97 (T19 I50)
+
+Log: [58183][0][DBG][MQTT] Published: bacnet/364004/MSV/2/state = 1.00
+
+Log: [58187][1][DBG][MUTEX] Give [bacnet_task_use_token] OK
+
+Log: [58206][1][DBG][MUTEX] Take [bacnet_task_discovery] OK
+
+Log: [58206][1][DBG][MUTEX] Give [bacnet_task_discovery] OK
+
+Log: [58208][1][DBG][MUTEX] Take [complex_ack] OK
+

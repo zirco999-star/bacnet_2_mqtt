@@ -17,7 +17,7 @@ uint32_t reboot_timer = 0;
 
 // Tâche Système pour le Core 0 (WiFi, MQTT, OTA)
 void system_task(void *pvParameters) {
-    z_log("[SYS] System Task started on Core %d\n", xPortGetCoreID());
+    z_log(LOG_INFO, "SYS", "System Task started on Core %d\n", xPortGetCoreID());
     for(;;) {
         handle_network();
         handle_mqtt();

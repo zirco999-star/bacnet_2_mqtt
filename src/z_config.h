@@ -11,15 +11,15 @@
 #include <mqtt_client.h>
 
 // DEFAULT CONFIGURATION
-#define VERSION_GLOBAL "v5.7.19"
+#define VERSION_GLOBAL "v5.8.1"
 #define DEFAULT_SSID    "Freebox-A4297A"
 #define DEFAULT_STATIC_IP "192.168.1.50"
 #define DEFAULT_GATEWAY "192.168.1.254"
 #define DEFAULT_SUBNET "255.255.255.0"
-#define DEFAULT_MAX_MASTER 5
+#define DEFAULT_MAX_MASTER 127
 #define DEFAULT_DEVICE_ID 123
 #define DEFAULT_MAC_ADDRESS 1
-#define DEFAULT_APDU_TIMEOUT 300
+#define DEFAULT_APDU_TIMEOUT 500
 #define DEFAULT_MAX_RETRIES 3
 #define DEFAULT_BACNET_POLL 30
 #define DEFAULT_MQTT_SERVER "192.168.1.11"
@@ -34,6 +34,12 @@
 #define RTS_PIN 21
 #define RS485_UART_PORT UART_NUM_1
 #define WEB_PORT 80
+
+// LOG LEVELS (From V-1608)
+#define LOG_ERROR 1
+#define LOG_WARN  2
+#define LOG_INFO  3
+#define LOG_DEBUG 4
 
 struct Config {
     char wifi_ssid[32];
@@ -61,6 +67,7 @@ struct Config {
     uint8_t token_skip;
     uint8_t max_info_frames;
 };
+
 extern Config sysCfg;
 extern AsyncWebServer webServer;
 extern AsyncWebSocket ws;

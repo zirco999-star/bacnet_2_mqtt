@@ -1,6 +1,25 @@
-- **Prochaine Étape** : Surveillance de la stabilité de la file MQTT et validation du pacing.
+## État au 29 Mai 2026 (Visibilité Logs & Stabilité Mutex - v5.8.1) - DÉPLOYÉ
+- **Version** : v5.8.1
+- **Mutex** : Remédiation complète des deadlocks sur les routes API (`/api/objects`, `/api/save_objects`, `/api/delete_device`, `/api/save_object`).
+- **Logs** : 
+    - Restauration de la visibilité granulaire du polling (DEBUG).
+    - Ajout d'un log informatif à chaque fin de cycle complet de polling (INFO).
+    - Normalisation du format de log horodaté avec TAG et Core ID.
+- **MQTT** : Ajout des logs DEBUG pour les publications de noms et de valeurs.
+- **Validation** : Flash OTA réussi sur 192.168.1.50, stabilité confirmée sans crash lors des accès API concurrents.
+- **Statut** : Version stable et communicative.
 
-## État au 28 Mai 2026 (Optimisation MQTT & Logs - v5.7.19) - EN COURS
+- **Prochaine Étape** : Déploiement OTA et tests sur site.
+
+## État au 29 Mai 2026 (Validation Finale & Compilation - v5.8.0) - TERMINÉ
+- **Version** : v5.8.0
+- **Validation MQTT** : Audit de la `mqtt_publish_queue` (taille 100) et du pacing (5ms) validé.
+- **Home Assistant** : Vérification des templates Jinja2 pour les objets Multi-State (décalage d'index 1-based) validée.
+- **Nettoyage UI** : Confirmation de la suppression totale des références à l'EDE dans `z_ui.h`.
+- **Intégrité** : Compilation réussie via `arduino-cli`.
+- **Statut** : Version finale prête pour déploiement.
+
+## État au 28 Mai 2026 (Optimisation MQTT & Logs - v5.7.19) - DÉPLOYÉ
 - **Version** : v5.7.19
 - **MQTT** : Ajout d'un pacing de 5ms dans `mqtt_gatekeeper_task` pour éviter la saturation `AsyncTCP`.
 - **BACnet** : Restriction des logs `Complex-ACK Property ID` au mode debug (`sysCfg.debug`).

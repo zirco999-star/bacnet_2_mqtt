@@ -66,7 +66,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         /* DUAL CONSOLE */
         .console-split { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
         @media (max-width: 800px) { .console-split { grid-template-columns: 1fr; } }
-        .console-box { background: #000; border: 1px solid var(--border); border-radius: 8px; height: 250px; overflow-y: auto; padding: 0.5rem; font-size: 0.65rem; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; white-space: pre-wrap; word-break: break-all; }
+        .console-box { background: #000; border: 1px solid var(--border); border-radius: 8px; height: 350px; overflow-y: auto; padding: 0.5rem; font-size: 0.65rem; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; white-space: pre-wrap; word-break: break-all; }
         .c0 { border-left: 3px solid var(--success); }
         .c1 { border-left: 3px solid var(--primary); }
 
@@ -119,6 +119,13 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         input:checked + .slider:before { transform: translateX(16px); }
 
         .grisé > td:not(:last-child) { opacity: 0.4; transition: opacity 0.3s; }
+        
+        /* LOG COLORS */
+        .l-err { color: var(--error); font-weight: 800; }
+        .l-wrn { color: var(--warning); font-weight: 800; }
+        .l-inf { color: var(--success); }
+        .l-dbg { color: #60a5fa; }
+        .l-tag { color: var(--muted); font-size: 0.6rem; }
     </style>
 </head>
 <body>
@@ -231,6 +238,14 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     <div class="f-item"><label>MQTT User</label><input type="text" name="mqu" id="in-mqu"></div>
                     <div class="f-item"><label>MQTT Password</label><input type="password" name="mqp" id="in-mqp" placeholder="******"></div>
                     <div class="span-2 f-item"><label>Topic Prefix</label><input type="text" name="mqpr" id="in-mqpr"></div>
+                    <div class="span-2 f-item"><label>Log Level</label>
+                        <select name="lvl" id="in-lvl">
+                            <option value="1">ERROR</option>
+                            <option value="2">WARN</option>
+                            <option value="3">INFO</option>
+                            <option value="4">DEBUG</option>
+                        </select>
+                    </div>
                     <div class="span-2"><button type="button" class="btn btn-p" style="width:100%" onclick="saveForm('f-mqtt')">Apply MQTT Settings</button></div>
                 </form>
             </details>
@@ -317,6 +332,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('in-tskip').value = d.tskip || 0;
                 document.getElementById('in-mif').value = d.mif || 3;
                 document.getElementById('in-adu').value = d.adu || "admin";
+                document.getElementById('in-lvl').value = d.lvl || 3;
                 toggleStatic();
             }).catch(e => console.error("Config load error", e));
         }
@@ -330,13 +346,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
         function refreshBACnet() {
             if (currentTab !== 't-bac') return;
-            
-            // Bloquer le refresh si l'utilisateur a le focus sur un champ de saisie
             if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'SELECT')) {
                 if (document.activeElement.closest('#bac-list')) return;
             }
 
-            // Save accordion states before redrawing
             document.querySelectorAll('.dev-card').forEach(det => {
                 const id = det.dataset.did;
                 if(id) devBoxState[id] = det.open;
@@ -384,7 +397,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('bac-list').innerHTML = html || "<div style='text-align:center;padding:2rem;color:var(--muted)'>No devices found.</div>";
             }).catch(e => {
                 console.error("BACnet list error", e);
-                document.getElementById('bac-list').innerHTML = "<div style='text-align:center;padding:2rem;color:var(--error)'>API Error (Check Terminal)</div>";
             });
         }
 
@@ -467,9 +479,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     pList.innerHTML = phtml;
                     document.getElementById('s-nodes').innerText = d.devices.length;
                 }
-                
                 if (currentTab === 't-bac') refreshBACnet();
-                
             }).catch(e => console.error("Status update error", e));
         }
 
@@ -477,14 +487,22 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             let ws = new WebSocket(`ws://${window.location.host}/ws-logs`);
             ws.onmessage = (e) => {
                 const data = e.data;
-                let target = null; let text = data;
-                if(data.startsWith("0|")) { target = document.getElementById('log-c0'); text = data.substring(2); }
-                else if(data.startsWith("1|")) { target = document.getElementById('log-c1'); text = data.substring(2); }
-                if(target) {
-                    const line = document.createElement('div');
-                    line.textContent = text; target.appendChild(line);
-                    target.scrollTop = target.scrollHeight;
-                    if(target.childNodes.length > 200) target.removeChild(target.firstChild);
+                // PARSER INTELLIGENT v5.8.0
+                const match = data.match(/^\[\d+\]\[(\d)\]\[(\w+)\]\[(.*?)\] (.*)$/);
+                if (match) {
+                    const core = match[1];
+                    const level = match[2];
+                    const tag = match[3];
+                    const msg = match[4];
+                    const target = document.getElementById('log-c' + core);
+                    if (target) {
+                        const line = document.createElement('div');
+                        const lvlClass = 'l-' + level.toLowerCase();
+                        line.innerHTML = `<span class="l-tag">[${tag}]</span> <span class="${lvlClass}">${level}</span>: ${msg}`;
+                        target.appendChild(line);
+                        target.scrollTop = target.scrollHeight;
+                        if(target.childNodes.length > 200) target.removeChild(target.firstChild);
+                    }
                 }
             };
         } catch(e) {}
