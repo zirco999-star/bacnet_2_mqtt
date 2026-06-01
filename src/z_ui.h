@@ -429,9 +429,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                         radar[i].style.backgroundColor = color; radar[i].classList.add('active');
                     } else { radar[i].style.backgroundColor = '#27272a'; }
                 }
-                document.getElementById('s-ip').innerText = d.ip || '---';
-                document.getElementById('s-gw').innerText = d.gw || '---';
-                document.getElementById('s-sn').innerText = d.mask || '---';
+                document.getElementById('s-ip').innerText = d.cur_ip || '---';
+                document.getElementById('s-gw').innerText = d.cur_gw || '---';
+                document.getElementById('s-sn').innerText = d.cur_mask || '---';
                 document.getElementById('s-mqs').innerText = d.mqs || '---';
                 document.getElementById('s-tokens').innerText = d.mstp_cnt || 0;
                 document.getElementById('s-rx').innerText = d.mstp_rx || 0;

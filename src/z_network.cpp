@@ -131,14 +131,14 @@ void load_configuration() {
     // Initialisation des valeurs par défaut
     strlcpy(sysCfg.wifi_ssid, "", 32);
     strlcpy(sysCfg.wifi_pass, "", 64);
-    sysCfg.static_ip = true; 
+    sysCfg.static_ip = false; // Par défaut en DHCP
     strlcpy(sysCfg.local_ip, DEFAULT_STATIC_IP, 16);
     strlcpy(sysCfg.gateway, DEFAULT_GATEWAY, 16);
     strlcpy(sysCfg.subnet, DEFAULT_SUBNET, 16);
-    sysCfg.mac_address = DEFAULT_MAC_ADDRESS; 
-    sysCfg.max_master = DEFAULT_MAX_MASTER; 
+    sysCfg.mac_address = DEFAULT_MAC_ADDRESS;
+    sysCfg.max_master = DEFAULT_MAX_MASTER;
     sysCfg.device_id = DEFAULT_DEVICE_ID;
-    sysCfg.apdu_timeout = DEFAULT_APDU_TIMEOUT; 
+    sysCfg.apdu_timeout = DEFAULT_APDU_TIMEOUT;
     sysCfg.max_retries = DEFAULT_MAX_RETRIES;
     strlcpy(sysCfg.mqtt_server, DEFAULT_MQTT_SERVER, 32);
     sysCfg.mqtt_port = 1883;
@@ -149,6 +149,9 @@ void load_configuration() {
     sysCfg.token_skip = DEFAULT_TOKEN_SKIP;
     sysCfg.mqtt_poll_interval = DEFAULT_MQTT_POLL;
     sysCfg.bacnet_poll_interval = DEFAULT_BACNET_POLL;
+    sysCfg.max_info_frames = DEFAULT_MAX_INFO_FRAMES;
+    strlcpy(sysCfg.admin_user, "admin", 32);
+    strlcpy(sysCfg.admin_pass, "admin1234", 64);
 
 
     Preferences prefs;
@@ -414,10 +417,18 @@ void setup_network_infrastructure() {
         JsonDocument& doc = *doc_ptr;
         doc["ver"] = VERSION_GLOBAL;
         doc["rssi"] = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
-        doc["ip"] = is_ap_mode ? "192.168.4.1" : WiFi.localIP().toString();
-        doc["mask"] = is_ap_mode ? "255.255.255.0" : sysCfg.subnet; 
-        doc["gw"] = is_ap_mode ? "192.168.4.1" : sysCfg.gateway;
+        
+        // Valeurs LIVE (pour le dashboard)
+        doc["cur_ip"] = is_ap_mode ? "192.168.4.1" : WiFi.localIP().toString();
+        doc["cur_mask"] = is_ap_mode ? "255.255.255.0" : WiFi.subnetMask().toString();
+        doc["cur_gw"] = is_ap_mode ? "192.168.4.1" : WiFi.gatewayIP().toString();
+
+        // Valeurs CONFIGURÉES (pour le formulaire de réglages)
+        doc["ip"] = sysCfg.local_ip;
+        doc["mask"] = sysCfg.subnet; 
+        doc["gw"] = sysCfg.gateway;
         doc["static"] = sysCfg.static_ip;
+        
         doc["mqtt"] = is_mqtt_connected();
         doc["mqs"] = sysCfg.mqtt_server;
         doc["mqu"] = sysCfg.mqtt_user;

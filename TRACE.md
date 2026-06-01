@@ -1,5 +1,11 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 1 Juin 2026 (Fix Réseau & Factory Reset - v5.8.9) - DÉPLOYÉ
+- **Version** : v5.8.9
+- **Correction Factory Reset** : Le mode DHCP est désormais le mode par défaut après un reset (Static IP décoché).
+- **Séparation Statut/Config** : L'API `/api/status` et l'interface Web distinguent maintenant clairement l'état réseau actuel (ex: IP de l'Access Point) de la configuration stockée. Cela évite que les formulaires de réglages ne soient pré-remplis avec l'IP `192.168.4.1` en mode AP.
+- **Fiabilité des Valeurs par Défaut** : Les constantes `DEFAULT_STATIC_IP`, `DEFAULT_GATEWAY` et `DEFAULT_SUBNET` sont correctement appliquées lors de l'initialisation.
+
 ## État au 1 Juin 2026 (Refresh Instantané MQTT - v5.8.8) - DÉPLOYÉ
 - **Version** : v5.8.8
 - **Réactivité accrue** : Implémentation d'une mise à jour "optimiste" après une écriture BACnet réussie.
