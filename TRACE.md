@@ -1,5 +1,23 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 1 Juin 2026 (Refonte Statistiques - v5.8.3) - DÉPLOYÉ
+- **Version** : v5.8.3
+- **Diagnostic Utile** : Séparation stricte entre signalisation du Ring et trafic de données.
+    *   **Tokens** : Nombre de jetons reçus (Santé du Ring).
+    *   **TX** : Désormais uniquement le nombre de **requêtes de données** envoyées (ReadProperty).
+    *   **RX** : Désormais uniquement le nombre de **réponses de données** valides reçues (Complex-ACK).
+- **Interprétation** : Permet de voir instantanément si le polling est efficace (TX ≈ RX) ou s'il y a des timeouts (TX > RX).
+
+## État au 1 Juin 2026 (Correction Unités & HA - v5.8.2) - DÉPLOYÉ
+- **Version** : v5.8.2
+- **Standardisation Unités** : Alignement des codes d'unités JS (`z_ui.h`) sur le standard ASHRAE 135 et le firmware C++.
+*   `62` : `%` -> `°C`
+*   `98` : `ppm` -> `%`
+*   `95` : `No Units` -> `no-units`
+- **Priorité Utilisateur** : La découverte Home Assistant utilise désormais l'unité textuelle modifiée par l'utilisateur (`unit_text`) en priorité, permettant de corriger manuellement les points sans unités.
+- **Nettoyage HA** : Les unités "no-units" ou "none" sont converties en chaîne vide pour un affichage propre dans Home Assistant.
+- **Device Class** : Extension de la détection automatique de `device_class` dans HA (température, humidité, pression, puissance, énergie, tension, courant).
+
 ## État au 1 Juin 2026 (Optimisation HA Discovery - v5.8.1) - DÉPLOYÉ
 - **Version** : v5.8.1
 - **Filtrage Home Assistant** : Seuls les objets `enabled = true` sont désormais diffusés via MQTT Auto-Discovery.

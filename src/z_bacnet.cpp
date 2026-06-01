@@ -92,7 +92,6 @@ void bacnet_abort_current_transaction() {
 
 static void uart_tx(const uint8_t *buffer, uint16_t length) {
     uart_write_bytes(RS485_UART_PORT, (const char*)buffer, length);
-    bacnetStats.ms_msgs_tx++;
 }
 
 static void send_mstp_frame(uint8_t target_mac, uint8_t type, const uint8_t* apdu, uint16_t len) {
@@ -107,6 +106,7 @@ static void send_mstp_frame(uint8_t target_mac, uint8_t type, const uint8_t* apd
     buffer[0]=0x55; buffer[1]=0xFF; buffer[2]=type; buffer[3]=target_mac; buffer[4]=sysCfg.mac_address;
     buffer[5]=(len>>8)&0xFF; buffer[6]=len&0xFF;
     buffer[7]=calc_header_crc(&buffer[2], 5);
+    if (type == 0x05 || type == 0x06) bacnetStats.ms_msgs_tx++;
     if (len > 0) {
         memcpy(&buffer[8], apdu, len);
         uint16_t crc16 = calc_data_crc(&buffer[8], len);
@@ -262,7 +262,6 @@ static void bacnet_task(void *pv) {
                     header[header_idx++] = rx_byte;
                     if (header_idx == 6) {
                         if (validate_rx_header_crc(header)) {
-                            bacnetStats.ms_msgs_rx++;
                             frame_type = header[0]; dest_mac = header[1]; src_mac = header[2];
                             data_len = (header[3] << 8) | header[4];
                             if (src_mac < 128 && src_mac != sysCfg.mac_address) {
@@ -294,6 +293,7 @@ static void bacnet_task(void *pv) {
                     data_buf[data_len+1] = rx_byte;
                     if (validate_rx_data_crc(data_buf, data_len + 2)) { 
                         ReceivedValidFrame = true; 
+                        if (frame_type == 0x05 || frame_type == 0x06) bacnetStats.ms_msgs_rx++;
                         if (frame_type == 0x00 && dest_mac == sysCfg.mac_address) {
                             delayMicroseconds(1050); 
                         }
