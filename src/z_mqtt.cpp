@@ -305,13 +305,23 @@ void publish_ha_autodiscovery() {
                     auto& dev = bacnet_network_cache[d];
                     auto& obj = dev.objects[o];
 
-                    // Filtrage ciblé (Optimisation v5.8.1)
+                    // Filtrage ciblé (Optimisation v5.8.1 & v5.8.9)
                     uint32_t t_did = target_did.load();
                     if (t_did != 0) {
-                        if (dev.device_id != t_did || obj.instance != target_inst.load() || obj.type != target_type.load()) {
-                            xSemaphoreGive(cache_mutex);
-                            continue;
-                        }
+                        bool match_dev = (dev.device_id == t_did);
+                        if (!match_dev) { xSemaphoreGive(cache_mutex); continue; }
+                        
+                        uint32_t t_inst = target_inst.load();
+                        uint16_t t_type = target_type.load();
+                        if (t_inst != 0xFFFFFFFF && obj.instance != t_inst) { xSemaphoreGive(cache_mutex); continue; }
+                        if (t_type != 0xFFFF && obj.type != t_type) { xSemaphoreGive(cache_mutex); continue; }
+                    }
+
+                    // Ne pas publier si la découverte du device n'est pas terminée (Metadata manquante)
+                    // Sauf si on est en train de forcer une suppression (obj.enabled == false)
+                    if (!dev.discovery_done && obj.enabled) {
+                        xSemaphoreGive(cache_mutex);
+                        continue;
                     }
 
                     if (obj.type != 65535) {
@@ -335,7 +345,8 @@ void publish_ha_autodiscovery() {
                         snprintf(uniq_id, sizeof(uniq_id), "bacnet_%lu_%s_%lu", (unsigned long)dev.device_id, t_str, (unsigned long)obj.instance);
                         snprintf(final_topic, sizeof(final_topic), "homeassistant/%s/%s/config", ha_component, uniq_id);
 
-                        if (obj.enabled) {
+                        // On ne publie la config que si l'objet est activé ET qu'il a un nom décent
+                        if (obj.enabled && strcmp(obj.name, "Unknown") != 0) {
                             JsonDocument doc; 
                             char base_topic[128];
                             snprintf(base_topic, sizeof(base_topic), "%s/%lu/%s/%lu", sysCfg.mqtt_prefix, (unsigned long)dev.device_id, t_str, (unsigned long)obj.instance);

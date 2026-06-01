@@ -1,5 +1,11 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 1 Juin 2026 (Nettoyage HA & Synchro Discovery - v5.9.0) - DÉPLOYÉ
+- **Version** : v5.9.0
+- **Suppression Automatique des Fantômes** : Dès que la découverte d'un équipement BACnet est terminée sur le bus MS/TP, la passerelle envoie désormais systématiquement des messages de "nettoyage" (payload vide) à Home Assistant pour tous les objets qui ne sont pas activés. Cela permet d'effacer les restes (messages retenus sur le broker) d'une session précédente après un factory reset.
+- **Sécurité Discovery** : Interdiction de publier un objet sur HA tant que ses métadonnées (Nom, Type, Unités) n'ont pas été totalement récupérées (évite l'apparition d'entités nommées "Unknown").
+- **Wildcard Sync** : Extension de la fonction `publish_ha_autodiscovery` pour supporter le rafraîchissement global d'un device (Trigger HA Discovery avec wildcards).
+
 ## État au 1 Juin 2026 (Fix Réseau & Factory Reset - v5.8.9) - DÉPLOYÉ
 - **Version** : v5.8.9
 - **Correction Factory Reset** : Le mode DHCP est désormais le mode par défaut après un reset (Static IP décoché).

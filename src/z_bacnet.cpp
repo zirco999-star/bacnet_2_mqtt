@@ -471,6 +471,10 @@ static void bacnet_task(void *pv) {
                                     else { 
                                         dev.discovery_done = true; save_device_objects_locked(dev.device_id); 
                                         z_log("[BACNET] Discovery Successfully Finalized for ID:%lu.\n", dev.device_id);
+                                        
+                                        // Synchronisation HA complète (inclut le nettoyage des objets non-activés)
+                                        trigger_ha_discovery(dev.device_id, 0xFFFFFFFF, 0xFFFF);
+                                        
                                         for (auto& obj : dev.objects) {
                                             if (obj.type == 65535) continue;
                                             if (!obj.name_published || strcmp(obj.name, obj.last_mqtt_name) != 0) {
