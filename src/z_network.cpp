@@ -464,6 +464,9 @@ void setup_network_infrastructure() {
                 d["step"] = (int)dev.disc_step;
                 d["idx"] = dev.disc_obj_idx;
                 d["total"] = dev.objects.size();
+                int sel_count = 0;
+                for(auto& o : dev.objects) if(o.enabled) sel_count++;
+                d["sel"] = sel_count;
                 d["done"] = dev.discovery_done;
             }
             xSemaphoreGive(cache_mutex);
@@ -483,8 +486,11 @@ void setup_network_infrastructure() {
                         dev.enabled = !dev.enabled;
                         if (dev.enabled) {
                             if (!dev.discovery_done) {
-                                dev.disc_step = DISC_DEV_ID;
-                                dev.disc_obj_idx = 0;
+                                // On ne reset que si on n'a pas encore atteint le stade des objets
+                                if (dev.disc_step < DISC_OBJ_OID) {
+                                    dev.disc_step = DISC_DEV_ID;
+                                    dev.disc_obj_idx = 0;
+                                }
                             }
                             z_log("[API] Device %lu ACTIVATED\n", id);
                         } else {

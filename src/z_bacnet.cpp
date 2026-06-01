@@ -442,14 +442,14 @@ static void bacnet_task(void *pv) {
                             if (current_dev_idx >= bacnet_network_cache.size()) current_dev_idx = 0;
                             auto& dev = bacnet_network_cache[current_dev_idx];
                             
-                            if (dev.enabled) {
+                            if (dev.enabled || (!dev.discovery_done && dev.disc_step <= DISC_OBJ_COUNT)) {
                                 if (!dev.discovery_done) {
                                     // --- DISCOVERY LOGIC ---
                                     if (dev.disc_step == DISC_DEV_ID) apdu_len = build_read_property_apdu(apdu, next_invoke_id++, 8, 4194303, 75, -1);
                                     else if (dev.disc_step == DISC_DEV_NAME) apdu_len = build_read_property_apdu(apdu, next_invoke_id++, 8, dev.device_id, 77, -1);
                                     else if (dev.disc_step == DISC_DEV_VENDOR) apdu_len = build_read_property_apdu(apdu, next_invoke_id++, 8, dev.device_id, 121, -1);
                                     else if (dev.disc_step == DISC_OBJ_COUNT) apdu_len = build_read_property_apdu(apdu, next_invoke_id++, 8, dev.device_id, 76, 0);
-                                    else if (dev.disc_obj_idx < dev.objects.size()) {
+                                    else if (dev.enabled && dev.disc_obj_idx < dev.objects.size()) {
                                         auto& o = dev.objects[dev.disc_obj_idx];
                                         if (dev.disc_step == DISC_OBJ_OID) apdu_len = build_read_property_apdu(apdu, next_invoke_id++, 8, dev.device_id, 76, dev.disc_obj_idx + 1);
                                         else if (dev.disc_step == DISC_OBJ_NAME) apdu_len = build_read_property_apdu(apdu, next_invoke_id++, o.type, o.instance, 77, -1);

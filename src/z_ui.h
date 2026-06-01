@@ -9,7 +9,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <html lang="fr">
 <head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>BACNET2MQTT - )rawliteral" VERSION_GLOBAL R"rawliteral(</title>
+    <title>BACNET2MQTT</title>
     <style>
         :root { 
             --bg: #09090b; --card: #18181b; --primary: #3b82f6; --accent: #6366f1; 
@@ -119,13 +119,22 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         input:checked + .slider:before { transform: translateX(16px); }
 
         .grisé > td:not(:last-child) { opacity: 0.4; transition: opacity 0.3s; }
+
+        /* TABBED TERMINAL */
+        .term-tabs { display: flex; gap: 0.2rem; background: rgba(0,0,0,0.2); padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); }
+        .term-tab { padding: 0.3rem 0.6rem; font-size: 0.6rem; font-weight: 800; cursor: pointer; border-radius: 4px; color: var(--muted); text-transform: uppercase; transition: all 0.2s; }
+        .term-tab.active { background: var(--border); color: var(--text); }
+        .term-tab.c0-tab.active { border-bottom: 2px solid var(--success); }
+        .term-tab.c1-tab.active { border-bottom: 2px solid var(--primary); }
+        .console-box { display: none; background: #000; height: 250px; overflow-y: auto; padding: 0.5rem; font-size: 0.65rem; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; white-space: pre-wrap; word-break: break-all; }
+        .console-box.active { display: block; }
     </style>
 </head>
 <body>
     <nav>
         <div class="logo-box">
             <a href="#" class="logo"><span class="b">BACNET</span><span class="n">2</span><span class="m">MQTT</span></a>
-            <div class="credits">by <a href="https://github.com/zirco999-star" target="_blank">Z1rc0n1um</a> - v)rawliteral" VERSION_GLOBAL R"rawliteral(</div>
+            <div class="credits">by <a href="https://github.com/zirco999-star" target="_blank">Z1rc0n1um</a> - <span id="v-tag">...</span></div>
         </div>
         <div class="status-group">
             <div id="b-tag" class="badge">MSTP</div>
@@ -163,20 +172,22 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                         <div class="info-row"><span class="info-l">Tokens / RX / TX</span><span class="info-v"><span id="s-tokens">0</span> | <span id="s-rx">0</span> | <span id="s-tx">0</span></span></div>
                         <div class="info-row"><span class="info-l">CRC Errors</span><span class="info-v" id="s-err">0</span></div>
                         <div class="info-row"><span class="info-l">Active Nodes</span><span class="info-v" id="s-nodes">0</span></div>
+                        <div class="info-row"><span class="info-l">Device ID</span><span class="info-v" id="s-ashrae-id">--</span></div>
                     </div>
                 </div>
-                <!-- System Card -->
+                <!-- System Status -->
                 <div class="card">
                     <div class="card-h"><div class="card-t">System Status</div></div>
                     <div class="card-b">
                         <div class="info-row"><span class="info-l">Free Heap</span><span class="info-v" id="s-heap">-- KB</span></div>
                         <div class="info-row"><span class="info-l">Uptime</span><span class="info-v" id="s-uptime">0s</span></div>
+                        <div class="info-row"><span class="info-l">Poll Interval (BAC)</span><span class="info-v" id="s-bpi">-- s</span></div>
                         <div class="info-row"><span class="info-l">Task Cores</span><span class="info-v">0:SYS | 1:BAC</span></div>
                     </div>
                 </div>
-                <!-- Discovery Card -->
+                <!-- Bacnet Card -->
                 <div class="card">
-                    <div class="card-h"><div class="card-t">Discovery Status</div></div>
+                    <div class="card-h"><div class="card-t">BACNet Status</div></div>
                     <div class="card-b" id="progress-list" style="max-height: 100px; overflow-y: auto; padding: 0.6rem 0.8rem;">
                         <div style="text-align:center; color:var(--muted); font-size:0.7rem; padding:0.5rem">Waiting...</div>
                     </div>
@@ -188,15 +199,14 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 <button class="btn btn-s" style="flex:1" onclick="fetch('/api/iam', {method:'POST'})">Send I-Am</button>
             </div>
 
-            <div class="console-split">
-                <div class="card">
-                    <div class="card-h"><div class="card-t">Terminal Core 0 (System)</div></div>
-                    <div id="log-c0" class="console-box c0"></div>
+            <div class="card" style="margin-top: 0.6rem;">
+                <div class="card-h"><div class="card-t">System Terminal</div></div>
+                <div class="term-tabs">
+                    <div class="term-tab c0-tab active" onclick="switchTerm(0)">Core 0 (System)</div>
+                    <div class="term-tab c1-tab" onclick="switchTerm(1)">Core 1 (BACnet)</div>
                 </div>
-                <div class="card">
-                    <div class="card-h"><div class="card-t">Terminal Core 1 (BACnet)</div></div>
-                    <div id="log-c1" class="console-box c1"></div>
-                </div>
+                <div id="log-c0" class="console-box active"></div>
+                <div id="log-c1" class="console-box"></div>
             </div>
         </div>
 
@@ -269,9 +279,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             </details>
 
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.6rem; margin-top:1rem">
-                <button class="btn btn-s" onclick="confirmAction('/api/reset_cache', 'Clear BACnet Cache?')">Clear BACNET Cache</button>
+                <button class="btn btn-s" onclick="confirmAction('/api/reset_cache', 'Remove all devices from the BACnet cache?')">Clear BACNET Cache</button>
                 <button class="btn btn-s" onclick="confirmReboot()">Reboot</button>
-                <button class="btn btn-d span-2" style="width:100%" onclick="confirmAction('/api/factory_reset', 'DANGER: Factory Reset?')">Factory Reset</button>
+                <button class="btn btn-d span-2" style="width:100%" onclick="confirmAction('/api/factory_reset', 'Are you sure you want to perform a factory reset?')">Factory Reset</button>
             </div>
         </div>
     </div>
@@ -327,7 +337,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         }
 
         function confirmAction(url, msg) { if(confirm(msg)) fetch(url, {method:'POST'}).then(()=>alert("Action triggered.")); }
-        function confirmReboot() { if(confirm("Reboot Gateway? Any unsaved changes will be lost.")) fetch('/reboot'); }
+        function confirmReboot() { if(confirm("Reboot Gateway?")) fetch('/reboot'); }
 
         function refreshBACnet() {
             if (currentTab !== 't-bac') return;
@@ -421,6 +431,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
         function updateStatus() {
             fetch('/api/status').then(r=>r.json()).then(d => {
+                if (d.ver) {
+                    document.title = "BACNET2MQTT - " + d.ver;
+                    document.getElementById('v-tag').innerText = d.ver;
+                }
                 const rssi = d.rssi;
                 document.getElementById('s-rssi').innerText = rssi + " dBm";
                 const radar = document.getElementById('radar').children;
@@ -440,10 +454,13 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('s-rx').innerText = d.mstp_rx || 0;
                 document.getElementById('s-tx').innerText = d.mstp_tx || 0;
                 const errEl = document.getElementById('s-err');
-                errEl.innerText = d.mstp_err || 0;
+                document.getElementById('s-err').innerText = d.mstp_err || 0;
                 errEl.style.color = (d.mstp_err > 0) ? 'var(--error)' : 'var(--text)';
+                const ashraeId = (d.did * 1000) + (d.mac || 0);
+                document.getElementById('s-ashrae-id').innerText = ashraeId;
                 document.getElementById('s-heap').innerText = (d.heap || 0) + " KB";
                 document.getElementById('s-uptime').innerText = formatUptime(d.uptime || 0);
+                document.getElementById('s-bpi').innerText = (d.bpi || 0) + " s";
                 document.getElementById('b-tag').className = 'badge ' + (d.mstp_t ? 'badge-ok' : 'badge-fail');
                 document.getElementById('m-tag').className = 'badge ' + (d.mqtt ? 'badge-ok' : 'badge-fail');
                 document.getElementById('s-mstp-state').innerText = d.mstp_t ? "RUNNING" : "STOPPED";
@@ -455,16 +472,26 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     d.devices.forEach(dev => {
                         let pct = 0;
                         let status = "Discovery...";
-                        if(dev.done) { pct = 100; status = "Completed"; }
-                        else {
-                            if(dev.step === 4) pct = 10;
-                            else if(dev.step > 4) pct = 20 + Math.min(80, (dev.idx / (dev.total || 1)) * 80);
+                        let sCol = 'var(--primary)';
+
+                        if(dev.step < 4) { // DISC_DEV_ID to DISC_OBJ_COUNT
+                            pct = (dev.step / 4) * 100;
+                        } else if (!dev.enabled) {
+                            status = "DESACTIVATED";
+                            sCol = 'var(--muted)';
+                            pct = 100; // Information de base récupérée
+                        } else if(dev.done) { 
+                            pct = 100; status = "Completed"; sCol = 'var(--success)'; 
+                        } else {
+                            // Object discovery progress (steps 4+)
+                            pct = 20 + Math.min(80, (dev.idx / (dev.total || 1)) * 80);
                         }
+
                         if (!progHysteresis[dev.id] || pct > progHysteresis[dev.id]) progHysteresis[dev.id] = pct;
                         let displayPct = Math.max(pct, progHysteresis[dev.id] || 0);
 
                         phtml += `<div class="prog-box">
-                            <div class="prog-label"><span>Dev ${dev.id} (${dev.total} objs)</span><span>${status}</span></div>
+                            <div class="prog-label"><span>Dev <b>${dev.id}</b> ( <b>${dev.sel || 0}</b> / ${dev.total || 0} objects selected )</span><span style="color:${sCol}">${status}</span></div>
                             <div class="prog-cont">
                                 <div class="prog-bar" style="width:${displayPct}%"></div>
                                 <div class="prog-text">${Math.round(displayPct)}%</div>
@@ -480,8 +507,21 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             }).catch(e => console.error("Status update error", e));
         }
 
+        function switchTerm(idx) {
+            document.querySelectorAll('.term-tab').forEach((t, i) => t.classList.toggle('active', i === idx));
+            document.querySelectorAll('.console-box').forEach((b, i) => b.classList.toggle('active', i === idx));
+        }
+
         try {
-            let ws = new WebSocket(`ws://${window.location.host}/ws-logs`);
+            // Détection du mode développement : si on n'est pas sur l'IP de l'ESP32, on force le routage WS vers le matériel
+            const hardwareIP = "192.168.1.50";
+            let wsTarget = window.location.hostname;
+            
+            if (wsTarget !== hardwareIP) {
+                wsTarget = hardwareIP;
+                console.log("[DEV] Hostname '" + window.location.hostname + "' détecté. Routage WebSocket vers matériel:", wsTarget);
+            }
+            let ws = new WebSocket(`ws://${wsTarget}/ws-logs`);
             ws.onmessage = (e) => {
                 const data = e.data;
                 let target = null; let text = data;
