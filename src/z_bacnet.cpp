@@ -315,7 +315,7 @@ static void bacnet_task(void *pv) {
                                     }
                                     if(!known) {
                                         z_log("[BACNET] Found New MAC: %u\n", src_mac);
-                                        BACnetDevice d; d.mac_address = src_mac; d.device_id = 4194303; d.enabled = true; d.discovery_done = false;
+                                        BACnetDevice d; d.mac_address = src_mac; d.device_id = 4194303; d.enabled = false; d.discovery_done = false;
                                         d.name = ""; d.vendor = ""; d.disc_step = DISC_DEV_ID; d.disc_obj_idx = 0;
                                         bacnet_network_cache.push_back(d);
                                     }
@@ -383,7 +383,7 @@ static void bacnet_task(void *pv) {
                                                 for (auto& dev : bacnet_network_cache) { if (dev.device_id == device_id) { exists = true; dev.last_seen = millis(); break; } }
                                                 if (!exists) {
                                                     BACnetDevice new_dev; new_dev.device_id = device_id; new_dev.mac_address = src_mac;
-                                                    new_dev.enabled = true; new_dev.discovery_done = false; new_dev.last_seen = millis();
+                                                    new_dev.enabled = false; new_dev.discovery_done = false; new_dev.last_seen = millis();
                                                     new_dev.disc_step = DISC_DEV_ID; new_dev.disc_obj_idx = 0;
                                                     bacnet_network_cache.push_back(new_dev);
                                                     z_log("[BACNET] Nouveau Device découvert (Broadcast): ID %lu, MAC %d\n", device_id, src_mac);
@@ -579,7 +579,7 @@ static void bacnet_task(void *pv) {
                                 for (auto& dev : bacnet_network_cache) { if (dev.device_id == device_id) { exists = true; dev.last_seen = millis(); break; } }
                                 if (!exists) {
                                     BACnetDevice new_dev; new_dev.device_id = device_id; new_dev.mac_address = src_mac;
-                                    new_dev.enabled = true; new_dev.discovery_done = false; new_dev.last_seen = millis();
+                                    new_dev.enabled = false; new_dev.discovery_done = false; new_dev.last_seen = millis();
                                     bacnet_network_cache.push_back(new_dev);
                                     z_log("[BACNET] Nouveau Device découvert: ID %lu, MAC %d\n", device_id, src_mac);
                                 }

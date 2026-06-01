@@ -270,7 +270,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.6rem; margin-top:1rem">
                 <button class="btn btn-s" onclick="confirmAction('/api/reset_cache', 'Clear BACnet Cache?')">Clear BACNET Cache</button>
-                <button class="btn btn-s" onclick="fetch('/reboot')">Reboot</button>
+                <button class="btn btn-s" onclick="confirmReboot()">Reboot</button>
                 <button class="btn btn-d span-2" style="width:100%" onclick="confirmAction('/api/factory_reset', 'DANGER: Factory Reset?')">Factory Reset</button>
             </div>
         </div>
@@ -327,16 +327,15 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         }
 
         function confirmAction(url, msg) { if(confirm(msg)) fetch(url, {method:'POST'}).then(()=>alert("Action triggered.")); }
+        function confirmReboot() { if(confirm("Reboot Gateway? Any unsaved changes will be lost.")) fetch('/reboot'); }
 
         function refreshBACnet() {
             if (currentTab !== 't-bac') return;
             
-            // Bloquer le refresh si l'utilisateur a le focus sur un champ de saisie
             if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'SELECT')) {
                 if (document.activeElement.closest('#bac-list')) return;
             }
 
-            // Save accordion states before redrawing
             document.querySelectorAll('.dev-card').forEach(det => {
                 const id = det.dataset.did;
                 if(id) devBoxState[id] = det.open;
@@ -346,13 +345,17 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 let html = '';
                 if (!Array.isArray(data)) return;
                 data.forEach(dev => {
-                    const isOpen = devBoxState[dev.device_id] !== undefined ? devBoxState[dev.device_id] : true;
+                    const isOpen = (dev.enabled && (devBoxState[dev.device_id] !== undefined ? devBoxState[dev.device_id] : true));
                     html += `<details class="card dev-card" data-did="${dev.device_id}" ${isOpen ? 'open' : ''}>
                         <summary class="dev-header">
-                            <div><span style="color:var(--primary); font-weight:800">ID:${dev.device_id}</span> | <span style="font-size:0.75rem">${dev.name || 'Unnamed Device'}</span></div>
+                            <div>
+                                <span style="color:var(--primary); font-weight:800">ID:${dev.device_id}</span> | 
+                                <span style="font-size:0.75rem">${dev.name || 'Unnamed Device'}</span>
+                                <div style="font-size:0.55rem; color:var(--muted); margin-top:2px">${dev.vendor || 'Unknown Vendor'}</div>
+                            </div>
                             <div class="dev-actions">
                                 <button class="btn btn-s btn-sm" onclick="event.stopPropagation(); reloadDevice(${dev.device_id})">↻ Reload</button>
-                                <button class="btn btn-d btn-sm" onclick="event.stopPropagation(); deleteDevice(${dev.device_id})">🗑 Delete</button>
+                                <label class="switch" onclick="event.stopPropagation()"><input type="checkbox" ${dev.enabled?'checked':''} onchange="toggleDevice(${dev.device_id})"><span class="slider"></span></label>
                             </div>
                         </summary>
                         <div class="card-b" style="padding:0">
@@ -407,7 +410,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
         function reloadDevice(id) { if(confirm("Reload all objects for this device?")) { delete progHysteresis[id]; fetch('/api/reload_device', {method:'POST', body:new URLSearchParams({id})}); } }
         function reloadObject(did, inst, type) { fetch('/api/reload_object', {method:'POST', body:new URLSearchParams({did, inst, type})}); }
-        function deleteDevice(id) { if(confirm("Permanently delete this device and its cache?")) fetch('/api/delete_device', {method:'POST', body:new URLSearchParams({id})}).then(()=>refreshBACnet()); }
+        function toggleDevice(id) { fetch('/api/toggle_device', {method:'POST', body:new URLSearchParams({id})}).then(()=>refreshBACnet()); }
 
         function formatUptime(s) {
             let d = Math.floor(s / 86400); s %= 86400;
@@ -422,7 +425,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('s-rssi').innerText = rssi + " dBm";
                 const radar = document.getElementById('radar').children;
                 const activeCount = Math.round(((rssi + 100) / 60) * 8);
-                for(let i=0; i<8; i++) {
+                for(int i=0; i<8; i++) {
                     radar[i].className = 'echo-segment';
                     if(i < activeCount) {
                         let color = i < 2 ? 'var(--error)' : i < 5 ? 'var(--warning)' : 'var(--success)';

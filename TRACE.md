@@ -1,5 +1,15 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 1 Juin 2026 (Activation Granulaire & UX - v5.9.1) - DÉPLOYÉ
+- **Version** : v5.9.1
+- **Flux d'Activation Utilisateur** : Suppression du bouton "Delete" au profit d'un Switch global par équipement. Un nouveau device détecté sur le bus reste en mode "Veille" (replié, pas de scan d'objets) tant que l'utilisateur ne l'active pas explicitement.
+- **Synchronisation HA Pilotée** : Le basculement sur **OFF** d'un équipement déclenche immédiatement un nettoyage complet de Home Assistant (suppression de toutes ses entités) via MQTT, tout en préservant son cache local pour une réactivation future.
+- **Améliorations UI** : 
+    - Ré-affichage du nom du fabricant (**Vendor**) dans l'en-tête de l'équipement.
+    - Gestion intelligente des accordéons : repliage forcé si OFF, déploiement auto si ON.
+    - Sécurité Reboot : Ajout d'une boîte de confirmation avant redémarrage.
+- **Optimisation Bus MS/TP** : L'automate ignore totalement les équipements désactivés, libérant de la bande passante pour les équipements actifs.
+
 ## État au 1 Juin 2026 (Nettoyage HA & Synchro Discovery - v5.9.0) - DÉPLOYÉ
 - **Version** : v5.9.0
 - **Suppression Automatique des Fantômes** : Dès que la découverte d'un équipement BACnet est terminée sur le bus MS/TP, la passerelle envoie désormais systématiquement des messages de "nettoyage" (payload vide) à Home Assistant pour tous les objets qui ne sont pas activés. Cela permet d'effacer les restes (messages retenus sur le broker) d'une session précédente après un factory reset.

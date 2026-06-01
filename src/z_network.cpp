@@ -458,6 +458,9 @@ void setup_network_infrastructure() {
             for (auto& dev : bacnet_network_cache) {
                 JsonObject d = dev_arr.add<JsonObject>();
                 d["id"] = dev.device_id;
+                d["enabled"] = dev.enabled; 
+                d["name"] = dev.name;
+                d["vendor"] = dev.vendor;
                 d["step"] = (int)dev.disc_step;
                 d["idx"] = dev.disc_obj_idx;
                 d["total"] = dev.objects.size();
@@ -465,10 +468,37 @@ void setup_network_infrastructure() {
             }
             xSemaphoreGive(cache_mutex);
         }
-
-        String res; serializeJson(doc, res);
-        request->send(200, "application/json", res);
+        String out; serializeJson(doc, out);
+        request->send(200, "application/json", out);
         delete doc_ptr;
+    });
+
+    webServer.on("/api/toggle_device", HTTP_POST, [](AsyncWebServerRequest *request) {
+        if(!is_authenticated(request)) return;
+        if (request->hasParam("id", true)) {
+            uint32_t id = request->getParam("id", true)->value().toInt();
+            if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
+                for (auto& dev : bacnet_network_cache) {
+                    if (dev.device_id == id) {
+                        dev.enabled = !dev.enabled;
+                        if (dev.enabled) {
+                            if (!dev.discovery_done) {
+                                dev.disc_step = DISC_DEV_ID;
+                                dev.disc_obj_idx = 0;
+                            }
+                            z_log("[API] Device %lu ACTIVATED\n", id);
+                        } else {
+                            trigger_ha_discovery(dev.device_id, 0xFFFFFFFF, 0xFFFF);
+                            z_log("[API] Device %lu DEACTIVATED & Cleared from HA\n", id);
+                        }
+                        save_device_objects_locked(dev.device_id);
+                        break;
+                    }
+                }
+                xSemaphoreGive(cache_mutex);
+            }
+        }
+        request->send(200, "text/plain", "OK");
     });
 
     webServer.on("/api/whois", HTTP_POST, [](AsyncWebServerRequest *request) {
