@@ -338,12 +338,23 @@ void publish_ha_autodiscovery() {
                             }
 
                             if (obj.type == OBJ_ANALOG_INPUT || obj.type == OBJ_ANALOG_VALUE || obj.type == OBJ_ANALOG_OUTPUT) {
-                                String unit = get_unit_text(obj.units);
+                                String unit = String(obj.unit_text);
+                                if (unit == "Unknown" || unit.length() == 0) {
+                                    unit = get_unit_text(obj.units);
+                                }
+                                
+                                // Nettoyage pour HA
+                                if (unit == "no-units" || unit == "none") unit = "";
+
                                 if (unit.length() > 0) {
                                     doc["unit_of_meas"] = unit;
-                                    if (unit == "°C" || unit == "°F") doc["dev_cla"] = "temperature";
-                                    if (unit == "%" || unit == "%RH") doc["dev_cla"] = "humidity";
-                                    if (unit == "Pa" || unit == "kPa") doc["dev_cla"] = "pressure";
+                                    if (unit == "°C" || unit == "°F" || unit == "°K") doc["dev_cla"] = "temperature";
+                                    else if (unit == "%" || unit == "%RH") doc["dev_cla"] = "humidity";
+                                    else if (unit == "Pa" || unit == "kPa" || unit == "bar" || unit == "psi") doc["dev_cla"] = "pressure";
+                                    else if (unit == "kW" || unit == "W" || unit == "MW") doc["dev_cla"] = "power";
+                                    else if (unit == "kWh" || unit == "Wh" || unit == "MWh") doc["dev_cla"] = "energy";
+                                    else if (unit == "V" || unit == "mV") doc["dev_cla"] = "voltage";
+                                    else if (unit == "A" || unit == "mA") doc["dev_cla"] = "current";
                                 }
                             }
 

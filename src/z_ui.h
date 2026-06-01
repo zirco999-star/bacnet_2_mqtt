@@ -278,7 +278,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
     <script>
         const UNITS = {
-            95: "No Units", 62: "%", 64: "°C", 98: "ppm", 5: "V", 2: "A", 19: "W", 48: "kW", 50: "Wh", 51: "kWh", 17: "Pa", 18: "kPa", 31: "m³", 82: "l/s", 160: "ms", 73: "s", 72: "min", 28: "h"
+            "": "---", 95: "no-units", 62: "°C", 63: "°K", 64: "°F", 98: "%", 29: "%RH", 96: "ppm", 5: "V", 124: "mV", 2: "mA", 3: "A", 4: "Ohm", 8: "VA", 9: "kVA", 19: "kWh", 18: "Wh", 146: "MWh", 48: "kW", 47: "W", 49: "MW", 53: "Pa", 54: "kPa", 55: "bar", 56: "psi", 82: "L", 80: "m³", 87: "L/s", 88: "L/min", 136: "L/h", 85: "m³/s", 135: "m³/h", 159: "ms", 73: "s", 72: "min", 71: "h"
         };
         const progHysteresis = {}; 
         const devBoxState = {};
@@ -372,7 +372,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                                 <td>
                                     <input type="text" class="in-text" value="${o.name || ''}" onchange="saveObj(this)">
                                     <select onchange="saveObj(this)" style="margin-top:4px">`;
-                            for(let u in UNITS) html += `<option value="${u}" ${o.unit===UNITS[u]?'selected':''}>${UNITS[u]}</option>`;
+                            for(let u in UNITS) {
+                                let label = UNITS[u];
+                                let isSelected = (o.unit === label) || (!o.unit && u === "") || (o.unit === "no-units" && label === "no-units");
+                                html += `<option value="${u}" ${isSelected?'selected':''}>${label}</option>`;
+                            }
                             html += `</select></td>
                                 <td><span class="val-text">${valDisplay}</span></td>
                                 <td><label class="switch"><input type="checkbox" ${o.poll?'checked':''} onchange="saveObj(this, true)"><span class="slider"></span></label></td>
