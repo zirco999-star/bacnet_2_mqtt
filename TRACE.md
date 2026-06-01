@@ -1,5 +1,15 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 1 Juin 2026 (Consolidation UI & Découverte Partielle - v5.9.3) - DÉPLOYÉ
+- **Version** : v5.9.3
+- **Terminal Unifié à Onglets** : Fusion des deux fenêtres de logs (Core 0 et Core 1) en un seul composant à onglets. Optimisation de l'espace sur le Dashboard tout en conservant le flux temps réel WebSocket pour chaque coeur.
+- **Découverte Partielle (Lazy Scan)** : 
+    - Le firmware scanne désormais automatiquement les informations d'identité (Device ID, Name, Vendor, Object Count) de tout nouveau device détecté, même si celui-ci est désactivé.
+    - Le scan intensif des propriétés d'objets reste différé jusqu'à l'activation manuelle par l'utilisateur.
+- **Visualisation d'État Améliorée** : Code couleur dynamique dans la carte "Discovery Status" (Bleu=En cours, Vert=Terminé, Gris=Désactivé) avec formatage sélectif en gras pour la lisibilité.
+- **Écosystème Dev-UX** : Mise en place d'un workflow de développement UI "Proxy" permettant d'éditer le HTML/JS localement sur PC avec redirection automatique des WebSockets et de l'Auth API vers le matériel réel.
+- **Extensions API** : Ajout du champ `sel` dans `/api/status` pour le suivi en temps réel du nombre d'objets activés par équipement.
+
 ## État au 1 Juin 2026 (Activation Granulaire & UX - v5.9.1) - DÉPLOYÉ
 - **Version** : v5.9.1
 - **Flux d'Activation Utilisateur** : Suppression du bouton "Delete" au profit d'un Switch global par équipement. Un nouveau device détecté sur le bus reste en mode "Veille" (replié, pas de scan d'objets) tant que l'utilisateur ne l'active pas explicitement.
