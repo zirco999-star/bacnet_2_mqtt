@@ -612,6 +612,7 @@ void setup_network_infrastructure() {
                                 dev.reload_single = true; // Demande de s'arrêter après cet objet
                                 dev.disc_step = DISC_OBJ_OID; 
                                 dev.disc_obj_idx = i;
+                                trigger_ha_discovery(did, inst, type);
                                 break;
                             }
                         }
@@ -684,7 +685,7 @@ void setup_network_infrastructure() {
                             }
                         }
                         save_device_objects_locked(did);
-                        trigger_ha_discovery();
+                        trigger_ha_discovery(did, inst, type);
                         break;
                     }
                 }

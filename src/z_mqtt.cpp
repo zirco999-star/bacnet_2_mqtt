@@ -9,6 +9,9 @@ extern void z_log(const char* format, ...);
 static int mqtt_fail_count = 0;
 static std::atomic<bool> circuit_breaker_active{false};
 static std::atomic<bool> pending_discovery{false};
+static std::atomic<uint32_t> target_did{0};
+static std::atomic<uint32_t> target_inst{0};
+static std::atomic<uint16_t> target_type{0xFFFF};
 static bool mqtt_is_connected = false;
 static char lwt_topic[128] = {0};
 
@@ -125,6 +128,7 @@ static void mqtt_gatekeeper_task(void *pv) {
             // 1. Traitement de l'Auto-Discovery
             if (pending_discovery.load(std::memory_order_acquire)) {
                 publish_ha_autodiscovery();
+                target_did = 0; // Reset pour le prochain scan (soit ciblé, soit global)
                 pending_discovery.store(false, std::memory_order_release);
             }
 
@@ -219,7 +223,10 @@ void setup_mqtt() {
 
 bool is_mqtt_connected() { return mqtt_is_connected; }
 
-void trigger_ha_discovery() {
+void trigger_ha_discovery(uint32_t did, uint32_t inst, uint16_t type) {
+    target_did = did;
+    target_inst = inst;
+    target_type = type;
     pending_discovery = true;
 }
 
@@ -276,7 +283,16 @@ void publish_ha_autodiscovery() {
                     auto& dev = bacnet_network_cache[d];
                     auto& obj = dev.objects[o];
 
-                    if (obj.type != 65535 && obj.enabled) {
+                    // Filtrage ciblé (Optimisation v5.8.1)
+                    uint32_t t_did = target_did.load();
+                    if (t_did != 0) {
+                        if (dev.device_id != t_did || obj.instance != target_inst.load() || obj.type != target_type.load()) {
+                            xSemaphoreGive(cache_mutex);
+                            continue;
+                        }
+                    }
+
+                    if (obj.type != 65535) {
                         const char* t_str = "OBJ";
                         const char* ha_component = "sensor";
                         bool is_command = false;
@@ -293,68 +309,72 @@ void publish_ha_autodiscovery() {
                             case OBJ_MULTI_STATE_VALUE: t_str = (obj.type == OBJ_MULTI_STATE_OUTPUT) ? "MSO" : "MSV"; ha_component = "select"; is_command = true; break;
                         }
 
-                        JsonDocument doc; 
-                        char base_topic[128];
-                        snprintf(base_topic, sizeof(base_topic), "%s/%lu/%s/%lu", sysCfg.mqtt_prefix, (unsigned long)dev.device_id, t_str, (unsigned long)obj.instance);
-                        
-                        doc["~"] = base_topic;
                         char uniq_id[64];
                         snprintf(uniq_id, sizeof(uniq_id), "bacnet_%lu_%s_%lu", (unsigned long)dev.device_id, t_str, (unsigned long)obj.instance);
-                        doc["uniq_id"] = uniq_id;
-                        doc["name"] = obj.name;
-                        doc["stat_t"] = "~/state";
-                        doc["avty_t"] = lwt_topic;
-                        doc["pl_avail"] = "online";
-                        doc["pl_not_avail"] = "offline";
-
-                        if (is_command) doc["cmd_t"] = "~/set";
-
-                        if (obj.type == OBJ_BINARY_INPUT || obj.type == OBJ_BINARY_OUTPUT || obj.type == OBJ_BINARY_VALUE) {
-                            doc["pl_on"] = "1.00";
-                            doc["pl_off"] = "0.00";
-                        }
-
-                        if (strcmp(ha_component, "number") == 0) {
-                            doc["min"] = -100; doc["max"] = 1000; doc["step"] = 0.1;
-                        }
-
-                        if (obj.type == OBJ_ANALOG_INPUT || obj.type == OBJ_ANALOG_VALUE || obj.type == OBJ_ANALOG_OUTPUT) {
-                            String unit = get_unit_text(obj.units);
-                            if (unit.length() > 0) {
-                                doc["unit_of_meas"] = unit;
-                                if (unit == "°C" || unit == "°F") doc["dev_cla"] = "temperature";
-                                if (unit == "%" || unit == "%RH") doc["dev_cla"] = "humidity";
-                                if (unit == "Pa" || unit == "kPa") doc["dev_cla"] = "pressure";
-                            }
-                        }
-
-                        if (obj.type == OBJ_MULTI_STATE_INPUT || obj.type == OBJ_MULTI_STATE_OUTPUT || obj.type == OBJ_MULTI_STATE_VALUE) {
-                            JsonArray opts = doc["options"].to<JsonArray>();
-                            String jinja_list = "[";
-                            for (size_t i = 0; i < obj.state_texts.size(); i++) {
-                                opts.add(obj.state_texts[i]);
-                                jinja_list += "'" + obj.state_texts[i] + "'";
-                                if (i < obj.state_texts.size() - 1) jinja_list += ",";
-                            }
-                            jinja_list += "]";
-                            doc["val_tpl"] = "{% set o = " + jinja_list + " %} {{ o[value|int - 1] if value|int > 0 else 'Unknown' }}";
-                            if (is_command) {
-                                doc["cmd_tpl"] = "{% set o = " + jinja_list + " %} {{ o.index(value) + 1 }}";
-                            }
-                        }
-
-                        JsonObject device = doc["dev"].to<JsonObject>();
-                        JsonArray ids = device["ids"].to<JsonArray>();
-                        char dev_id_str[32]; 
-                        snprintf(dev_id_str, sizeof(dev_id_str), "bacnet_dev_%lu", (unsigned long)dev.device_id);
-                        ids.add(dev_id_str);
-                        device["name"] = dev.name.length() > 0 ? dev.name : "BACnet Device";
-                        device["mf"] = dev.vendor.length() > 0 ? dev.vendor : "BACnet Manufacturer";
-                        device["sw"] = VERSION_GLOBAL;
-
-                        // Remplissage des variables externes
                         snprintf(final_topic, sizeof(final_topic), "homeassistant/%s/%s/config", ha_component, uniq_id);
-                        serializeJson(doc, final_payload);
+
+                        if (obj.enabled) {
+                            JsonDocument doc; 
+                            char base_topic[128];
+                            snprintf(base_topic, sizeof(base_topic), "%s/%lu/%s/%lu", sysCfg.mqtt_prefix, (unsigned long)dev.device_id, t_str, (unsigned long)obj.instance);
+                            
+                            doc["~"] = base_topic;
+                            doc["uniq_id"] = uniq_id;
+                            doc["name"] = obj.name;
+                            doc["stat_t"] = "~/state";
+                            doc["avty_t"] = lwt_topic;
+                            doc["pl_avail"] = "online";
+                            doc["pl_not_avail"] = "offline";
+
+                            if (is_command) doc["cmd_t"] = "~/set";
+
+                            if (obj.type == OBJ_BINARY_INPUT || obj.type == OBJ_BINARY_OUTPUT || obj.type == OBJ_BINARY_VALUE) {
+                                doc["pl_on"] = "1.00";
+                                doc["pl_off"] = "0.00";
+                            }
+
+                            if (strcmp(ha_component, "number") == 0) {
+                                doc["min"] = -100; doc["max"] = 1000; doc["step"] = 0.1;
+                            }
+
+                            if (obj.type == OBJ_ANALOG_INPUT || obj.type == OBJ_ANALOG_VALUE || obj.type == OBJ_ANALOG_OUTPUT) {
+                                String unit = get_unit_text(obj.units);
+                                if (unit.length() > 0) {
+                                    doc["unit_of_meas"] = unit;
+                                    if (unit == "°C" || unit == "°F") doc["dev_cla"] = "temperature";
+                                    if (unit == "%" || unit == "%RH") doc["dev_cla"] = "humidity";
+                                    if (unit == "Pa" || unit == "kPa") doc["dev_cla"] = "pressure";
+                                }
+                            }
+
+                            if (obj.type == OBJ_MULTI_STATE_INPUT || obj.type == OBJ_MULTI_STATE_OUTPUT || obj.type == OBJ_MULTI_STATE_VALUE) {
+                                JsonArray opts = doc["options"].to<JsonArray>();
+                                String jinja_list = "[";
+                                for (size_t i = 0; i < obj.state_texts.size(); i++) {
+                                    opts.add(obj.state_texts[i]);
+                                    jinja_list += "'" + obj.state_texts[i] + "'";
+                                    if (i < obj.state_texts.size() - 1) jinja_list += ",";
+                                }
+                                jinja_list += "]";
+                                doc["val_tpl"] = "{% set o = " + jinja_list + " %} {{ o[value|int - 1] if value|int > 0 else 'Unknown' }}";
+                                if (is_command) {
+                                    doc["cmd_tpl"] = "{% set o = " + jinja_list + " %} {{ o.index(value) + 1 }}";
+                                }
+                            }
+
+                            JsonObject device = doc["dev"].to<JsonObject>();
+                            JsonArray ids = device["ids"].to<JsonArray>();
+                            char dev_id_str[32]; 
+                            snprintf(dev_id_str, sizeof(dev_id_str), "bacnet_dev_%lu", (unsigned long)dev.device_id);
+                            ids.add(dev_id_str);
+                            device["name"] = dev.name.length() > 0 ? dev.name : "BACnet Device";
+                            device["mf"] = dev.vendor.length() > 0 ? dev.vendor : "BACnet Manufacturer";
+                            device["sw"] = VERSION_GLOBAL;
+
+                            serializeJson(doc, final_payload);
+                        } else {
+                            final_payload = ""; // Suppression HA (Payload vide)
+                        }
                         should_publish = true;
                     }
                 }
@@ -366,10 +386,9 @@ void publish_ha_autodiscovery() {
             // --- FIN ZONE CRITIQUE ---
 
             // --- EXECUTION RESEAU ET TEMPORISATION (HORS MUTEX) ---
-            if (should_publish && final_payload.length() > 0) {
+            if (should_publish) { 
+                // Note : On publie même si le payload est vide (cas de suppression HA)
                 esp_mqtt_client_enqueue(mqtt_client, final_topic, final_payload.c_str(), 0, 1, 1, true);
-                
-                // Le Mutex est libre, la tâche BACnet peut travailler pendant ce délai !
                 vTaskDelay(pdMS_TO_TICKS(50)); 
             }
         }

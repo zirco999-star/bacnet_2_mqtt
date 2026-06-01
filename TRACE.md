@@ -1,3 +1,12 @@
+# Journal de Suivi - BACnet2MQTT
+
+## État au 1 Juin 2026 (Optimisation HA Discovery - v5.8.1) - DÉPLOYÉ
+- **Version** : v5.8.1
+- **Filtrage Home Assistant** : Seuls les objets `enabled = true` sont désormais diffusés via MQTT Auto-Discovery.
+- **Suppression Automatique** : La désactivation d'un objet dans l'UI envoie un payload vide sur le topic de config HA, provoquant la suppression immédiate de l'entité dans Home Assistant.
+- **Discovery Ciblée** : Implémentation de `trigger_ha_discovery(did, inst, type)` permettant de mettre à jour un seul objet instantanément lors d'une modification utilisateur, sans scanner tout le cache.
+- **Validation** : Intégration réussie dans `/api/save_object` et `/api/save_objects`.
+
 ## État au 29 Mai 2026 (Version de Clôture - v6.0.0) - TERMINÉ
 - **Version** : v6.0.0 (PROJET DÉFINITIVEMENT FINALISÉ)
 - **Découverte Parfaite** : Capture intégrale des 98 objets du Distech MAC 4 avec décodage CharacterString (UCS-2) fonctionnel.
