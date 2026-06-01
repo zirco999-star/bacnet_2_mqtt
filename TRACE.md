@@ -1,5 +1,20 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 1 Juin 2026 (Fix Affichage Multi-State HA - v5.8.7) - DÉPLOYÉ
+- **Version** : v5.8.7
+- **Suppression Templates HA** : Suppression des templates `val_tpl` et `cmd_tpl` pour les objets Multi-State.
+- **Raison** : Le firmware gérant désormais nativement l'envoi de texte et la réception de commandes textuelles (v5.8.5/6), les templates côté Home Assistant provoquaient des erreurs de conversion (décalage d'index ou affichage de la dernière valeur de la liste).
+- **Résultat** : L'affichage dans HA est désormais strictement identique à ce que l'automate renvoie, sans risque de décalage.
+
+## État au 1 Juin 2026 (Fix WriteProperty Datatype - v5.8.6) - DÉPLOYÉ
+- **Version** : v5.8.6
+- **Correction Écriture Multi-State** : Correction du bug où le firmware tentait d'écrire une chaîne de caractères (`CharacterString`) au lieu d'un entier non-signé (`Unsigned Integer`) pour les objets MSV/MSO.
+- **Support Typage Dynamique** : La fonction `WriteProperty` gère désormais les types de données corrects selon l'objet ciblé :
+    *   `Unsigned` pour Multi-State.
+    *   `Real` pour Analog.
+    *   `Enumerated` pour Binary.
+- **Stabilité des Commandes** : Résolution de l'erreur `0x50` (Error PDU) renvoyée par les automates ECB-203 lors d'une tentative d'écriture avec un type de donnée invalide.
+
 ## État au 1 Juin 2026 (Fix Multi-State Mismatch - v5.8.5) - DÉPLOYÉ
 - **Version** : v5.8.5
 - **Publication d'état** : Le firmware envoie désormais le **texte de l'état** (ex: "Confort") au lieu de l'index numérique (ex: "1.00") sur MQTT pour les objets Multi-State. Cela permet une compatibilité parfaite avec les entités `select` de Home Assistant.

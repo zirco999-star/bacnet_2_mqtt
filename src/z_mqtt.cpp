@@ -385,17 +385,10 @@ void publish_ha_autodiscovery() {
                                     final_payload = ""; // On envoie rien tant qu'on n'a pas les étiquettes
                                 } else {
                                     JsonArray opts = doc["options"].to<JsonArray>();
-                                    String jinja_list = "[";
                                     for (size_t i = 0; i < obj.state_texts.size(); i++) {
                                         opts.add(obj.state_texts[i]);
-                                        jinja_list += "'" + obj.state_texts[i] + "'";
-                                        if (i < obj.state_texts.size() - 1) jinja_list += ",";
                                     }
-                                    jinja_list += "]";
-                                    doc["val_tpl"] = "{% set o = " + jinja_list + " %} {{ o[value|int - 1] if value|int > 0 else 'Unknown' }}";
-                                    if (is_command) {
-                                        doc["cmd_tpl"] = "{% set o = " + jinja_list + " %} {{ o.index(value) + 1 }}";
-                                    }
+                                    // Note: Plus besoin de val_tpl ni cmd_tpl car le firmware envoie/reçoit déjà du texte
                                 }
                             }
 
