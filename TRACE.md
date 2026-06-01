@@ -1,3 +1,11 @@
+## État au 29 Mai 2026 (Version de Clôture - v6.0.0) - TERMINÉ
+- **Version** : v6.0.0 (PROJET DÉFINITIVEMENT FINALISÉ)
+- **Découverte Parfaite** : Capture intégrale des 98 objets du Distech MAC 4 avec décodage CharacterString (UCS-2) fonctionnel.
+- **Énumération Multi-State** : Restauration de l'étape `DISC_OBJ_STATES` avec énumération itérative (index par index) pour contourner les limitations du MAC 4.
+- **Robustesse NVS & Reboot** : Sécurisation des écritures par blocs et correction du timer de reboot différé.
+- **Observabilité** : Ajout de `mstp_err` et `debug_oid` pour un diagnostic matériel précis.
+- **Statut Final** : Système ultra-stable, intégration MQTT/Home Assistant validée sur bus RS-485 réel.
+
 ## État au 29 Mai 2026 (Finalisation & Robustesse Discovery - v5.9.6) - DÉPLOYÉ
 - **Version** : v5.9.6 (PROJET FINALISÉ)
 - **Découverte Intégrale** : Succès de l'énumération des 98 objets du Distech MAC 4 (ECB-203). Filtrage robuste des slots vides (0xFFFFFFFF) et capture des noms réels (Object_Name).

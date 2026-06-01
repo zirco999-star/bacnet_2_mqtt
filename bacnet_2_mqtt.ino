@@ -17,7 +17,7 @@ uint32_t reboot_timer = 0;
 
 // Tâche Système pour le Core 0 (WiFi, MQTT, OTA)
 void system_task(void *pvParameters) {
-    z_log(LOG_INFO, "SYS", "System Task started on Core %d\n", xPortGetCoreID());
+    z_log("[SYS] System Task started on Core %d\n", xPortGetCoreID());
     for(;;) {
         handle_network();
         handle_mqtt();
@@ -29,9 +29,6 @@ void setup() {
     Serial.begin(115200);
     delay(1000);
     Serial.println("\n\n>>> " + String(VERSION_GLOBAL) + " - DUAL CORE MODE <<<");
-
-    // Initialisation prioritaire des Mutex (pour le NVS)
-    setup_system_mutexes();
 
     // --- Routine de Self-Healing NVS ---
     esp_err_t err = nvs_flash_init();

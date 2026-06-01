@@ -7,8 +7,7 @@
 
 void setup_network_infrastructure();
 void handle_network();
-void setup_system_mutexes();
-void z_log(int level, const char* tag, const char* format, ...);
+void z_log(const char* format, ...);
 bool is_authenticated(AsyncWebServerRequest *request);
 
 #endif

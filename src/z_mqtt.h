@@ -10,5 +10,6 @@ bool is_mqtt_connected();
 // Fonction centralisée pour la publication
 void publish_mqtt_topic(uint32_t device_id, BACnetObject& obj, uint8_t prop_id, bool retain);
 void publish_ha_autodiscovery();
+void trigger_ha_discovery();
 
 #endif
