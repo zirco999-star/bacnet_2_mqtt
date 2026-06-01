@@ -23,6 +23,7 @@ static uint16_t last_apdu_len = 0;
 static uint8_t last_sent_invoke_id = 0;
 static uint8_t next_invoke_id = 10;
 static uint8_t retry_count = 0;
+static BACnetJob pending_write_job;
 
 // --- UTILS CRC ---
 static uint8_t calc_header_crc(uint8_t *data, size_t len) {
@@ -152,6 +153,45 @@ uint16_t build_write_property_name_apdu(uint8_t* buffer, uint8_t invoke_id, uint
     memcpy(&buffer[len], new_name, str_len);
     len += str_len;
     buffer[len++] = 0x3F;
+    return len;
+}
+
+uint16_t build_write_property_value_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, uint8_t prop_id, float value) {
+    uint16_t len = 0;
+    buffer[len++] = 0x01; buffer[len++] = 0x04; 
+    buffer[len++] = 0x02; buffer[len++] = 0x03;
+    buffer[len++] = invoke_id; 
+    buffer[len++] = 0x0F; // WriteProperty
+    
+    buffer[len++] = 0x0C;
+    uint32_t oid = ((uint32_t)obj_type << 22) | (obj_instance & 0x3FFFFF);
+    buffer[len++] = (oid >> 24) & 0xFF; buffer[len++] = (oid >> 16) & 0xFF; 
+    buffer[len++] = (oid >> 8) & 0xFF; buffer[len++] = oid & 0xFF;
+    
+    buffer[len++] = 0x19; buffer[len++] = prop_id;
+    buffer[len++] = 0x3E; // Opening Tag 3
+    
+    if (obj_type == 13 || obj_type == 14 || obj_type == 19) {
+        uint32_t v = (uint32_t)value;
+        if (v <= 255) { buffer[len++] = 0x21; buffer[len++] = (uint8_t)v; }
+        else if (v <= 65535) { buffer[len++] = 0x22; buffer[len++] = (v >> 8) & 0xFF; buffer[len++] = v & 0xFF; }
+        else { 
+            buffer[len++] = 0x24; 
+            buffer[len++] = (v >> 24) & 0xFF; buffer[len++] = (v >> 16) & 0xFF; 
+            buffer[len++] = (v >> 8) & 0xFF; buffer[len++] = v & 0xFF; 
+        }
+    } else if (obj_type == 3 || obj_type == 4 || obj_type == 5) {
+        buffer[len++] = 0x91; buffer[len++] = (value > 0.5f) ? 1 : 0;
+    } else {
+        buffer[len++] = 0x44;
+        uint32_t tmp; float fv = value;
+        memcpy(&tmp, &fv, 4);
+        tmp = __builtin_bswap32(tmp);
+        memcpy(&buffer[len], &tmp, 4);
+        len += 4;
+    }
+    
+    buffer[len++] = 0x3F; // Closing Tag 3
     return len;
 }
 
@@ -386,7 +426,13 @@ static void bacnet_task(void *pv) {
                             else mstp_state = MSTP_DONE_WITH_TOKEN;
                         } else if (has_job && current_job.type == JOB_WRITE_PROP) {
                             uint8_t buffer[256];
-                            uint16_t apdu_len = build_write_property_name_apdu(buffer, next_invoke_id++, current_job.obj_type, current_job.obj_instance, current_job.name);
+                            uint16_t apdu_len = 0;
+                            if (current_job.prop_id == 77) {
+                                apdu_len = build_write_property_name_apdu(buffer, next_invoke_id++, current_job.obj_type, current_job.obj_instance, current_job.name);
+                            } else {
+                                apdu_len = build_write_property_value_apdu(buffer, next_invoke_id++, current_job.obj_type, current_job.obj_instance, current_job.prop_id, current_job.write_value);
+                            }
+                            pending_write_job = current_job;
                             token_skip_count = 0; retry_count=0; waiting_for_reply = true;
                             send_mstp_frame(current_job.target_mac, 0x05, buffer, apdu_len);
                             frame_count++;
@@ -543,6 +589,33 @@ static void bacnet_task(void *pv) {
                     if (dest_mac == sysCfg.mac_address) {
                         if (pdu_type == 0x20) { // Simple-ACK (Succès WriteProperty)
                             z_log("[BACNET] WriteProperty SUCCESS (Invoke ID %d)\n", apdu[1]);
+                            
+                            // --- REFRESH OPTIMISTE ---
+                            if (apdu[1] == last_sent_invoke_id && pending_write_job.type == JOB_WRITE_PROP) {
+                                if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
+                                    for(auto& d : bacnet_network_cache) {
+                                        if (d.mac_address == src_mac) {
+                                            for(auto& o : d.objects) {
+                                                if (o.type == pending_write_job.obj_type && o.instance == pending_write_job.obj_instance) {
+                                                    if (pending_write_job.prop_id == 85) {
+                                                        o.present_value = pending_write_job.write_value;
+                                                        o.last_update = millis();
+                                                        z_log("[BACNET] Optimistic update for Obj T%u I%lu: %.2f\n", o.type, (unsigned long)o.instance, o.present_value);
+                                                    } else if (pending_write_job.prop_id == 77) {
+                                                        strlcpy(o.name, pending_write_job.name, sizeof(o.name));
+                                                        z_log("[BACNET] Optimistic name update for Obj T%u I%lu: %s\n", o.type, (unsigned long)o.instance, o.name);
+                                                    }
+                                                    publish_mqtt_topic(d.device_id, o, pending_write_job.prop_id, true);
+                                                    break;
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                    xSemaphoreGive(cache_mutex);
+                                }
+                            }
+                            
                             last_sent_invoke_id = 0xFF; 
                             current_dev_idx = (current_dev_idx + 1) % bacnet_network_cache.size();
                         } 

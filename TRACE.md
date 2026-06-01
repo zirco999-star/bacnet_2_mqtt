@@ -1,5 +1,11 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 1 Juin 2026 (Refresh Instantané MQTT - v5.8.8) - DÉPLOYÉ
+- **Version** : v5.8.8
+- **Réactivité accrue** : Implémentation d'une mise à jour "optimiste" après une écriture BACnet réussie.
+- **Logique** : Dès réception du `Simple-ACK` confirmant que l'automate a accepté la nouvelle valeur, le firmware met à jour son cache interne et publie immédiatement la nouvelle valeur sur MQTT.
+- **Bénéfice** : Plus besoin d'attendre le prochain cycle de polling (plusieurs secondes) pour voir le changement d'état dans Home Assistant. L'interface est désormais quasi-instantanée.
+
 ## État au 1 Juin 2026 (Fix Affichage Multi-State HA - v5.8.7) - DÉPLOYÉ
 - **Version** : v5.8.7
 - **Suppression Templates HA** : Suppression des templates `val_tpl` et `cmd_tpl` pour les objets Multi-State.

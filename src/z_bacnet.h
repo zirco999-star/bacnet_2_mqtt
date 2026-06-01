@@ -217,4 +217,7 @@ bool enqueue_mqtt_publish(MQTTPublishJob pubJob);
 void publish_all_names();
 String get_unit_text(uint16_t units);
 
+uint16_t build_write_property_name_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, const char* new_name);
+uint16_t build_write_property_value_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, uint8_t prop_id, float value);
+
 #endif
