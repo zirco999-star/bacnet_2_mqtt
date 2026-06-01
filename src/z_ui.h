@@ -425,7 +425,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('s-rssi').innerText = rssi + " dBm";
                 const radar = document.getElementById('radar').children;
                 const activeCount = Math.round(((rssi + 100) / 60) * 8);
-                for(int i=0; i<8; i++) {
+                for(let i=0; i<8; i++) {
                     radar[i].className = 'echo-segment';
                     if(i < activeCount) {
                         let color = i < 2 ? 'var(--error)' : i < 5 ? 'var(--warning)' : 'var(--success)';
