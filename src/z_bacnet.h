@@ -156,6 +156,7 @@ struct BACnetDevice {
     DISC_STEP_T disc_step = DISC_DEV_ID;
     uint16_t disc_obj_idx = 0;
     bool reload_single = false;
+    bool recovery_mode = false;
 
     BACnetDevice() {} 
 };

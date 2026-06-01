@@ -389,6 +389,10 @@ void setup_network_infrastructure() {
                     obj["type"] = o.type; obj["inst"] = o.instance; obj["name"] = o.name;
                     obj["val"] = o.present_value; obj["poll"] = o.enabled;
                     obj["unit"] = o.unit_text;
+                    if (!o.state_texts.empty()) {
+                        JsonArray states = obj["states"].to<JsonArray>();
+                        for(const auto& s : o.state_texts) states.add(s);
+                    }
                 }
             }
             xSemaphoreGive(cache_mutex);

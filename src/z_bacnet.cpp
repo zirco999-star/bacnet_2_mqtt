@@ -440,6 +440,22 @@ static void bacnet_task(void *pv) {
                                         break;
                                     }
                                 } else {
+                                    // --- METADATA RECOVERY CHECK ---
+                                    bool recovery_triggered = false;
+                                    for(size_t i=0; i<dev.objects.size(); i++) {
+                                        auto& o = dev.objects[i];
+                                        if (o.enabled && (o.type == 13 || o.type == 14 || o.type == 19) && o.state_texts.empty()) {
+                                            z_log("[BACNET] Metadata Missing for Obj T%u I%lu - Triggering Recovery\n", o.type, (unsigned long)o.instance);
+                                            dev.discovery_done = false;
+                                            dev.recovery_mode = true;
+                                            dev.disc_step = DISC_OBJ_STATES;
+                                            dev.disc_obj_idx = i;
+                                            recovery_triggered = true;
+                                            break;
+                                        }
+                                    }
+                                    if (recovery_triggered) { xSemaphoreGive(cache_mutex); break; }
+
                                     // --- POLLING LOGIC (Optimisée pour plusieurs frames) ---
                                     size_t count = dev.objects.size();
                                     if (count > 0) {
@@ -660,8 +676,8 @@ static void bacnet_task(void *pv) {
                                                             o.last_update = millis(); 
                                                             z_log("[BACNET] Obj %u Value: %.2f\n", dev.disc_obj_idx+1, o.present_value);
                                                             
-                                                            bool stop_now = dev.reload_single;
-                                                            dev.disc_obj_idx++; 
+                                                            bool stop_now = dev.reload_single || dev.recovery_mode;
+                                                            if (!dev.recovery_mode) dev.disc_obj_idx++; 
                                                             dev.disc_step = DISC_OBJ_OID;
 
                                                             if (dev.disc_obj_idx % 10 == 0 || dev.disc_obj_idx >= dev.objects.size()) {
@@ -671,7 +687,9 @@ static void bacnet_task(void *pv) {
                                                             if (stop_now) { 
                                                                 dev.discovery_done = true; 
                                                                 dev.reload_single = false; 
+                                                                dev.recovery_mode = false;
                                                                 save_device_objects_locked(dev.device_id); 
+                                                                if (o.enabled) trigger_ha_discovery(dev.device_id, o.instance, o.type);
                                                             }
                                                             else if (dev.disc_obj_idx >= dev.objects.size()) { 
                                                                 dev.discovery_done = true; 

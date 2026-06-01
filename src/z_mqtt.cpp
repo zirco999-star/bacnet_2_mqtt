@@ -88,28 +88,50 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                         uint8_t target_mac = 0;
                         bool found = false;
 
-                        if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(50))) {
+                        if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
                             for (auto& d : bacnet_network_cache) {
-                                if (d.device_id == device_id) { target_mac = d.mac_address; found = true; break; }
+                                if (d.device_id == device_id) { 
+                                    target_mac = d.mac_address; 
+                                    found = true; 
+                                    
+                                    BACnetJob job;
+                                    job.type = JOB_WRITE_PROP;
+                                    job.target_mac = target_mac;
+                                    job.obj_instance = t.substring(p3 + 1, p4).toInt();
+                                    job.prop_id = 85;
+                                    String type_str = t.substring(p2 + 1, p3);
+                                    
+                                    if (type_str == "AO" || type_str == "AV") job.obj_type = (type_str == "AO") ? 1 : 2;
+                                    else if (type_str == "BO" || type_str == "BV") job.obj_type = (type_str == "BO") ? 4 : 5;
+                                    else if (type_str == "MSO" || type_str == "MSV") job.obj_type = (type_str == "MSO") ? 14 : 19;
+                                    else { job.type = JOB_WHO_IS; found = false; }
+
+                                    if (found) {
+                                        if (job.obj_type == 14 || job.obj_type == 19) {
+                                            // Conversion Texte -> Index pour Multi-State
+                                            bool text_found = false;
+                                            for (auto& o : d.objects) {
+                                                if (o.type == job.obj_type && o.instance == job.obj_instance) {
+                                                    for (size_t i = 0; i < o.state_texts.size(); i++) {
+                                                        if (o.state_texts[i] == String(payload_buf)) {
+                                                            job.write_value = (float)(i + 1);
+                                                            text_found = true;
+                                                            break;
+                                                        }
+                                                    }
+                                                    break;
+                                                }
+                                            }
+                                            if (!text_found) job.write_value = String(payload_buf).toFloat();
+                                        } else {
+                                            job.write_value = String(payload_buf).toFloat();
+                                        }
+                                        enqueue_bacnet_job(job);
+                                    }
+                                    break; 
+                                }
                             }
                             xSemaphoreGive(cache_mutex);
-                        }
-
-                        if (found) {
-                            BACnetJob job;
-                            job.type = JOB_WRITE_PROP;
-                            job.target_mac = target_mac;
-                            job.obj_instance = t.substring(p3 + 1, p4).toInt();
-                            job.prop_id = 85;
-                            job.write_value = String(payload_buf).toFloat();
-                            String type_str = t.substring(p2 + 1, p3);
-                            
-                            if (type_str == "AO" || type_str == "AV") job.obj_type = (type_str == "AO") ? 1 : 2;
-                            else if (type_str == "BO" || type_str == "BV") job.obj_type = (type_str == "BO") ? 4 : 5;
-                            else if (type_str == "MSO" || type_str == "MSV") job.obj_type = (type_str == "MSO") ? 14 : 19;
-                            else job.type = JOB_WHO_IS;
-                            
-                            if (job.type == JOB_WRITE_PROP) enqueue_bacnet_job(job);
                         }
                     }
                 }
@@ -359,17 +381,21 @@ void publish_ha_autodiscovery() {
                             }
 
                             if (obj.type == OBJ_MULTI_STATE_INPUT || obj.type == OBJ_MULTI_STATE_OUTPUT || obj.type == OBJ_MULTI_STATE_VALUE) {
-                                JsonArray opts = doc["options"].to<JsonArray>();
-                                String jinja_list = "[";
-                                for (size_t i = 0; i < obj.state_texts.size(); i++) {
-                                    opts.add(obj.state_texts[i]);
-                                    jinja_list += "'" + obj.state_texts[i] + "'";
-                                    if (i < obj.state_texts.size() - 1) jinja_list += ",";
-                                }
-                                jinja_list += "]";
-                                doc["val_tpl"] = "{% set o = " + jinja_list + " %} {{ o[value|int - 1] if value|int > 0 else 'Unknown' }}";
-                                if (is_command) {
-                                    doc["cmd_tpl"] = "{% set o = " + jinja_list + " %} {{ o.index(value) + 1 }}";
+                                if (obj.state_texts.empty()) {
+                                    final_payload = ""; // On envoie rien tant qu'on n'a pas les étiquettes
+                                } else {
+                                    JsonArray opts = doc["options"].to<JsonArray>();
+                                    String jinja_list = "[";
+                                    for (size_t i = 0; i < obj.state_texts.size(); i++) {
+                                        opts.add(obj.state_texts[i]);
+                                        jinja_list += "'" + obj.state_texts[i] + "'";
+                                        if (i < obj.state_texts.size() - 1) jinja_list += ",";
+                                    }
+                                    jinja_list += "]";
+                                    doc["val_tpl"] = "{% set o = " + jinja_list + " %} {{ o[value|int - 1] if value|int > 0 else 'Unknown' }}";
+                                    if (is_command) {
+                                        doc["cmd_tpl"] = "{% set o = " + jinja_list + " %} {{ o.index(value) + 1 }}";
+                                    }
                                 }
                             }
 
@@ -422,7 +448,16 @@ void publish_mqtt_topic(uint32_t device_id, BACnetObject& obj, uint8_t prop_id, 
         if (strlen(obj.name) == 0) return;
         strlcpy(pub.value_string, obj.name, sizeof(pub.value_string));
     } else if (prop_id == 85) {
-        snprintf(pub.value_string, sizeof(pub.value_string), "%.2f", obj.present_value);
+        if ((obj.type == OBJ_MULTI_STATE_INPUT || obj.type == OBJ_MULTI_STATE_OUTPUT || obj.type == OBJ_MULTI_STATE_VALUE) && !obj.state_texts.empty()) {
+            int idx = (int)obj.present_value - 1;
+            if (idx >= 0 && idx < (int)obj.state_texts.size()) {
+                strlcpy(pub.value_string, obj.state_texts[idx].c_str(), sizeof(pub.value_string));
+            } else {
+                snprintf(pub.value_string, sizeof(pub.value_string), "%.0f", obj.present_value);
+            }
+        } else {
+            snprintf(pub.value_string, sizeof(pub.value_string), "%.2f", obj.present_value);
+        }
     } else return;
 
     enqueue_mqtt_publish(pub);

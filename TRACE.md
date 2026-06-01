@@ -1,5 +1,17 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 1 Juin 2026 (Fix Multi-State Mismatch - v5.8.5) - DÉPLOYÉ
+- **Version** : v5.8.5
+- **Publication d'état** : Le firmware envoie désormais le **texte de l'état** (ex: "Confort") au lieu de l'index numérique (ex: "1.00") sur MQTT pour les objets Multi-State. Cela permet une compatibilité parfaite avec les entités `select` de Home Assistant.
+- **Gestion des Commandes** : Le firmware traduit automatiquement le texte reçu de HA (ex: "Eco") en index numérique BACnet (ex: 2) avant d'écrire sur le bus.
+
+## État au 1 Juin 2026 (Auto-Récupération Multi-State - v5.8.4) - DÉPLOYÉ
+- **Version** : v5.8.4
+- **Recovery Mode** : Implémentation d'une détection automatique des métadonnées manquantes pour les objets MSV/MSI/MSO.
+- **Logique** : Si un objet Multi-State est activé (poll=true) mais que ses étiquettes sont vides (ex: après reboot), le firmware suspend le polling pour relire la propriété `State_Text` sur le bus.
+- **MQTT Safe-Guard** : Empêche la création d'entités `select` vides dans Home Assistant tant que les étiquettes n'ont pas été récupérées avec succès.
+- **API REST** : Ajout du champ `states` dans `/api/objects` pour visualiser les étiquettes chargées.
+
 ## État au 1 Juin 2026 (Refonte Statistiques - v5.8.3) - DÉPLOYÉ
 - **Version** : v5.8.3
 - **Diagnostic Utile** : Séparation stricte entre signalisation du Ring et trafic de données.
