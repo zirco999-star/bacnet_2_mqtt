@@ -1,5 +1,23 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 2 Juin 2026 (Diagnostics Gateway & Auto-Discovery - v6.0.2) - DÉPLOYÉ
+- **Version** : v6.0.2
+- **Toggle Home Assistant** : Implémentation complète du bouton "HA Auto-Discovery" dans l'UI (Settings > MQTT).
+- **Backend & NVS** : Correction de l'API `/api/status` et du parsing `/save` pour assurer la persistance réelle du choix utilisateur.
+- **Enrichissement des Métriques** : Ajout de la Température du Chip (ESP32-S3), de l'Uptime (secondes), du Minimal Heap (détection de fuites) et du statut de santé MS/TP.
+- **Santé MS/TP** : Logique de détection d'activité basée sur le mouvement du jeton (`tokens_seen`) entre deux cycles de publication.
+- **MQTT Auto-Discovery Gateway** : Implémentation du bloc de déclaration des capteurs internes de la gateway dans Home Assistant.
+- **Groupement d'Équipement** : Toutes les métriques de diagnostic sont désormais regroupées sous un seul appareil "BACnet2MQTT Gateway" dans Home Assistant.
+- **Optimisation** : Ajout d'un `vTaskDelay` de 100ms après l'envoi du bloc de découverte pour éviter la saturation du broker.
+
+## État au 2 Juin 2026 (Toggle Home Assistant Auto-Discovery - v6.0.1) - DÉPLOYÉ
+- **Version** : v6.0.1
+- **Contrôle Auto-Discovery** : Ajout d'une option "With Home Assistant Auto-Discovery" dans les réglages MQTT.
+- **Logique Conditionnelle** : Les fonctions `publish_ha_autodiscovery` et `trigger_ha_discovery` sont désormais inopérantes si l'option est désactivée (`sysCfg.ha_discover`).
+- **Persistance NVS** : Le paramètre est sauvegardé en NVS sous la clé `ha_disc`.
+- **Interface Web** : Ajout d'une checkbox dédiée dans l'onglet MQTT pour un pilotage à chaud.
+- **Stabilité** : Compilation validée.
+
 ## État au 1 Juin 2026 (Consolidation UI & Découverte Partielle - v5.9.3) - DÉPLOYÉ
 - **Version** : v5.9.3
 - **Terminal Unifié à Onglets** : Fusion des deux fenêtres de logs (Core 0 et Core 1) en un seul composant à onglets. Optimisation de l'espace sur le Dashboard tout en conservant le flux temps réel WebSocket pour chaque coeur.

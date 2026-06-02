@@ -142,7 +142,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 }
 
 static void mqtt_gatekeeper_task(void *pv) {
-    z_log("[MQTT] Gatekeeper Task (Core 1) Operational.\n");
+    z_log("[MQTT] Gatekeeper Task Operational.\n");
     uint32_t last_status_pub = 0;
 
     while (1) {
@@ -193,7 +193,18 @@ static void mqtt_gatekeeper_task(void *pv) {
                 pub_b2m("ver", VERSION_GLOBAL);
                 pub_b2m("rssi", String(WiFi.RSSI()));
                 pub_b2m("heap", String(ESP.getFreeHeap() / 1024));
+                pub_b2m("min_heap", String(ESP.getMinFreeHeap() / 1024));
+                pub_b2m("uptime", String(millis() / 1000));
                 pub_b2m("nb_dev", String(bacnet_network_cache.size()));
+                
+                // Température interne ESP32-S3
+                pub_b2m("temp", String(temperatureRead(), 1));
+
+                // Santé du réseau MS/TP (basé sur le mouvement des jetons)
+                static uint32_t last_token_count = 0;
+                bool mstp_active = (bacnetStats.tokens_seen != last_token_count);
+                last_token_count = bacnetStats.tokens_seen;
+                pub_b2m("mstp", mstp_active ? "ON" : "OFF");
             }
         }
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -246,6 +257,7 @@ void setup_mqtt() {
 bool is_mqtt_connected() { return mqtt_is_connected; }
 
 void trigger_ha_discovery(uint32_t did, uint32_t inst, uint16_t type) {
+    if (!sysCfg.ha_discover) return;
     target_did = did;
     target_inst = inst;
     target_type = type;
@@ -273,8 +285,56 @@ void handle_mqtt() {
 }
 
 void publish_ha_autodiscovery() {
-    if (!mqtt_is_connected || circuit_breaker_active) return;
+    if (!mqtt_is_connected || circuit_breaker_active || !sysCfg.ha_discover) return;
     z_log("[MQTT] Starting HA Auto-Discovery...\n");
+
+    // Étape 0 : Discovery de la Gateway elle-même (Diagnostics)
+    char base_b2m[128];
+    snprintf(base_b2m, sizeof(base_b2m), "%s/B2M", sysCfg.mqtt_prefix);
+    
+    auto pub_gw_sensor = [&](const char* key, const char* name, const char* dev_cla, const char* unit, const char* icon = NULL, bool is_binary = false) {
+        JsonDocument doc;
+        char topic[128], uniq[64];
+        snprintf(uniq, sizeof(uniq), "b2m_gw_%s", key);
+        snprintf(topic, sizeof(topic), "homeassistant/%s/%s/config", is_binary ? "binary_sensor" : "sensor", uniq);
+        
+        doc["name"] = name;
+        doc["uniq_id"] = uniq;
+        char stat_t[128]; snprintf(stat_t, sizeof(stat_t), "%s/%s/state", base_b2m, key);
+        doc["stat_t"] = stat_t;
+        doc["avty_t"] = lwt_topic;
+        
+        if (dev_cla) doc["dev_cla"] = dev_cla;
+        if (unit) doc["unit_of_meas"] = unit;
+        if (icon) doc["icon"] = icon;
+        if (is_binary) {
+            doc["pl_on"] = "ON";
+            doc["pl_off"] = "OFF";
+        }
+        
+        JsonObject device = doc["dev"].to<JsonObject>();
+        JsonArray ids = device["ids"].to<JsonArray>();
+        ids.add("b2m_gateway");
+        device["name"] = "BACnet2MQTT Gateway";
+        device["mf"] = "Custom";
+        device["mdl"] = "ESP32-S3";
+        device["sw"] = VERSION_GLOBAL;
+
+        String payload;
+        serializeJson(doc, payload);
+        esp_mqtt_client_enqueue(mqtt_client, topic, payload.c_str(), 0, 1, 1, true);
+    };
+
+    pub_gw_sensor("ver", "Gateway Version", NULL, NULL, "mdi:information-outline");
+    pub_gw_sensor("uptime", "Gateway Uptime", "duration", "s", "mdi:timer-outline");
+    pub_gw_sensor("rssi", "Gateway WiFi RSSI", "signal_strength", "dBm");
+    pub_gw_sensor("heap", "Gateway Free Heap", "data_size", "KB", "mdi:memory");
+    pub_gw_sensor("min_heap", "Gateway Min Heap", "data_size", "KB", "mdi:memory");
+    pub_gw_sensor("temp", "Gateway Chip Temp", "temperature", "°C");
+    pub_gw_sensor("nb_dev", "Gateway Devices Count", NULL, "dev", "mdi:counter");
+    pub_gw_sensor("mstp", "Gateway MS/TP Network", "connectivity", NULL, NULL, true);
+
+    vTaskDelay(pdMS_TO_TICKS(100)); 
 
     // Étape 1 : Obtenir le nombre de devices sans bloquer longtemps
     size_t dev_count = 0;

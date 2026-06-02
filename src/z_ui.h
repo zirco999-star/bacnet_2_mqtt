@@ -237,10 +237,14 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 <summary>MQTT Server Configuration</summary>
                 <form id="f-mqtt" class="form-grid">
                     <input type="hidden" name="form_type" value="mqtt">
-                    <div class="span-2 f-item"><label>Broker Server IP</label><input type="text" name="mqh" id="in-mqh"></div>
+                    <div class="f-item"><label>Broker Server IP</label><input type="text" name="mqh" id="in-mqh"></div>
+                    <div class="f-item" >
+                        <label>HA Auto-Discovery</label>
+                        <label class="switch" style="inset-inline-start: 25px; align-self: center;"><input type="checkbox" name="ha_disc" id="in-hadisc"><span class="slider"></span></label>
+                    </div>
                     <div class="f-item"><label>MQTT User</label><input type="text" name="mqu" id="in-mqu"></div>
                     <div class="f-item"><label>MQTT Password</label><input type="password" name="mqp" id="in-mqp" placeholder="******"></div>
-                    <div class="span-2 f-item"><label>Topic Prefix</label><input type="text" name="mqpr" id="in-mqpr"></div>
+                    <div class="f-item"><label>Topic Prefix</label><input type="text" name="mqpr" id="in-mqpr"></div>
                     <div class="span-2"><button type="button" class="btn btn-p" style="width:100%" onclick="saveForm('f-mqtt')">Apply MQTT Settings</button></div>
                 </form>
             </details>
@@ -270,10 +274,18 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             </details>
 
             <details>
-                <summary>Security Configuration</summary>
+                <summary>System Configuration</summary>
                 <form id="f-sec" class="form-grid">
                     <div class="f-item"><label>Admin User</label><input type="text" name="admin_u" id="in-adu"></div>
                     <div class="f-item"><label>Admin Password</label><input type="password" name="admin_p" id="in-adp" placeholder="******"></div>
+                    <div class="span-2 f-item"><label>Log Level</label>
+                        <select name="lvl" id="in-lvl">
+                            <option value="1">ERROR</option>
+                            <option value="2">WARN</option>
+                            <option value="3">INFO</option>
+                            <option value="4">DEBUG</option>
+                        </select>
+                    </div>
                     <div class="span-2"><button type="button" class="btn btn-p" style="width:100%" onclick="saveForm('f-sec')">Apply Security Settings</button></div>
                 </form>
             </details>
@@ -316,6 +328,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('in-mqh').value = d.mqs || "";
                 document.getElementById('in-mqu').value = d.mqu || "";
                 document.getElementById('in-mqpr').value = d.mqpr || "bacnet";
+                document.getElementById('in-hadisc').checked = d.ha_disc !== undefined ? d.ha_disc : true;
                 document.getElementById('in-mpi').value = d.mpi || 30;
                 document.getElementById('in-bpi').value = d.bpi || 30;
                 document.getElementById('in-mac').value = d.mac || 1;
@@ -327,6 +340,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('in-tskip').value = d.tskip || 0;
                 document.getElementById('in-mif').value = d.mif || 3;
                 document.getElementById('in-adu').value = d.adu || "admin";
+                document.getElementById('in-lvl').value = d.lvl || 3;
                 toggleStatic();
             }).catch(e => console.error("Config load error", e));
         }

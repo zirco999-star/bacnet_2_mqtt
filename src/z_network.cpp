@@ -13,14 +13,14 @@ extern AsyncWebSocket ws;
 static uint32_t wifi_connect_start = 0;
 static bool wifi_fallback_active = false;
 
-// Structure pour la file d'attente des logs
+// Structure to hold log messages in the queue
 typedef struct {
     char message[256];
 } LogMessage;
 
 QueueHandle_t log_queue = NULL;
 
-// Tâche dédiée à l'envoi des logs via WebSocket (Core 0)
+// Task running on Core 0 to send logs to the web interface via WebSockets
 static void websocket_log_task(void *pvParameters) {
     LogMessage received_log;
     for( ;; ) {
@@ -32,7 +32,7 @@ static void websocket_log_task(void *pvParameters) {
     }
 }
 
-// Fonction de log thread-safe et non-bloquante
+// Safe logging function that adds messages to the queue without blocking the program
 void z_log(const char* format, ...) {
     LogMessage log_msg;
     int core = xPortGetCoreID();
@@ -51,8 +51,8 @@ void z_log(const char* format, ...) {
 }
 
 /**
- * Charge les données d'un équipement BACnet depuis le NVS.
- * Utilise le cache_mutex pour garantir l'intégrité de la RAM.
+ * Load saved BACnet device data from memory (NVS) into RAM.
+ * Uses cache_mutex to prevent memory crashes when reading.
  */
 void load_device_objects(uint32_t device_id) {
     if (cache_mutex == NULL) cache_mutex = xSemaphoreCreateMutex();
@@ -61,12 +61,12 @@ void load_device_objects(uint32_t device_id) {
     Preferences prefs;
     
     if (prefs.begin(ns, true)) {
-        // 1. Lire le Header
+        // 1. Read the main device header
         BACnetPersistenceDev head;
         if (prefs.getBytes("head", &head, sizeof(head)) > 0) {
             
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(1000))) {
-                // Vérifier si le device existe déjà
+                // Check if the device already exists in RAM
                 bool exists = false;
                 for(auto& d : bacnet_network_cache) if(d.device_id == device_id) exists = true;
                 
@@ -82,14 +82,14 @@ void load_device_objects(uint32_t device_id) {
                     dev.disc_obj_idx = head.disc_obj_idx;
                     dev.last_seen = millis();
 
-                    // 2. Charger les objets par pages
-                    // On boucle tant qu'on trouve des pages "p0", "p1", etc.
+                    // 2. Load the objects in chunks of 20 (pages)
+                    // Keep looping as long as we find pages like "p0", "p1", etc.
                     for (int p = 0; p * 20 < head.count; p++) {
                         char key[16]; snprintf(key, 16, "p%d", p);
                         BACnetPersistencePage page;
                         
                         if (prefs.getBytes(key, &page, sizeof(page)) > 0) {
-                            // On vérifie que la page appartient bien au bon device
+                            // Verify this page belongs to the correct device
                             if (page.device_id != device_id) continue;
 
                             for (int i = 0; i < 20 && (p * 20 + i) < head.count; i++) {
@@ -99,7 +99,7 @@ void load_device_objects(uint32_t device_id) {
                                 obj.enabled = page.objects[i].poll;
                                 obj.name_published = page.objects[i].name_published;
                                 
-                                // Copie sécurisée des char[] vers String (ou char[])
+                                // Safely copy the text data
                                 strlcpy(obj.name, page.objects[i].name, sizeof(obj.name));
                                 strlcpy(obj.unit_text, page.objects[i].unit_text, sizeof(obj.unit_text));
                                 strlcpy(obj.last_mqtt_name, page.objects[i].name, sizeof(obj.last_mqtt_name));
@@ -125,13 +125,13 @@ void load_device_objects(uint32_t device_id) {
 }
 
 /**
- * Sauvegarde la configuration système (Wi-Fi, MQTT, BACnet params).
+ * Load general system settings (WiFi, MQTT, BACnet) from memory.
  */
 void load_configuration() {
-    // Initialisation des valeurs par défaut
+    // Initialize with default values
     strlcpy(sysCfg.wifi_ssid, "", 32);
     strlcpy(sysCfg.wifi_pass, "", 64);
-    sysCfg.static_ip = false; // Par défaut en DHCP
+    sysCfg.static_ip = false; // Use DHCP by default
     strlcpy(sysCfg.local_ip, DEFAULT_STATIC_IP, 16);
     strlcpy(sysCfg.gateway, DEFAULT_GATEWAY, 16);
     strlcpy(sysCfg.subnet, DEFAULT_SUBNET, 16);
@@ -148,6 +148,7 @@ void load_configuration() {
     sysCfg.heartbeat_interval = DEFAULT_HEARBEAT_INTERVAL;
     sysCfg.token_skip = DEFAULT_TOKEN_SKIP;
     sysCfg.mqtt_poll_interval = DEFAULT_MQTT_POLL;
+    sysCfg.ha_discover = DEFAULT_HA_DISCOVER;
     sysCfg.bacnet_poll_interval = DEFAULT_BACNET_POLL;
     sysCfg.max_info_frames = DEFAULT_MAX_INFO_FRAMES;
     strlcpy(sysCfg.admin_user, "admin", 32);
@@ -176,13 +177,14 @@ void load_configuration() {
         if (prefs.isKey("tskip")) sysCfg.token_skip = prefs.getUChar("tskip", DEFAULT_TOKEN_SKIP);
         if (prefs.isKey("mpi")) sysCfg.mqtt_poll_interval = prefs.getUShort("mpi", DEFAULT_MQTT_POLL);
         if (prefs.isKey("mif")) sysCfg.max_info_frames = prefs.getUChar("mif", DEFAULT_MAX_INFO_FRAMES);
+        if (prefs.isKey("ha_disc")) sysCfg.ha_discover = prefs.getBool("ha_disc", DEFAULT_HA_DISCOVER);
         if (prefs.isKey("adu")) prefs.getString("adu", sysCfg.admin_user, 32);
         if (prefs.isKey("adp")) prefs.getString("adp", sysCfg.admin_pass, 64);
         prefs.end();
         z_log("[NVS] Configuration Loaded\n");
     }
 
-    // Chargement de la liste des devices
+    // Load the list of saved BACnet devices
     Preferences reg;
     String dev_list = "";
     if (reg.begin("registry", true)) {
@@ -203,6 +205,7 @@ void load_configuration() {
     }
 }
 
+// Save the main system configuration to memory
 void save_configuration() {
     Preferences prefs;
     if (prefs.begin("system", false)) {
@@ -226,6 +229,7 @@ void save_configuration() {
         prefs.putUShort("mpi", sysCfg.mqtt_poll_interval);
         prefs.putUShort("bpi", sysCfg.bacnet_poll_interval);
         prefs.putUChar("mif", sysCfg.max_info_frames);
+        prefs.putBool("ha_disc", sysCfg.ha_discover);
         prefs.putString("adu", sysCfg.admin_user);
         prefs.putString("adp", sysCfg.admin_pass);
         prefs.end();
@@ -234,8 +238,8 @@ void save_configuration() {
 }
 
 /**
- * Version thread-safe (sans verrouillage interne) de la sauvegarde d'un équipement.
- * Doit être appelée alors que cache_mutex est déjà détenu.
+ * Internal function to save a BACnet device to memory.
+ * This must only be called when the cache_mutex is already locked.
  */
 void save_device_objects_locked(uint32_t device_id) {
     char ns[16]; 
@@ -245,7 +249,7 @@ void save_device_objects_locked(uint32_t device_id) {
     for (auto& dev : bacnet_network_cache) {
         if (dev.device_id == device_id) {
             if (prefs.begin(ns, false)) {
-                // 1. Sauvegarde Header (Statique, plus de malloc)
+                // 1. Save Header (Static size, no dynamic memory needed)
                 BACnetPersistenceDev head;
                 memset(&head, 0, sizeof(head));
                 head.device_id = dev.device_id;
@@ -260,8 +264,8 @@ void save_device_objects_locked(uint32_t device_id) {
                 
                 prefs.putBytes("head", &head, sizeof(head));
 
-                // 2. Sauvegarde des objets par pages de 20 (Pagination)
-                // Chaque page fait ~960 octets, bien en dessous des 1984 octets NVS
+                // 2. Save objects in pages of 20 (Pagination)
+                // Each page is ~960 bytes, which fits safely in NVS memory
                 for (int p = 0; p * 20 < head.count; p++) {
                     BACnetPersistencePage page;
                     memset(&page, 0, sizeof(page));
@@ -271,13 +275,13 @@ void save_device_objects_locked(uint32_t device_id) {
                     for (int i = 0; i < 20 && (p * 20 + i) < head.count; i++) {
                         auto& o = dev.objects[p * 20 + i];
                         page.objects[i].val = ((uint32_t)o.type << 22) | (o.instance & 0x3FFFFF);
-                        strlcpy(page.objects[i].name, o.name, 32); // Utilisation char[]
+                        strlcpy(page.objects[i].name, o.name, 32); 
                         strlcpy(page.objects[i].unit_text, o.unit_text, 12);
                         page.objects[i].poll = o.enabled;
                         page.objects[i].name_published = o.name_published;
 
-                        // Publication MQTT conditionnelle
-                        // On ne publie que si l'objet est activé ET qu'il a un nom valide (pas "Unknown")
+                        // Conditional MQTT Publishing
+                        // Only publish if the object is active and has a valid name (not "Unknown")
                         if (o.enabled && !o.name_published && strcmp(o.name, "Unknown") != 0) {
                             MQTTPublishJob pub;
                             pub.device_id = dev.device_id; 
@@ -299,7 +303,7 @@ void save_device_objects_locked(uint32_t device_id) {
                 }
                 prefs.end();
 
-                // 3. Mise à jour du registre global (inchangé)
+                // 3. Update the global list of saved devices
                 Preferences reg;
                 if (reg.begin("registry", false)) {
                     String list = reg.getString("dev_list", "");
@@ -317,7 +321,7 @@ void save_device_objects_locked(uint32_t device_id) {
 }
 
 /**
- * Version publique de la sauvegarde d'un équipement avec gestion du mutex.
+ * Public function to save a device. It grabs the memory lock before saving.
  */
 void save_device_objects(uint32_t device_id) {
     if (cache_mutex == NULL) return;
@@ -328,15 +332,15 @@ void save_device_objects(uint32_t device_id) {
 }
 
 void setup_network_infrastructure() {
-    // 1. FORMATAGE ET INITIALISATION NVS OBLIGATOIRE
+    // 1. MANDATORY NVS FORMATTING AND INITIALIZATION
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        z_log("[NVS] Partition corrompue. Nettoyage...\n");
+        z_log("[NVS] Corrupted partition. Cleaning up...\n");
         nvs_flash_erase();
         err = nvs_flash_init();
     }
     if (err == ESP_OK) {
-        z_log("[NVS] Initialisée avec succès.\n");
+        z_log("[NVS] Successfully initialized.\n");
     }
 
     log_queue = xQueueCreate(20, sizeof(LogMessage));
@@ -344,7 +348,7 @@ void setup_network_infrastructure() {
         xTaskCreatePinnedToCore(websocket_log_task, "WS_Log", 4096, NULL, 2, NULL, 0);
     }
 
-    // Chargement Config
+    // Load Settings
     strlcpy(sysCfg.admin_user, "admin", 32);
     strlcpy(sysCfg.admin_pass, "admin1234", 64);
     load_configuration();
@@ -418,12 +422,12 @@ void setup_network_infrastructure() {
         doc["ver"] = VERSION_GLOBAL;
         doc["rssi"] = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
         
-        // Valeurs LIVE (pour le dashboard)
+        // LIVE values (for the dashboard)
         doc["cur_ip"] = is_ap_mode ? "192.168.4.1" : WiFi.localIP().toString();
         doc["cur_mask"] = is_ap_mode ? "255.255.255.0" : WiFi.subnetMask().toString();
         doc["cur_gw"] = is_ap_mode ? "192.168.4.1" : WiFi.gatewayIP().toString();
 
-        // Valeurs CONFIGURÉES (pour le formulaire de réglages)
+        // CONFIGURED values (for the settings form)
         doc["ip"] = sysCfg.local_ip;
         doc["mask"] = sysCfg.subnet; 
         doc["gw"] = sysCfg.gateway;
@@ -433,6 +437,7 @@ void setup_network_infrastructure() {
         doc["mqs"] = sysCfg.mqtt_server;
         doc["mqu"] = sysCfg.mqtt_user;
         doc["mqpr"] = sysCfg.mqtt_prefix;
+        doc["ha_disc"] = sysCfg.ha_discover;
         doc["mpi"] = sysCfg.mqtt_poll_interval;
         doc["bpi"] = sysCfg.bacnet_poll_interval;
         doc["heap"] = ESP.getFreeHeap() / 1024;
@@ -486,7 +491,7 @@ void setup_network_infrastructure() {
                         dev.enabled = !dev.enabled;
                         if (dev.enabled) {
                             if (!dev.discovery_done) {
-                                // On ne reset que si on n'a pas encore atteint le stade des objets
+                                // Only reset if we haven't reached the object scanning phase yet
                                 if (dev.disc_step < DISC_OBJ_OID) {
                                     dev.disc_step = DISC_DEV_ID;
                                     dev.disc_obj_idx = 0;
@@ -514,7 +519,7 @@ void setup_network_infrastructure() {
         request->send(200, "text/plain", "WHO-IS ENQUEUED");
     });
     webServer.on("/api/reset_cache", HTTP_POST, [](AsyncWebServerRequest *request) {
-        // 1. On nettoie les namespaces individuels via le registre
+        // 1. Clean individual device namespaces using the registry
         Preferences reg;
         if (reg.begin("registry", false)) {
             String dev_list = reg.getString("dev_list", "");
@@ -536,7 +541,7 @@ void setup_network_infrastructure() {
             reg.remove("dev_list");
             reg.end();
         }
-        // 2. On vide la RAM
+        // 2. Clear the RAM cache
         if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
             bacnet_network_cache.clear();
             xSemaphoreGive(cache_mutex);
@@ -635,7 +640,7 @@ void setup_network_infrastructure() {
                 for(auto& dev : bacnet_network_cache) {
                     if(dev.device_id == id) {
                         dev.discovery_done = false;
-                        dev.disc_step = DISC_OBJ_COUNT; // CORRECTION : Forcer le re-comptage
+                        dev.disc_step = DISC_OBJ_COUNT; // Force recount of objects
                         dev.disc_obj_idx = 0;
                         dev.objects.clear();
                         break;
@@ -658,9 +663,9 @@ void setup_network_infrastructure() {
                     if(dev.device_id == did) {
                         for(int i=0; i<dev.objects.size(); i++) {
                             if(dev.objects[i].instance == inst && dev.objects[i].type == type) {
-                                bacnet_abort_current_transaction(); // Annuler tout ce qui est en cours
+                                bacnet_abort_current_transaction(); // Cancel anything currently running
                                 dev.discovery_done = false;
-                                dev.reload_single = true; // Demande de s'arrêter après cet objet
+                                dev.reload_single = true; // Stop scanning after this specific object
                                 dev.disc_step = DISC_OBJ_OID; 
                                 dev.disc_obj_idx = i;
                                 trigger_ha_discovery(did, inst, type);
@@ -760,6 +765,8 @@ void setup_network_infrastructure() {
         check("mqu", sysCfg.mqtt_user, 32); check("mqp", sysCfg.mqtt_pass, 32);
         check("mqpr", sysCfg.mqtt_prefix, 64);
         check("admin_u", sysCfg.admin_user, 32); check("admin_p", sysCfg.admin_pass, 64);
+        if(request->hasParam("ha_disc", true)) sysCfg.ha_discover = true;
+        else if(request->hasParam("form_type", true) && request->getParam("form_type", true)->value() == "mqtt") sysCfg.ha_discover = false;
         if(request->hasParam("mpi", true)) sysCfg.mqtt_poll_interval = request->getParam("mpi", true)->value().toInt();
         if(request->hasParam("static_ip", true)) sysCfg.static_ip = true;
         else if(request->hasParam("form_type", true) && request->getParam("form_type", true)->value() == "wifi") sysCfg.static_ip = false;
@@ -795,7 +802,9 @@ void setup_network_infrastructure() {
 }
 
 void handle_network() {
-    ArduinoOTA.handle();
+    ArduinoOTA.handle(); // Handle over-the-air updates
+    
+    // Switch to Access Point mode if WiFi fails to connect for 45 seconds
     if (!is_ap_mode && !wifi_fallback_active && WiFi.status() != WL_CONNECTED) {
         if (millis() - wifi_connect_start > 45000) {
             WiFi.mode(WIFI_AP); WiFi.softAP("ZIRCON-RECOVERY", "admin1234");
@@ -805,6 +814,7 @@ void handle_network() {
     if (pending_reboot && (millis() - reboot_timer > 2000)) ESP.restart();
 }
 
+// Check if the user provided the correct admin credentials
 bool is_authenticated(AsyncWebServerRequest *request) {
     if (!request->authenticate(sysCfg.admin_user, sysCfg.admin_pass)) {
         request->requestAuthentication(); return false;
