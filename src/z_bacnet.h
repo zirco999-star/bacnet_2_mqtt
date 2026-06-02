@@ -198,22 +198,11 @@ struct BACnetJob {
     char name[50]; 
 };
 
-struct MQTTPublishJob {
-    uint32_t device_id;
-    uint16_t obj_type;
-    uint32_t obj_instance;
-    uint8_t prop_id;
-    char value_string[64];
-    bool retain;
-};
-
-extern QueueHandle_t mqtt_publish_queue;
 extern QueueHandle_t bacnet_job_queue;
 
 void setup_bacnet_engine();
 void bacnet_abort_current_transaction();
 bool enqueue_bacnet_job(BACnetJob job);
-bool enqueue_mqtt_publish(MQTTPublishJob pubJob);
 void publish_all_names();
 String get_unit_text(uint16_t units);
 

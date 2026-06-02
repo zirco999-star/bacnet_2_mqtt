@@ -4,7 +4,7 @@
 #include <atomic>
 #include <ArduinoJson.h>
 
-extern void z_log(const char* format, ...);
+#include "z_network.h"
 
 static int mqtt_fail_count = 0;
 static std::atomic<bool> circuit_breaker_active{false};
@@ -19,7 +19,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
     switch ((esp_mqtt_event_id_t)event_id) {
         case MQTT_EVENT_CONNECTED:
-            z_log("[MQTT] Connected to Broker.\n");
+            z_log(LOG_INFO, "MQTT", "[MQTT] Connected to Broker.\n");
             mqtt_fail_count = 0; 
             circuit_breaker_active = false;
             mqtt_is_connected = true;
@@ -44,7 +44,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             if (circuit_breaker_active) break;
             
             if (WiFi.status() != WL_CONNECTED) {
-                z_log("[MQTT] Connection dropped due to Wi-Fi loss.\n");
+                z_log(LOG_WARN, "MQTT", "[MQTT] Connection dropped due to Wi-Fi loss.\n");
                 break;
             }
             
@@ -52,17 +52,17 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                 if (event->error_handle->error_type == MQTT_ERROR_TYPE_CONNECTION_REFUSED) {
                     if (event->error_handle->connect_return_code == MQTT_CONNECTION_REFUSE_BAD_USERNAME ||
                         event->error_handle->connect_return_code == MQTT_CONNECTION_REFUSE_NOT_AUTHORIZED) {
-                        z_log("[MQTT] FATAL: Invalid Broker Credentials.\n");
+                        z_log(LOG_ERROR, "MQTT", "[MQTT] FATAL: Invalid Broker Credentials.\n");
                         mqtt_fail_count = 3;
                     }
                 }
             }
             
             mqtt_fail_count++;
-            z_log("[MQTT] Disconnected from Broker (%d/3).\n", mqtt_fail_count);
+            z_log(LOG_WARN, "MQTT", "[MQTT] Disconnected from Broker (%d/3).\n", mqtt_fail_count);
             
             if (mqtt_fail_count >= 3) {
-                z_log("[MQTT] CIRCUIT BREAKER: Halting MQTT connection attempts.\n");
+                z_log(LOG_ERROR, "MQTT", "[MQTT] CIRCUIT BREAKER: Halting MQTT connection attempts.\n");
                 circuit_breaker_active = true;
             }
             break;
@@ -142,7 +142,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 }
 
 static void mqtt_gatekeeper_task(void *pv) {
-    z_log("[MQTT] Gatekeeper Task Operational.\n");
+    z_log(LOG_INFO, "MQTT", "[MQTT] Gatekeeper Task Operational.\n");
     uint32_t last_status_pub = 0;
 
     while (1) {
@@ -173,14 +173,14 @@ static void mqtt_gatekeeper_task(void *pv) {
                 const char* subtopic = (pubJob.prop_id == 77) ? "name" : "state";
                 snprintf(topic, sizeof(topic), "%s/%lu/%s/%lu/%s", sysCfg.mqtt_prefix, (unsigned long)pubJob.device_id, t_str, (unsigned long)pubJob.obj_instance, subtopic);
                 
-                if (esp_mqtt_client_enqueue(mqtt_client, topic, pubJob.value_string, 0, 1, pubJob.retain, true) < 0) {
-                    z_log("[MQTT] Queue Full. Back-pressure active.\n");
+                if (esp_mqtt_client_publish(mqtt_client, topic, pubJob.value_string, 0, 1, pubJob.retain) < 0) {
+                    z_log(LOG_WARN, "MQTT", "[MQTT] Publish failed. Queue Full or Client error.\n");
                     vTaskDelay(pdMS_TO_TICKS(50));
                     break; 
                 } else {
-                    z_log("[MQTT] Published: %s = %s\n", topic, pubJob.value_string);
+                    z_log(LOG_INFO, "MQTT", "[MQTT] Published: %s = %s\n", topic, pubJob.value_string);
                 }
-                vTaskDelay(pdMS_TO_TICKS(5)); // Pacing pour soulager la pile réseau
+                vTaskDelay(pdMS_TO_TICKS(5)); 
             }
 
             // 3. Status Gateway périodique
@@ -188,14 +188,21 @@ static void mqtt_gatekeeper_task(void *pv) {
                 last_status_pub = millis();
                 auto pub_b2m = [&](const char* key, String val) {
                     char t[128]; snprintf(t, sizeof(t), "%s/B2M/%s/state", sysCfg.mqtt_prefix, key);
-                    esp_mqtt_client_enqueue(mqtt_client, t, val.c_str(), 0, 1, 0, true);
+                    esp_mqtt_client_publish(mqtt_client, t, val.c_str(), 0, 1, 0);
+                    z_log(LOG_INFO, "MQTT", "[MQTT] Published: %s = %s\n", t, val.c_str());
                 };
                 pub_b2m("ver", VERSION_GLOBAL);
                 pub_b2m("rssi", String(WiFi.RSSI()));
                 pub_b2m("heap", String(ESP.getFreeHeap() / 1024));
                 pub_b2m("min_heap", String(ESP.getMinFreeHeap() / 1024));
                 pub_b2m("uptime", String(millis() / 1000));
-                pub_b2m("nb_dev", String(bacnet_network_cache.size()));
+                
+                size_t n_dev = 0;
+                if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
+                    n_dev = bacnet_network_cache.size();
+                    xSemaphoreGive(cache_mutex);
+                }
+                pub_b2m("nb_dev", String(n_dev));
                 
                 // Température interne ESP32-S3
                 pub_b2m("temp", String(temperatureRead(), 1));
@@ -211,7 +218,19 @@ static void mqtt_gatekeeper_task(void *pv) {
     }
 }
 
+QueueHandle_t mqtt_publish_queue = NULL;
+
+bool enqueue_mqtt_publish(MQTTPublishJob pubJob) { if (mqtt_publish_queue == NULL) return false; return xQueueSend(mqtt_publish_queue, &pubJob, 0) == pdTRUE; }
+
+void init_mqtt_queue() {
+    if (mqtt_publish_queue == NULL) {
+        mqtt_publish_queue = xQueueCreate(100, sizeof(MQTTPublishJob));
+        z_log(LOG_INFO, "MQTT", "[MQTT] Queue Initialized\n");
+    }
+}
+
 void setup_mqtt() {
+    init_mqtt_queue();
     if (mqtt_client != NULL) {
         esp_mqtt_client_stop(mqtt_client);
         esp_mqtt_client_destroy(mqtt_client);
@@ -280,13 +299,13 @@ void handle_mqtt() {
         esp_mqtt_client_stop(mqtt_client);
         esp_mqtt_client_destroy(mqtt_client);
         mqtt_client = NULL;
-        z_log("[MQTT] Circuit Breaker Active. Client destroyed.\n");
+        z_log(LOG_ERROR, "MQTT", "[MQTT] Circuit Breaker Active. Client destroyed.\n");
     }
 }
 
 void publish_ha_autodiscovery() {
     if (!mqtt_is_connected || circuit_breaker_active || !sysCfg.ha_discover) return;
-    z_log("[MQTT] Starting HA Auto-Discovery...\n");
+    z_log(LOG_INFO, "MQTT", "[MQTT] Starting HA Auto-Discovery...\n");
 
     // Étape 0 : Discovery de la Gateway elle-même (Diagnostics)
     char base_b2m[128];
@@ -322,10 +341,11 @@ void publish_ha_autodiscovery() {
 
         String payload;
         serializeJson(doc, payload);
-        esp_mqtt_client_enqueue(mqtt_client, topic, payload.c_str(), 0, 1, 1, true);
-    };
+        esp_mqtt_client_publish(mqtt_client, topic, payload.c_str(), 0, 1, 1);
+        z_log(LOG_INFO, "MQTT", "[MQTT] HA Auto-Discovery send : %s\n", topic);
+        };
 
-    pub_gw_sensor("ver", "Gateway Version", NULL, NULL, "mdi:information-outline");
+        pub_gw_sensor("ver", "Gateway Version", NULL, NULL, "mdi:information-outline");
     pub_gw_sensor("uptime", "Gateway Uptime", "duration", "s", "mdi:timer-outline");
     pub_gw_sensor("rssi", "Gateway WiFi RSSI", "signal_strength", "dBm");
     pub_gw_sensor("heap", "Gateway Free Heap", "data_size", "KB", "mdi:memory");
@@ -496,7 +516,7 @@ void publish_ha_autodiscovery() {
     }
     
     // Le log de fin est placé tout à la fin de la fonction
-    z_log("[MQTT] HA Auto-Discovery payload sent.\n");
+    z_log(LOG_INFO, "MQTT", "[MQTT] HA Auto-Discovery payload sent.\n");
 }
 
 void publish_mqtt_topic(uint32_t device_id, BACnetObject& obj, uint8_t prop_id, bool retain) {

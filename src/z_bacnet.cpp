@@ -6,15 +6,12 @@
 #include "z_network.h" 
 #include "rom/ets_sys.h"
 #include "z_mqtt.h"
+#include "z_nvs.h"
 
-extern void z_log(const char* format, ...);
-extern void save_device_objects(uint32_t device_id);
-extern void save_device_objects_locked(uint32_t device_id);
 
 BACnet_Stats bacnetStats = {0, 0, 0, 0, 0, 0, 0};
 std::vector<BACnetDevice> bacnet_network_cache;
 QueueHandle_t bacnet_job_queue = NULL;
-QueueHandle_t mqtt_publish_queue = NULL;
 QueueHandle_t uart_evt_queue = NULL;
 SemaphoreHandle_t cache_mutex = NULL;
 
@@ -88,7 +85,7 @@ static bool decode_next_tag(const uint8_t *data, uint16_t *pos, uint16_t max_len
 void bacnet_abort_current_transaction() {
     last_sent_invoke_id = 0xFF;
     // waiting_for_reply = false; // Ne pas toucher à l'état de la FSM, juste l'ID
-    z_log("[BACNET] Transaction Aborted (Manual Override)\n");
+    z_log(LOG_WARN,"BACNET","Transaction Aborted (Manual Override)\n");
 }
 
 static void uart_tx(const uint8_t *buffer, uint16_t length) {
@@ -271,7 +268,7 @@ static void bacnet_task(void *pv) {
 
     uart_event_t event;
 
-    z_log("[BACNET] Engine %s - TSM Enabled (No-Ghost Strategy)\n", VERSION_GLOBAL);
+    z_log(LOG_INFO,"BACNET","Engine %s - MSTP Enabled\n", VERSION_GLOBAL);
 
     for (;;) {
         if (xQueueReceive(uart_evt_queue, (void *)&event, 0) == pdTRUE) {
@@ -288,7 +285,8 @@ static void bacnet_task(void *pv) {
         }
 
         if (millis() - heartbeat_timer > sysCfg.heartbeat_interval) {
-            z_log("[BACNET] Heartbeat - Tokens: %lu, RX: %lu, TX: %lu (State:%d, Cache:%u)\n", bacnetStats.tokens_seen, bacnetStats.ms_msgs_rx, bacnetStats.ms_msgs_tx, (int)mstp_state, (uint32_t)bacnet_network_cache.size());
+         
+            z_log(LOG_INFO,"BACNET","Heartbeat - Tokens: %lu, RX: %lu, TX: %lu (State:%d, Cache:%u)\n", bacnetStats.tokens_seen, bacnetStats.ms_msgs_rx, bacnetStats.ms_msgs_tx, (int)mstp_state, (uint32_t)bacnet_network_cache.size());
             heartbeat_timer = millis();
         }
 
@@ -314,7 +312,7 @@ static void bacnet_task(void *pv) {
                                         } 
                                     }
                                     if(!known) {
-                                        z_log("[BACNET] Found New MAC: %u\n", src_mac);
+                                        z_log(LOG_INFO, "BACNET","Found New MAC: %u\n", src_mac);
                                         BACnetDevice d; d.mac_address = src_mac; d.device_id = 4194303; d.enabled = false; d.discovery_done = false;
                                         d.name = ""; d.vendor = ""; d.disc_step = DISC_DEV_ID; d.disc_obj_idx = 0;
                                         bacnet_network_cache.push_back(d);
@@ -386,7 +384,7 @@ static void bacnet_task(void *pv) {
                                                     new_dev.enabled = false; new_dev.discovery_done = false; new_dev.last_seen = millis();
                                                     new_dev.disc_step = DISC_DEV_ID; new_dev.disc_obj_idx = 0;
                                                     bacnet_network_cache.push_back(new_dev);
-                                                    z_log("[BACNET] Nouveau Device découvert (Broadcast): ID %lu, MAC %d\n", device_id, src_mac);
+                                                    z_log(LOG_INFO,"BACNET","Discover New Device (Broadcast): ID %lu, MAC %d\n", device_id, src_mac);
                                                 }
                                                 xSemaphoreGive(cache_mutex);
                                             }
@@ -470,7 +468,7 @@ static void bacnet_task(void *pv) {
                                     }
                                     else { 
                                         dev.discovery_done = true; save_device_objects_locked(dev.device_id); 
-                                        z_log("[BACNET] Discovery Successfully Finalized for ID:%lu.\n", dev.device_id);
+                                        z_log(LOG_INFO, "BACNET", "Discovery Successfully Finalized for ID:%lu.\n", dev.device_id);
                                         
                                         // Synchronisation HA complète (inclut le nettoyage des objets non-activés)
                                         trigger_ha_discovery(dev.device_id, 0xFFFFFFFF, 0xFFFF);
@@ -481,7 +479,7 @@ static void bacnet_task(void *pv) {
                                                 publish_mqtt_topic(dev.device_id, obj, 77, true);
                                                 obj.name_published = true;
                                                 strlcpy(obj.last_mqtt_name, obj.name, sizeof(obj.last_mqtt_name));
-                                                z_log("[BACNET] Sync MQTT Name OK : %s\n", obj.name);
+                                                z_log(LOG_INFO, "BACNET", "Sync MQTT Name OK : %s\n", obj.name);
                                             }
                                         }
                                         // On reste dans USE_TOKEN pour peut être commencer le polling
@@ -495,7 +493,7 @@ static void bacnet_task(void *pv) {
                                     for(size_t i=0; i<dev.objects.size(); i++) {
                                         auto& o = dev.objects[i];
                                         if (o.enabled && (o.type == 13 || o.type == 14 || o.type == 19) && o.state_texts.empty()) {
-                                            z_log("[BACNET] Metadata Missing for Obj T%u I%lu - Triggering Recovery\n", o.type, (unsigned long)o.instance);
+                                            z_log(LOG_WARN, "BACNET", "Object Metadata Missing for Obj T%u I%lu - Triggering Recovery\n", o.type, (unsigned long)o.instance);
                                             dev.discovery_done = false;
                                             dev.recovery_mode = true;
                                             dev.disc_step = DISC_OBJ_STATES;
@@ -514,7 +512,7 @@ static void bacnet_task(void *pv) {
                                             current_poll_idx = (current_poll_idx + 1) % count;
                                             auto& o = dev.objects[current_poll_idx];
                                             if (o.enabled && o.type != 8 && o.type != 65535 && (millis() - o.last_update > (sysCfg.bacnet_poll_interval * 1000))) { 
-                                                z_log("[BACNET] Polling Obj %d/%d (T%u I%lu)\n", current_poll_idx + 1, count, o.type, (unsigned long)o.instance);
+                                                z_log(LOG_DEBUG,"BACNET", "Polling Obj %d/%d (T%u I%lu)\n", current_poll_idx + 1, count, o.type, (unsigned long)o.instance);
                                                 apdu_len = build_read_property_apdu(apdu, next_invoke_id++, o.type, o.instance, 85, -1); 
                                                 break;
                                             }
@@ -581,7 +579,7 @@ static void bacnet_task(void *pv) {
                                     BACnetDevice new_dev; new_dev.device_id = device_id; new_dev.mac_address = src_mac;
                                     new_dev.enabled = false; new_dev.discovery_done = false; new_dev.last_seen = millis();
                                     bacnet_network_cache.push_back(new_dev);
-                                    z_log("[BACNET] Nouveau Device découvert: ID %lu, MAC %d\n", device_id, src_mac);
+                                    z_log(LOG_INFO,"BACNET", "New Device Discovered: ID %lu, MAC %d\n", device_id, src_mac);
                                 }
                                 xSemaphoreGive(cache_mutex);
                             }
@@ -592,7 +590,7 @@ static void bacnet_task(void *pv) {
                     // --- TRAITEMENT RÉPONSES AUX REQUÊTES ---
                     if (dest_mac == sysCfg.mac_address) {
                         if (pdu_type == 0x20) { // Simple-ACK (Succès WriteProperty)
-                            z_log("[BACNET] WriteProperty SUCCESS (Invoke ID %d)\n", apdu[1]);
+                            z_log(LOG_INFO,"BACNET","WriteProperty SUCCESS (Invoke ID %d)\n", apdu[1]);
                             
                             // --- REFRESH OPTIMISTE ---
                             if (apdu[1] == last_sent_invoke_id && pending_write_job.type == JOB_WRITE_PROP) {
@@ -604,10 +602,10 @@ static void bacnet_task(void *pv) {
                                                     if (pending_write_job.prop_id == 85) {
                                                         o.present_value = pending_write_job.write_value;
                                                         o.last_update = millis();
-                                                        z_log("[BACNET] Optimistic update for Obj T%u I%lu: %.2f\n", o.type, (unsigned long)o.instance, o.present_value);
+                                                        z_log(LOG_INFO,"BACNET","Optimistic update for Obj T%u I%lu: %.2f\n", o.type, (unsigned long)o.instance, o.present_value);
                                                     } else if (pending_write_job.prop_id == 77) {
                                                         strlcpy(o.name, pending_write_job.name, sizeof(o.name));
-                                                        z_log("[BACNET] Optimistic name update for Obj T%u I%lu: %s\n", o.type, (unsigned long)o.instance, o.name);
+                                                        z_log(LOG_INFO,"BACNET","Optimistic update for Obj T%u I%lu: %.2f\n", o.type, (unsigned long)o.instance, o.present_value);
                                                     }
                                                     publish_mqtt_topic(d.device_id, o, pending_write_job.prop_id, true);
                                                     break;
@@ -626,7 +624,7 @@ static void bacnet_task(void *pv) {
                         else if (pdu_type == 0x30) { // Complex-ACK (Succès ReadProperty)
                             uint8_t invoke_id = apdu[1];
                             if (invoke_id != last_sent_invoke_id) {
-                                z_log("[BACNET] Complex-ACK ignored (InvokeID mismatch: %d != %d)\n", invoke_id, last_sent_invoke_id);
+                                z_log(LOG_WARN,"BACNET","Complex-ACK ignored (InvokeID mismatch: %d != %d)\n", invoke_id, last_sent_invoke_id);
                                 waiting_for_reply = true; break;
                             }
                             uint16_t apdu_pos = 3; BACnetTag t;
@@ -659,17 +657,17 @@ static void bacnet_task(void *pv) {
                                                         for(int i=2; i<val_tag.len && slen<64; i+=2) desc[slen++] = apdu[apdu_pos+i];
                                                     }
                                                     desc[slen] = '\0';
-                                                    z_log("[BACNET] Property 28 (Description) Data: %s\n", desc);
+                                                    z_log(LOG_DEBUG,"BACNET","Property 28 (Description) Data: %s\n", desc);
                                                 }
 
                                                 if (!dev.discovery_done) {
                                                     // --- DISCOVERY PROCESSING ---
-                                                    if (dev.disc_step == DISC_DEV_ID) { dev.device_id = (((apdu[apdu_pos]<<24)|(apdu[apdu_pos+1]<<16)|(apdu[apdu_pos+2]<<8)|apdu[apdu_pos+3]) & 0x3FFFFF); z_log("[BACNET] ID: %lu\n", (unsigned long)dev.device_id); dev.disc_step = DISC_DEV_NAME; }
-                                                    else if (dev.disc_step == DISC_DEV_NAME) { char n[33]; uint8_t enc = apdu[apdu_pos]; if (enc == 0) { uint16_t slen = std::min((int)val_tag.len - 1, 32); memcpy(n, &apdu[apdu_pos+1], slen); n[slen]=0; } else { int slen=0; for(int i=2; i<val_tag.len && slen<32; i+=2) n[slen++]=apdu[apdu_pos+i]; n[slen]=0; } dev.name = String(n); z_log("[BACNET] Name: %s\n", n); dev.disc_step = DISC_DEV_VENDOR; }
-                                                    else if (dev.disc_step == DISC_DEV_VENDOR) { char n[33]; uint8_t enc = apdu[apdu_pos]; if (enc == 0) { uint16_t slen = std::min((int)val_tag.len - 1, 32); memcpy(n, &apdu[apdu_pos+1], slen); n[slen]=0; } else { int slen=0; for(int i=2; i<val_tag.len && slen<32; i+=2) n[slen++]=apdu[apdu_pos+i]; n[slen]=0; } dev.vendor = String(n); z_log("[BACNET] Vendor: %s\n", n); dev.disc_step = DISC_OBJ_COUNT; }
+                                                    if (dev.disc_step == DISC_DEV_ID) { dev.device_id = (((apdu[apdu_pos]<<24)|(apdu[apdu_pos+1]<<16)|(apdu[apdu_pos+2]<<8)|apdu[apdu_pos+3]) & 0x3FFFFF); z_log(LOG_INFO,"BACNET","Device ID: %lu\n", (unsigned long)dev.device_id); dev.disc_step = DISC_DEV_NAME; }
+                                                    else if (dev.disc_step == DISC_DEV_NAME) { char n[33]; uint8_t enc = apdu[apdu_pos]; if (enc == 0) { uint16_t slen = std::min((int)val_tag.len - 1, 32); memcpy(n, &apdu[apdu_pos+1], slen); n[slen]=0; } else { int slen=0; for(int i=2; i<val_tag.len && slen<32; i+=2) n[slen++]=apdu[apdu_pos+i]; n[slen]=0; } dev.name = String(n); z_log(LOG_INFO,"BACNET","Device name: %s\n", n); dev.disc_step = DISC_DEV_VENDOR; }
+                                                    else if (dev.disc_step == DISC_DEV_VENDOR) { char n[33]; uint8_t enc = apdu[apdu_pos]; if (enc == 0) { uint16_t slen = std::min((int)val_tag.len - 1, 32); memcpy(n, &apdu[apdu_pos+1], slen); n[slen]=0; } else { int slen=0; for(int i=2; i<val_tag.len && slen<32; i+=2) n[slen++]=apdu[apdu_pos+i]; n[slen]=0; } dev.vendor = String(n); z_log(LOG_INFO,"BACNET","Device Vendor: %s\n", n); dev.disc_step = DISC_OBJ_COUNT; }
                                                     else if (dev.disc_step == DISC_OBJ_COUNT) {
                                                         uint32_t count = 0; for(int i=0; i<val_tag.len; i++) count = (count << 8) | apdu[apdu_pos+i];
-                                                        z_log("[BACNET] Object Count: %lu\n", (unsigned long)count);
+                                                        z_log(LOG_INFO,"BACNET","Device Object Count: %lu\n", (unsigned long)count);
                                                         dev.objects.clear(); dev.objects.reserve(count);
                                                         for(int i=0; i<count; i++) { 
                                                             BACnetObject o; 
@@ -688,7 +686,7 @@ static void bacnet_task(void *pv) {
                                                             // Tous les objets sont désactivés par défaut. L'utilisateur choisira.
                                                             o.enabled = false; 
 
-                                                            z_log("[BACNET] Obj %u (BACnet Idx:%d) OID: T%u I%lu (Poll:NO - Waiting for User)\n", 
+                                                            z_log(LOG_INFO,"BACNET","Obj %u (BACnet Idx:%d) OID: T%u I%lu (Poll:NO - Waiting for User)\n", 
                                                                 dev.disc_obj_idx+1, dev.disc_obj_idx+1, o.type, (unsigned long)o.instance); 
                                                             dev.disc_step = DISC_OBJ_NAME; 
                                                         }
@@ -705,7 +703,7 @@ static void bacnet_task(void *pv) {
                                                                 snprintf(o.name, sizeof(o.name), "%s:%lu", typeStr.c_str(), (unsigned long)o.instance);
                                                             } else {
                                                                 strlcpy(o.name, n, sizeof(o.name));
-                                                                z_log("[BACNET] Obj %u Name: %s\n", dev.disc_obj_idx+1, o.name); 
+                                                                z_log(LOG_INFO,"BACNET","Obj %u Name: %s\n", dev.disc_obj_idx+1, o.name); 
                                                             }
                                                             
                                                             if(o.type <= 2 || o.type == 23 || o.type == 24 || o.type == 46) dev.disc_step = DISC_OBJ_UNITS; 
@@ -719,7 +717,7 @@ static void bacnet_task(void *pv) {
                                                             String unitStr = get_unit_text(u);
                                                             if (unitStr.length() > 0) strlcpy(o.unit_text, unitStr.c_str(), sizeof(o.unit_text)); 
                                                             else strlcpy(o.unit_text, "Unknown", sizeof(o.unit_text)); 
-                                                            z_log("[BACNET] Obj %u Units: %s\n", dev.disc_obj_idx+1, o.unit_text); 
+                                                            z_log(LOG_INFO,"BACNET","Obj %u Units: %s\n", dev.disc_obj_idx+1, o.unit_text); 
                                                             if(o.type == 13 || o.type == 14 || o.type == 19) { o.state_texts.clear(); o.expected_states_count = 0; dev.disc_step = DISC_OBJ_STATES; }
                                                             else dev.disc_step = DISC_OBJ_VALUE; 
                                                         }
@@ -727,7 +725,7 @@ static void bacnet_task(void *pv) {
                                                             if (val_tag.number == 2) { // Unsigned Integer (Count)
                                                                 uint32_t count = 0; for(int i=0; i<val_tag.len; i++) count = (count << 8) | apdu[apdu_pos+i];
                                                                 o.expected_states_count = (uint16_t)count;
-                                                                z_log("[BACNET] Obj %u States Count: %u\n", dev.disc_obj_idx+1, o.expected_states_count);
+                                                                z_log(LOG_INFO,"BACNET","Obj %u States Count: %u\n", dev.disc_obj_idx+1, o.expected_states_count);
                                                                 if (o.expected_states_count == 0) dev.disc_step = DISC_OBJ_VALUE;
                                                             } 
                                                             else if (val_tag.number == 7) { // CharacterString
@@ -737,7 +735,7 @@ static void bacnet_task(void *pv) {
                                                                 
                                                                 if (o.state_texts.size() < o.expected_states_count) {
                                                                     o.state_texts.push_back(String(n));
-                                                                    z_log("[BACNET] Obj %u State %u/%u: %s\n", dev.disc_obj_idx+1, (uint32_t)o.state_texts.size(), (uint32_t)o.expected_states_count, n);
+                                                                    z_log(LOG_INFO,"BACNET","Obj %u State %u/%u: %s\n", dev.disc_obj_idx+1, (uint32_t)o.state_texts.size(), (uint32_t)o.expected_states_count, n);
                                                                     if (o.state_texts.size() >= o.expected_states_count) dev.disc_step = DISC_OBJ_VALUE;
                                                                 }
                                                             }
@@ -751,7 +749,7 @@ static void bacnet_task(void *pv) {
                                                                 o.present_value = (float)v; 
                                                             }
                                                             o.last_update = millis(); 
-                                                            z_log("[BACNET] Obj %u Value: %.2f\n", dev.disc_obj_idx+1, o.present_value);
+                                                            z_log(LOG_INFO,"BACNET","Obj %u Value: %.2f\n", dev.disc_obj_idx+1, o.present_value);
                                                             
                                                             bool stop_now = dev.reload_single || dev.recovery_mode;
                                                             if (!dev.recovery_mode) dev.disc_obj_idx++; 
@@ -781,7 +779,7 @@ static void bacnet_task(void *pv) {
                                                         float v; uint32_t tmp; memcpy(&tmp, &apdu[apdu_pos], 4); tmp = __builtin_bswap32(tmp); memcpy(&v, &tmp, 4); 
                                                         if(current_poll_idx < dev.objects.size()){ 
                                                             auto& o=dev.objects[current_poll_idx]; 
-                                                            z_log("[BACNET] Poll Result Obj %d: %.2f\n", current_poll_idx + 1, v);
+                                                            z_log(LOG_INFO,"BACNET","Poll Result Obj %d: %.2f\n", current_poll_idx + 1, v);
                                                             o.present_value=v; o.last_update=millis(); 
                                                             if (o.enabled) publish_mqtt_topic(dev.device_id, o, 85, false); 
                                                         } 
@@ -790,7 +788,7 @@ static void bacnet_task(void *pv) {
                                                         uint32_t v=0; for(int i=0; i<val_tag.len; i++) v=(v<<8)|apdu[apdu_pos+i]; 
                                                         if(current_poll_idx < dev.objects.size()){ 
                                                             auto& o=dev.objects[current_poll_idx]; 
-                                                            z_log("[BACNET] Poll Result Obj %d: %.2f\n", current_poll_idx + 1, (float)v);
+                                                            z_log(LOG_INFO,"BACNET","Poll Result Obj %d: %.2f\n", current_poll_idx + 1, (float)v);
                                                             o.present_value=(float)v; o.last_update=millis(); 
                                                             if (o.enabled) publish_mqtt_topic(dev.device_id, o, 85, false); 
                                                         } 
@@ -812,12 +810,12 @@ static void bacnet_task(void *pv) {
 
                             // 1. Vérification que cette erreur concerne notre requête en cours
                             if (invoke_id == last_sent_invoke_id) {
-                                z_log("[BACNET] TSM: Réception Erreur/Reject/Abort 0x%02X, InvokeID: %d\n", pdu_type, invoke_id);
+                                z_log(LOG_ERROR,"BACNET","TSM: received Error/Reject/Abort 0x%02X, InvokeID: %d\n", pdu_type, invoke_id);
 
                                 // 2. Logique de Retry
                                 if (retry_count < sysCfg.max_retries) {
                                     retry_count++;
-                                    z_log("[BACNET] Tentative de retry %d/%d pour InvokeID %d\n", retry_count, sysCfg.max_retries, invoke_id);
+                                    z_log(LOG_WARN,"BACNET","Retry %d/%d for InvokeID %d\n", retry_count, sysCfg.max_retries, invoke_id);
                                     
                                     if (current_dev_idx < bacnet_network_cache.size()) {
                                         auto& dev = bacnet_network_cache[current_dev_idx];
@@ -828,12 +826,13 @@ static void bacnet_task(void *pv) {
                                     waiting_for_reply = true;
                                     break; 
                                 } else {
-                                    z_log("[BACNET] Max retries atteints, abandon de l'objet.\n");
+                                    z_log(LOG_INFO,"BACNET","Maximum attempts reached, object rejected.");
+                                    z_log(LOG_DEBUG,"BACNET","InvokeID: %d aborted.\n",invoke_id);
                                     // 3. Épuisement des retries : incrémentation sécurisée pour s'évader de la boucle
                                     if (current_dev_idx < bacnet_network_cache.size()) {
                                         auto& dev = bacnet_network_cache[current_dev_idx];
                                         if (!dev.discovery_done) {
-                                            z_log("[BACNET] Skipping faulty object at Index %d\n", dev.disc_obj_idx);
+                                            z_log(LOG_WARN,"BACNET","Skipping faulty object at Index %d\n", dev.disc_obj_idx);
                                             dev.disc_obj_idx++; 
                                             dev.disc_step = DISC_OBJ_OID;
                                             if (dev.disc_obj_idx >= dev.objects.size()) {
@@ -848,7 +847,7 @@ static void bacnet_task(void *pv) {
                                     last_sent_invoke_id = 0xFF;
                                 }
                             } else { 
-                                z_log("[BACNET] ignored inconsistency frame : %d != %d\n", invoke_id, last_sent_invoke_id);
+                                z_log(LOG_INFO,"BACNET","TSM: Ignored inconsistency frame : %d != %d\n", invoke_id, last_sent_invoke_id);
                                 waiting_for_reply = true;
                                 break;
                             }
@@ -863,13 +862,13 @@ static void bacnet_task(void *pv) {
                         
                         if (retry_count < sysCfg.max_retries) {
                             retry_count++;
-                            z_log("[BACNET] Timeout, Retry %d/%d for Obj %d\n", retry_count, sysCfg.max_retries, current_poll_idx);
+                            z_log(LOG_INFO,"BACNET","Timeout, Retry %d/%d for Obj %d\n", retry_count, sysCfg.max_retries, current_poll_idx);
                             send_mstp_frame(dev.mac_address, 0x05, last_apdu, last_apdu_len); 
                             timer_silence = millis(); 
                             waiting_for_reply = true; // On repart en attente
                             // On ne fait rien d'autre, le break du switch est en bas
                         } else {
-                            z_log("[BACNET] Max retries reached on timeout. Skipping Obj.\n");
+                            z_log(LOG_WARN,"BACNET","Max retries reached on timeout. Skipping Obj.\n");
                             // CORRECTION DE L'ERREUR DE SYNTAXE (le "|| ...") supprimé
                             if (!dev.discovery_done) { 
                                 dev.disc_obj_idx++; 
@@ -886,7 +885,7 @@ static void bacnet_task(void *pv) {
                 break;
             
 
-            case MSTP_ANSWER_DATA_REQUEST: z_log("[MSTP] Serving request...\n"); mstp_state = MSTP_IDLE; break;
+            case MSTP_ANSWER_DATA_REQUEST: z_log(LOG_INFO,"MSTP","Serving request...\n"); mstp_state = MSTP_IDLE; break;
             case MSTP_DONE_WITH_TOKEN: 
                 if (frame_count < sysCfg.max_info_frames) {
                     mstp_state = MSTP_USE_TOKEN;
@@ -909,9 +908,7 @@ static void bacnet_task(void *pv) {
 }
 
 void setup_bacnet_engine() {
-    cache_mutex = xSemaphoreCreateMutex();
     bacnet_job_queue = xQueueCreate(10, sizeof(BACnetJob));
-    mqtt_publish_queue = xQueueCreate(100, sizeof(MQTTPublishJob));
     const uart_config_t uc = { .baud_rate = 38400, .data_bits = UART_DATA_8_BITS, .parity = UART_PARITY_DISABLE, .stop_bits = UART_STOP_BITS_1, .flow_ctrl = UART_HW_FLOWCTRL_DISABLE, .rx_flow_ctrl_thresh = 122, .source_clk = UART_SCLK_APB };
     uart_driver_install(RS485_UART_PORT, 2048, 2048, 20, &uart_evt_queue, 0);
     uart_param_config(RS485_UART_PORT, &uc);
@@ -919,10 +916,9 @@ void setup_bacnet_engine() {
     uart_set_mode(RS485_UART_PORT, UART_MODE_RS485_HALF_DUPLEX);
     uart_set_rx_timeout(RS485_UART_PORT, 2); 
     xTaskCreatePinnedToCore(bacnet_task, "BACnet", 16384, NULL, 15, NULL, 1);
-    z_log("[BACNET] Engine Initialized\n");
+    z_log(LOG_INFO,"BACNET","BACnet Engine Initialized\n");
 }
 bool enqueue_bacnet_job(BACnetJob job) { if (bacnet_job_queue == NULL) return false; return xQueueSend(bacnet_job_queue, &job, 0) == pdTRUE; }
-bool enqueue_mqtt_publish(MQTTPublishJob pubJob) { if (mqtt_publish_queue == NULL) return false; return xQueueSend(mqtt_publish_queue, &pubJob, 0) == pdTRUE; }
 
 // Helper pour identifier si une erreur est transitoire (mérite un retry)
 bool is_transient_error(uint8_t pdu_type, uint8_t reason) {
@@ -952,7 +948,7 @@ void publish_all_names() {
                 publish_mqtt_topic(dev.device_id, obj, 77, true);
                 obj.name_published = true;
                 strlcpy(obj.last_mqtt_name, obj.name, sizeof(obj.last_mqtt_name));
-                z_log("[BACNET] Sync MQTT Name OK : %s\n", obj.name);
+                z_log(LOG_INFO,"BACNET","Obj Sync MQTT Name OK : %s\n", obj.name);
             }
         }
     }

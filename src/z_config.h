@@ -38,6 +38,12 @@
 #define RS485_UART_PORT UART_NUM_1
 #define WEB_PORT 80
 
+// LOG LEVELS (Standard Syslog)
+#define LOG_ERROR 1
+#define LOG_WARN  2
+#define LOG_INFO  3
+#define LOG_DEBUG 4
+
 // Main configuration structure to hold all system settings saved in memory
 struct Config {
     char wifi_ssid[32];             // WiFi network name

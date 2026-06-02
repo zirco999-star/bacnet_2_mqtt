@@ -351,7 +351,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         }
 
         function confirmAction(url, msg) { if(confirm(msg)) fetch(url, {method:'POST'}).then(()=>alert("Action triggered.")); }
-        function confirmReboot() { if(confirm("Reboot Gateway?")) fetch('/reboot'); }
+        function confirmReboot() { if(confirm("Reboot Gateway?")) fetch('/api/reboot'); }
 
         function refreshBACnet() {
             if (currentTab !== 't-bac') return;
