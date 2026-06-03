@@ -12,6 +12,7 @@ struct BACnetPersistenceObj {
     char unit_text[12];
     bool poll;
     bool name_published;
+    bool is_commandable;  // Nouveau champ pour Prop 87
 };
 
 struct BACnetPersistenceDev {
@@ -101,16 +102,17 @@ enum BACnetObjectType {
 };
 
 // --- ÉTATS DE DÉCOUVERTE ---
-enum DISC_STEP_T { 
-    DISC_DEV_ID = 0, 
-    DISC_DEV_NAME, 
-    DISC_DEV_VENDOR, 
-    DISC_OBJ_COUNT,   
-    DISC_OBJ_OID,     
-    DISC_OBJ_NAME,    
+enum DISC_STEP_T {
+    DISC_DEV_ID = 0,
+    DISC_DEV_NAME,
+    DISC_DEV_VENDOR,
+    DISC_OBJ_COUNT,
+    DISC_OBJ_OID,
+    DISC_OBJ_NAME,
     DISC_OBJ_UNITS,
-    DISC_OBJ_STATES,   
-    DISC_OBJ_VALUE    
+    DISC_OBJ_STATES,
+    DISC_OBJ_COMMANDABLE, // Propriété 87 (Priority_Array)
+    DISC_OBJ_VALUE
 };
 
 // --- STATISTIQUES MS/TP ---
@@ -139,6 +141,7 @@ struct BACnetObject {
     uint16_t units = 95;
     char unit_text[20] = "";
     bool discovery_done = false;
+    bool is_commandable = false; // Prop 87
     // state_texts reste dynamique en RAM, mais n'est pas persisté (ou alors avec une logique à part)
     std::vector<String> state_texts; 
 };
@@ -185,14 +188,14 @@ enum MSTP_MASTER_STATE {
     MSTP_POLL_FOR_MASTER,
     MSTP_ANSWER_DATA_REQUEST
 };
-enum BACnetJobType { JOB_WHO_IS, JOB_I_AM, JOB_READ_PROP, JOB_WRITE_PROP, JOB_READ_UNITS, JOB_CHECK_COMMANDABLE, JOB_READ_STATE_TEXT };
+enum BACnetJobType { JOB_WHO_IS, JOB_I_AM, JOB_WRITE_PROP };
 struct BACnetJob {
     BACnetJobType type;
     uint8_t target_mac;
     uint16_t obj_type;
     uint32_t obj_instance;
     uint8_t prop_id;
-    uint16_t array_index; // Pour State_Text
+    uint16_t array_index; // Gardé au cas où, mais n'est plus utilisé pour State_Text
     float write_value;
     uint8_t priority;
     char name[50]; 

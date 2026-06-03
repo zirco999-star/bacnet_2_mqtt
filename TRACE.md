@@ -1,5 +1,14 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 3 Juin 2026 (Hard Real-Time & Ring Stability - v6.0.5) - DÉPLOYÉ
+- **Version** : v6.0.5
+- **FSM MS/TP BTL** : Migration complète vers `micros()` pour la conformité ASHRAE 135.
+- **Ring Management** : Restauration de l'apprentissage dynamique du successeur (PFM Reply) et de la recherche active (Poll For Master).
+- **Hard Real-Time** : Implémentation du Gatekeeper TX avec attente active (Busy Wait) sur Core 1, garantissant le `T_turnaround` strict de 1050µs.
+- **Synchronisation UART** : `uart_tx` attend désormais la fin physique du transfert (`uart_wait_tx_done`) avant de réinitialiser le timer de silence.
+- **Metadata Recovery** : Correction de la logique de récupération des états MSV (Multi-State Value) pour qu'elle soit non-bloquante vis-à-vis du polling normal.
+- **Stabilité** : Polling fluide validé avec automate ECB-203.
+
 ## État au 2 Juin 2026 (Diagnostics Gateway & Auto-Discovery - v6.0.2) - DÉPLOYÉ
 - **Version** : v6.0.2
 - **Toggle Home Assistant** : Implémentation complète du bouton "HA Auto-Discovery" dans l'UI (Settings > MQTT).
@@ -273,3 +282,4 @@
 - [v5.6] Token Regeneration -> Blocage synchrone du Core 1 par les appels WebSockets.
 - [v5.6] MQTT Storm -> Boucle de reconnexion infinie saturant LwIP.
 - [v4.7.45] Unit Persistence Loss -> Champ `units` manquant dans les structures NVS.
+- **v6.1.10** : Restauration de la publication MQTT (trigger_ha_discovery) suite a la modification locale d'un nom d'objet. Remplacement de l'obsolete JOB_READ_PROP dans l'API par la reutilisation de la FSM de decouverte asynchrone (dev.reload_single). Purge de BACnetJobType. L'Etape 5 du plan de refactoring BTL est achevee.

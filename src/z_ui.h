@@ -252,6 +252,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             <details>
                 <summary>BACnet MS/TP Configuration</summary>
                 <form id="f-bac" class="form-grid">
+                    <input type="hidden" name="form_type" value="bac">
                     <div class="f-item"><label>MAC Address</label><input type="number" name="mac" id="in-mac"></div>
                     <div class="f-item"><label>Device Instance</label><input type="number" name="did" id="in-did"></div>
                     <div class="f-item"><label>Max Master</label><input type="number" name="mm" id="in-mm"></div>
@@ -267,6 +268,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             <details>
                 <summary>Polling Configuration</summary>
                 <form id="f-poll" class="form-grid">
+                    <input type="hidden" name="form_type" value="poll">
                     <div class="f-item"><label>MQTT Polling (sec)</label><input type="number" name="mpi" id="in-mpi"></div>
                     <div class="f-item"><label>BACnet Polling (sec)</label><input type="number" name="bpi" id="in-bpi"></div>
                     <div class="span-2"><button type="button" class="btn btn-p" style="width:100%" onclick="saveForm('f-poll')">Apply Polling Settings</button></div>
@@ -276,6 +278,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             <details>
                 <summary>System Configuration</summary>
                 <form id="f-sec" class="form-grid">
+                    <input type="hidden" name="form_type" value="sec">
                     <div class="f-item"><label>Admin User</label><input type="text" name="admin_u" id="in-adu"></div>
                     <div class="f-item"><label>Admin Password</label><input type="password" name="admin_p" id="in-adp" placeholder="******"></div>
                     <div class="span-2 f-item"><label>Log Level</label>

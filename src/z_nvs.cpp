@@ -53,6 +53,7 @@ void load_device_objects(uint32_t device_id) {
                                 obj.instance = page.objects[i].val & 0x3FFFFF;
                                 obj.enabled = page.objects[i].poll;
                                 obj.name_published = page.objects[i].name_published;
+                                obj.is_commandable = page.objects[i].is_commandable;
                                 
                                 strlcpy(obj.name, page.objects[i].name, sizeof(obj.name));
                                 strlcpy(obj.unit_text, page.objects[i].unit_text, sizeof(obj.unit_text));
@@ -246,13 +247,9 @@ void save_device_objects_locked(uint32_t device_id) {
                             page.objects[i].val = ((uint32_t)o.type << 22) | (o.instance & 0x3FFFFF);
                             page.objects[i].poll = o.enabled;
                             page.objects[i].name_published = o.name_published;
+                            page.objects[i].is_commandable = o.is_commandable;
                             strlcpy(page.objects[i].name, o.name, 32);
                             strlcpy(page.objects[i].unit_text, o.unit_text, 12);
-
-                            if (strlen(o.name) > 0) {
-                                z_log(LOG_DEBUG, "NVS", "[MQTT] Enqueue publish: %s\n", o.name);
-                                publish_mqtt_topic(device_id, o, 77, true);
-                            }
                         }
                         char key[16]; snprintf(key, 16, "p%d", p);
                         prefs.putBytes(key, &page, sizeof(page));

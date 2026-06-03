@@ -29,6 +29,10 @@ static void websocket_log_task(void *pvParameters) {
         if (xQueueReceive(log_queue, &received_log, portMAX_DELAY) == pdTRUE) {
             if (ws.count() > 0) {
                 ws.textAll(received_log.message);
+                // Petit délai si beaucoup de messages pour laisser le temps au driver WiFi
+                if (uxQueueMessagesWaiting(log_queue) > 10) {
+                    vTaskDelay(pdMS_TO_TICKS(2));
+                }
             }
         }
     }
@@ -45,26 +49,42 @@ void z_log(int level, const char* tag, const char* format, ...) {
     else if (level == LOG_WARN) strcpy(lvl_str, "WRN");
     else if (level == LOG_DEBUG) strcpy(lvl_str, "DBG");
 
-    LogMessage log_msg;
+    // 3. Calcul du temps
     uint32_t now_ms = millis();
+    uint32_t ms = now_ms % 1000;
+    uint32_t s = (now_ms / 1000) % 60;
+    uint32_t m = (now_ms / 60000) % 60;
+    uint32_t h = (now_ms / 3600000); 
+
+    // Création du timestamp formaté (13 caractères + '\0' = 14)
+    char timestamp[14];
+    snprintf(timestamp, sizeof(timestamp), "%02lu:%02lu:%02lu,%03lu", h, m, s, ms);
+
     int core = xPortGetCoreID();
 
-    // 3. Formatage industriel du préfixe de log : [Timestamp][Core][Niveau][Tag]
-    int prefix_len = snprintf(log_msg.message, sizeof(log_msg.message), "[%lu][%d][%s][%s] ", (unsigned long)now_ms, core, lvl_str, tag);
+    // 4. Formatage de la base commune : "[lvl_str][tag] "
+    LogMessage base_msg;
+    int prefix_len = snprintf(base_msg.message, sizeof(base_msg.message), "[%s][%s] ", lvl_str, tag);
 
-    // 4. Extraction des arguments variables (vsnprintf)
-    va_list arg;
-    va_start(arg, format);
-    vsnprintf(log_msg.message + prefix_len, sizeof(log_msg.message) - prefix_len, format, arg);
-    va_end(arg);
+    // 5. Extraction des arguments variables (vsnprintf) pour le "msg"
+    if (prefix_len > 0 && prefix_len < sizeof(base_msg.message)) {
+        va_list arg;
+        va_start(arg, format);
+        vsnprintf(base_msg.message + prefix_len, sizeof(base_msg.message) - prefix_len, format, arg);
+        va_end(arg);
+    }
 
-    // 5. Sortie physique UART
-    printf("%s", log_msg.message);
+    // 6. Sortie physique UART : [core] + base_msg
+    // Le moniteur ESP s'occupera d'ajouter son propre timestamp devant
+    printf("[%d]%s", core, base_msg.message);
 
-    // 6. Envoi asynchrone sécurisé vers la tâche WebSocket (Core 0)
+    // 7. Envoi asynchrone sécurisé vers la tâche WebSocket
     if (log_queue != NULL) {
         LogMessage ws_msg;
-        snprintf(ws_msg.message, sizeof(ws_msg.message), "%d|%s", core, log_msg.message);
+        
+        // Format demandé : core|[timestamp][lvl_str][tag] msg
+        snprintf(ws_msg.message, sizeof(ws_msg.message), "%d|[%s]%s", core, timestamp, base_msg.message);
+        
         xQueueSend(log_queue, &ws_msg, 0);
     }
 }
@@ -77,7 +97,7 @@ void setup_network_infrastructure() {
         cache_mutex = xSemaphoreCreateMutex();
     }
 
-    log_queue = xQueueCreate(20, sizeof(LogMessage));
+    log_queue = xQueueCreate(50, sizeof(LogMessage));
     if (log_queue != NULL) {
         xTaskCreatePinnedToCore(websocket_log_task, "WS_Log", 4096, NULL, 2, NULL, 0);
     }
@@ -118,7 +138,19 @@ void setup_network_infrastructure() {
         doc["cur_ip"] = WiFi.localIP().toString();
         doc["cur_mask"] = WiFi.subnetMask().toString();
         doc["cur_gw"] = WiFi.gatewayIP().toString();
+        
+        // Champs de configuration (pour l'onglet Settings)
+        doc["ssid"] = sysCfg.wifi_ssid;
+        doc["static"] = sysCfg.static_ip;
+        doc["ip"] = sysCfg.local_ip;
+        doc["gw"] = sysCfg.gateway;
+        doc["mask"] = sysCfg.subnet;
+        
         doc["mqs"] = sysCfg.mqtt_server;
+        doc["mqu"] = sysCfg.mqtt_user;
+        doc["mqpr"] = sysCfg.mqtt_prefix;
+        doc["ha_disc"] = sysCfg.ha_discover;
+        
         doc["mqtt"] = is_mqtt_connected();
         doc["heap"] = ESP.getFreeHeap() / 1024;
         doc["uptime"] = millis() / 1000;
@@ -133,7 +165,8 @@ void setup_network_infrastructure() {
         doc["mif"] = sysCfg.max_info_frames;
         doc["mpi"] = sysCfg.mqtt_poll_interval;
         doc["bpi"] = sysCfg.bacnet_poll_interval;
-        doc["ha_disc"] = sysCfg.ha_discover;
+        doc["adu"] = sysCfg.admin_user;
+        doc["lvl"] = sysCfg.log_level;
 
         doc["mstp_t"] = (bacnetStats.tokens_seen > 0);
         doc["mstp_cnt"] = bacnetStats.tokens_seen;
@@ -227,23 +260,24 @@ void setup_network_infrastructure() {
             uint32_t inst = request->getParam("inst", true)->value().toInt();
             uint16_t type = request->getParam("type", true)->value().toInt();
             
-            BACnetJob job;
-            job.type = JOB_READ_PROP;
-            job.obj_type = type;
-            job.obj_instance = inst;
-            job.prop_id = 85; // Present_Value
-            
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
                 for (auto& dev : bacnet_network_cache) {
                     if (dev.device_id == did) {
-                        job.target_mac = dev.mac_address;
+                        for (size_t i = 0; i < dev.objects.size(); i++) {
+                            if (dev.objects[i].instance == inst && dev.objects[i].type == type) {
+                                dev.reload_single = true;
+                                dev.disc_obj_idx = i;
+                                dev.disc_step = DISC_OBJ_VALUE; // On veut juste relire la valeur
+                                dev.discovery_done = false;
+                                break;
+                            }
+                        }
                         break;
                     }
                 }
                 xSemaphoreGive(cache_mutex);
             }
-            enqueue_bacnet_job(job);
-            request->send(200, "text/plain", "READ ENQUEUED");
+            request->send(200, "text/plain", "READ ENQUEUED VIA FSM");
         } else request->send(400, "text/plain", "Missing params");
     });
 
@@ -263,21 +297,65 @@ void setup_network_infrastructure() {
             // PHASE 1 : Verrouillage de la RAM (Ultra-rapide, < 1 ms)
             // -------------------------------------------------------------
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
+                uint8_t target_mac = 0;
                 for (auto& dev : bacnet_network_cache) {
                     if (dev.device_id == did) {
+                        target_mac = dev.mac_address;
                         for (auto& obj : dev.objects) {
                             if (obj.instance == inst && obj.type == type) {
-                                if (name.length() > 0) strlcpy(obj.name, name.c_str(), sizeof(obj.name));
-                                if (unit.length() > 0) strlcpy(obj.unit_text, unit.c_str(), sizeof(obj.unit_text));
-                                obj.enabled = poll;
-                                break; // Objet trouvé et modifié
+                                // Si le nom a changé, on met à jour localement ET sur l'automate
+                                if (name.length() > 0 && strcmp(obj.name, name.c_str()) != 0) {
+                                    strlcpy(obj.name, name.c_str(), sizeof(obj.name));
+                                    BACnetJob job;
+                                    job.type = JOB_WRITE_PROP;
+                                    job.target_mac = target_mac;
+                                    job.obj_type = type;
+                                    job.obj_instance = inst;
+                                    job.prop_id = 77; // Object_Name
+                                    strlcpy(job.name, name.c_str(), sizeof(job.name));
+                                    enqueue_bacnet_job(job);
+                                    z_log(LOG_INFO, "WEB", "Enqueuing WriteProperty (Name) for Obj T%u I%lu\n", type, (unsigned long)inst);
+                                    // Publication MQTT du topic 'name' (pour historique / scripts custom)
+                                    publish_mqtt_topic(did, obj, 77, true);
+                                    // REQUIS : Déclencher HA Discovery pour mettre à jour l'entité dans Home Assistant
+                                    trigger_ha_discovery(did, inst, type);
+                                }
+                                
+                                // L'unité est TOUJOURS gérée localement (RAM + NVS) pour permettre l'override utilisateur
+                                if (unit.length() > 0 && strcmp(obj.unit_text, unit.c_str()) != 0) {
+                                    strlcpy(obj.unit_text, unit.c_str(), sizeof(obj.unit_text));
+                                    z_log(LOG_INFO, "WEB", "Local Unit Override: Obj T%u I%lu -> %s (NVS only)\n", type, (unsigned long)inst, unit.c_str());
+                                    // Pas de WriteProperty pour l'unité, mais publication MQTT pour HA
+                                    trigger_ha_discovery(did, inst, type); 
+                                }
+
+                                if (obj.enabled != poll) {
+                                    obj.enabled = poll;
+                                    // Si on active/désactive l'objet, on force la synchro HA
+                                    trigger_ha_discovery(did, inst, type);
+                                    
+                                    // Si on l'active, on le force aussi à recharger sa valeur immédiatement
+                                    if (poll) {
+                                        dev.reload_single = true;
+                                        // On réinitialise l'étape pour forcer la relecture de la prop 87 et 85
+                                        // Cela permettra à HA de savoir si c'est un sensor ou un switch
+                                        dev.disc_step = DISC_OBJ_COMMANDABLE; 
+                                        // On trouve l'index de cet objet
+                                        for (size_t i = 0; i < dev.objects.size(); i++) {
+                                            if (dev.objects[i].instance == inst && dev.objects[i].type == type) {
+                                                dev.disc_obj_idx = i;
+                                                break;
+                                            }
+                                        }
+                                        dev.discovery_done = false; 
+                                    }
+                                }
+                                break; 
                             }
                         }
-                        break; // Device trouvé et modifié
+                        break; 
                     }
                 }
-                // LIBÉRATION IMMÉDIATE DU MUTEX
-                // Le Core 1 (MS/TP) peut à nouveau répondre aux requêtes BACnet !
                 xSemaphoreGive(cache_mutex); 
             }
 
@@ -289,11 +367,6 @@ void setup_network_infrastructure() {
             // le temps de s'intercaler si le bus RS-485 est actif.
             save_device_objects(did);
 
-            // -------------------------------------------------------------
-            // PHASE 3 : Signalement au Gatekeeper MQTT (Asynchrone)
-            // -------------------------------------------------------------
-            trigger_ha_discovery(did, inst, type);
-            
             request->send(200, "text/plain", "OK");
         } else {
             request->send(400, "text/plain", "Missing params");
@@ -329,9 +402,8 @@ void setup_network_infrastructure() {
                 // -------------------------------------------------------------
                 // PHASE 3 : Redéclenchement du Gatekeeper MQTT
                 // -------------------------------------------------------------
-                // Si l'équipement vient d'être réactivé, il faut que le Core 0 
-                // publie ses entités vers Home Assistant via le drapeau atomique
-                trigger_ha_discovery();
+                // On passe le did pour que le discovery cible cet appareil (unpublish si désactivé)
+                trigger_ha_discovery(did);
 
             } else {
                 z_log(LOG_ERROR, "SYS", "Timeout Mutex : Impossible de basculer l'équipement en RAM !");
@@ -357,12 +429,18 @@ void setup_network_infrastructure() {
             strlcpy(sysCfg.gateway, request->getParam("gateway", true)->value().c_str(), 16);
             strlcpy(sysCfg.subnet, request->getParam("subnet", true)->value().c_str(), 16);
         } else if (ft == "mqtt") {
+            char old_pr[64]; strlcpy(old_pr, sysCfg.mqtt_prefix, 64);
             strlcpy(sysCfg.mqtt_server, request->getParam("mqh", true)->value().c_str(), 32);
             strlcpy(sysCfg.mqtt_user, request->getParam("mqu", true)->value().c_str(), 32);
             if (request->getParam("mqp", true)->value() != "******")
                 strlcpy(sysCfg.mqtt_pass, request->getParam("mqp", true)->value().c_str(), 32);
             strlcpy(sysCfg.mqtt_prefix, request->getParam("mqpr", true)->value().c_str(), 64);
             sysCfg.ha_discover = request->hasParam("ha_disc", true);
+            
+            // Si le préfixe change et que HA est actif, on nettoie d'abord l'ancien prefixe côté HA
+            if (strcmp(old_pr, sysCfg.mqtt_prefix) != 0 && sysCfg.ha_discover) {
+                unpublish_ha_discovery(0, 0xFFFFFFFF, 0xFFFF, old_pr);
+            }
         } else if (ft == "bac") {
             sysCfg.mac_address = request->getParam("mac", true)->value().toInt();
             sysCfg.device_id = request->getParam("did", true)->value().toInt();
@@ -421,8 +499,23 @@ void setup_network_infrastructure() {
 
     webServer.on("/api/trigger_discovery", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!is_authenticated(request)) return;
+        
+        if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(1000))) {
+            z_log(LOG_INFO, "WEB", "Manual Discovery Triggered - Clearing Metadata Cache\n");
+            for (auto& dev : bacnet_network_cache) {
+                dev.discovery_done = false;
+                dev.disc_step = DISC_DEV_ID;
+                dev.disc_obj_idx = 0;
+                for (auto& obj : dev.objects) {
+                    obj.name_published = false;
+                    memset(obj.unit_text, 0, sizeof(obj.unit_text));
+                }
+            }
+            xSemaphoreGive(cache_mutex);
+        }
+
         trigger_ha_discovery();
-        request->send(200, "text/plain", "Discovery triggered");
+        request->send(200, "text/plain", "Discovery triggered & cache cleared");
     });
 
     ArduinoOTA.onStart([]() { z_log(LOG_INFO, "OTA", "Start\n"); });
