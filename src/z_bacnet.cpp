@@ -9,6 +9,8 @@
 #include "z_nvs.h"
 
 
+uint32_t period_poll_count = 0;
+
 BACnet_Stats bacnetStats = {0, 0, 0, 0, 0, 0, 0};
 std::vector<BACnetDevice> bacnet_network_cache;
 QueueHandle_t bacnet_job_queue = NULL;
@@ -347,6 +349,10 @@ static void bacnet_task(void *pv) {
             }
             z_log(LOG_INFO,"BACNET","Heartbeat - Tokens: %lu, RX: %lu, TX: %lu (State:%d, Cache:%u, Enabled:%lu)\n", 
                   bacnetStats.tokens_seen, bacnetStats.ms_msgs_rx, bacnetStats.ms_msgs_tx, (int)mstp_state, (uint32_t)bacnet_network_cache.size(), enabled_count);
+            
+            z_log(LOG_INFO,"BACNET","Polling network devices - objects polled : %lu\n", (unsigned long)period_poll_count);
+            
+            period_poll_count = 0;
             heartbeat_timer = millis();
         }
 
@@ -416,9 +422,9 @@ static void bacnet_task(void *pv) {
                         frame_count = 0;
                         mstp_state = MSTP_USE_TOKEN; 
                     }
-                    else if (frame_type == 0x01 && dest_mac == sysCfg.mac_address) { 
+                    else if (frame_type == 0x01 && dest_mac == sysCfg.mac_address) {
                         // Poll For Master : Quelqu'un nous cherche
-                        z_log(LOG_INFO, "RING", "PFM from %d (Learned Successor)\n", src_mac);
+                        z_log(LOG_DEBUG, "RING", "PFM from %d (Learned Successor)\n", src_mac);
                         send_mstp_frame(src_mac, 0x02, NULL, 0); // Reply To PFM
                         next_station = src_mac; // Auto-apprentissage
                         ring_stable = true;
@@ -468,8 +474,8 @@ static void bacnet_task(void *pv) {
                 poll_station = (sysCfg.mac_address + 1) % 128;
                 break;
             case MSTP_POLL_FOR_MASTER:
-                if (timer_silence_us >= 50000) { 
-                    z_log(LOG_INFO, "RING", "Polling station %d...\n", poll_station);
+                if (timer_silence_us >= 50000) {
+                    z_log(LOG_DEBUG, "RING", "Polling station %d...\n", poll_station);
                     send_mstp_frame(poll_station, 0x01, NULL, 0); // Send PFM
                     waiting_for_reply = true;
                     mstp_state = MSTP_WAIT_FOR_REPLY;
@@ -576,7 +582,8 @@ static void bacnet_task(void *pv) {
                                             if (o.enabled && o.type != 8 && o.type != 65535 && 
                                                (o.last_update == 0 || (millis() - o.last_update > (sysCfg.bacnet_poll_interval * 1000)))) { 
                                                 apdu_len = build_read_property_apdu(apdu, next_invoke_id++, o.type, o.instance, 85, -1); 
-                                                z_log(LOG_INFO, "BACNET", "Poll Request: Obj %d (T%u I%lu)\n", current_poll_idx + 1, o.type, o.instance);
+                                                period_poll_count++;
+                                                z_log(LOG_DEBUG, "BACNET", "Poll Request: Obj %d (T%u I%lu)\n", current_poll_idx + 1, o.type, o.instance);
                                                 break;
                                             }
                                             scanned++;
@@ -816,7 +823,7 @@ static void bacnet_task(void *pv) {
                                                             // Si on reçoit un ACK (valide) pour Priority_Array, l'objet est commandable.
                                                             o.is_commandable = true;
                                                             z_log(LOG_INFO,"BACNET","Obj %u is Commandable (Prop 87 present)\n", dev.disc_obj_idx+1);
-                                                            if (o.enabled) {
+                                                            if (o.enabled || dev.reload_single) {
                                                                 dev.disc_step = DISC_OBJ_VALUE;
                                                             } else {
                                                                 if (!dev.reload_single) dev.disc_obj_idx++;
@@ -869,7 +876,7 @@ static void bacnet_task(void *pv) {
                                                         float v; uint32_t tmp; memcpy(&tmp, &apdu[apdu_pos], 4); tmp = __builtin_bswap32(tmp); memcpy(&v, &tmp, 4); 
                                                         if(current_poll_idx < dev.objects.size()){ 
                                                             auto& o=dev.objects[current_poll_idx]; 
-                                                            z_log(LOG_INFO,"BACNET","Poll Result Obj %d: %.2f\n", current_poll_idx + 1, v);
+                                                            z_log(LOG_DEBUG,"BACNET","Poll Result Obj %d: %.2f\n", current_poll_idx + 1, v);
                                                             o.present_value=v; o.last_update=millis(); 
                                                             if (o.enabled) publish_mqtt_topic(dev.device_id, o, 85, false); 
                                                         } 
@@ -878,7 +885,7 @@ static void bacnet_task(void *pv) {
                                                         uint32_t v=0; for(int i=0; i<val_tag.len; i++) v=(v<<8)|apdu[apdu_pos+i]; 
                                                         if(current_poll_idx < dev.objects.size()){ 
                                                             auto& o=dev.objects[current_poll_idx]; 
-                                                            z_log(LOG_INFO,"BACNET","Poll Result Obj %d: %.2f\n", current_poll_idx + 1, (float)v);
+                                                            z_log(LOG_DEBUG,"BACNET","Poll Result Obj %d: %.2f\n", current_poll_idx + 1, (float)v);
                                                             o.present_value=(float)v; o.last_update=millis(); 
                                                             if (o.enabled) publish_mqtt_topic(dev.device_id, o, 85, false); 
                                                         } 
@@ -920,7 +927,7 @@ static void bacnet_task(void *pv) {
                                                     o.is_commandable = false;
                                                 }
 
-                                                if (o.enabled) {
+                                                if (o.enabled || dev.reload_single) {
                                                     dev.disc_step = DISC_OBJ_VALUE;
                                                 } else {
                                                     if (!dev.reload_single) dev.disc_obj_idx++;
@@ -1011,7 +1018,7 @@ static void bacnet_task(void *pv) {
                         
                         if (retry_count < sysCfg.max_retries) {
                             retry_count++;
-                            z_log(LOG_INFO,"BACNET","Timeout, Retry %d/%d for Obj %d\n", retry_count, sysCfg.max_retries, current_poll_idx);
+                            z_log(LOG_DEBUG,"BACNET","Timeout, Retry %d/%d for Obj %d\n", retry_count, sysCfg.max_retries, current_poll_idx);
                             send_mstp_frame(dev.mac_address, 0x05, last_apdu, last_apdu_len); 
                             waiting_for_reply = true; // On repart en attente
                         } else {
@@ -1046,12 +1053,15 @@ static void bacnet_task(void *pv) {
                     mstp_state = MSTP_PASS_TOKEN;
                 }
                 break;
-            case MSTP_PASS_TOKEN: { 
-                z_log(LOG_DEBUG, "RING", "Passing token to %d\n", next_station);
+            case MSTP_PASS_TOKEN: {
+                static uint32_t token_pass_debug_count = 0;
+                if (++token_pass_debug_count % 100 == 0) {
+                    z_log(LOG_DEBUG, "RING", "Passing token to %d (logged every 100 passes)\n", next_station);
+                }
                 send_mstp_frame(next_station, 0x00, NULL, 0);
-                waiting_for_reply = false; 
-                mstp_state = MSTP_IDLE; 
-                break; 
+                waiting_for_reply = false;
+                mstp_state = MSTP_IDLE;
+                break;
             }
         }
         if (mstp_state == MSTP_IDLE && !ReceivedValidFrame) vTaskDelay(1);

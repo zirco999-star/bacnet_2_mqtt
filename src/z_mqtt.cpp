@@ -6,6 +6,8 @@
 
 #include "z_network.h"
 
+uint32_t period_mqtt_pub_count = 0;
+
 static int mqtt_fail_count = 0;
 static std::atomic<bool> circuit_breaker_active{false};
 static std::atomic<bool> pending_discovery{false};
@@ -184,6 +186,7 @@ static void mqtt_gatekeeper_task(void *pv) {
                     vTaskDelay(pdMS_TO_TICKS(50));
                     break; 
                 } else {
+                    period_mqtt_pub_count++;
                     z_log(LOG_DEBUG, "MQTT", "Published: %s = %s\n", topic, pubJob.value_string);
                 }
                 vTaskDelay(pdMS_TO_TICKS(5)); 
@@ -195,6 +198,7 @@ static void mqtt_gatekeeper_task(void *pv) {
                 auto pub_b2m = [&](const char* key, String val) {
                     char t[128]; snprintf(t, sizeof(t), "%s/B2M/%s/state", sysCfg.mqtt_prefix, key);
                     esp_mqtt_client_publish(mqtt_client, t, val.c_str(), 0, 1, 0);
+                    period_mqtt_pub_count++;
                     z_log(LOG_DEBUG, "MQTT", "Published: %s = %s\n", t, val.c_str());
                 };
                 pub_b2m("ver", VERSION_GLOBAL);
@@ -218,6 +222,11 @@ static void mqtt_gatekeeper_task(void *pv) {
                 bool mstp_active = (bacnetStats.tokens_seen != last_token_count);
                 last_token_count = bacnetStats.tokens_seen;
                 pub_b2m("mstp", mstp_active ? "ON" : "OFF");
+                
+                z_log(LOG_INFO, "MQTT", "Gateway Status published (Uptime: %lu s, Devices: %zu)\n", (unsigned long)(millis() / 1000), n_dev);
+                z_log(LOG_INFO, "MQTT", "Published topics : %s/+, %s/B2M, tele/%s - Total messages : %lu\n", sysCfg.mqtt_prefix, sysCfg.mqtt_prefix, sysCfg.mqtt_prefix, (unsigned long)period_mqtt_pub_count);
+                
+                period_mqtt_pub_count = 0;
             }
         }
         vTaskDelay(pdMS_TO_TICKS(10));

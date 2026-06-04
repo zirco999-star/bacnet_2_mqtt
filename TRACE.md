@@ -1,5 +1,28 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 4 Juin 2026 (Single-Object Reload & HA Sync - v6.2.3) - DÉPLOYÉ
+- **Version** : v6.2.3
+- **Correction Reload Object** : L'API `/api/reload_object` démarre désormais la découverte à l'étape `DISC_OBJ_NAME` au lieu de `DISC_OBJ_VALUE`. Cela garantit que le nom, les unités et l'état commandable (Prop 87) sont rafraîchis depuis l'automate avant de mettre à jour Home Assistant.
+- **Transilience FSM** : Modification de la FSM BACnet pour autoriser la transition vers la lecture de valeur même pour les objets désactivés (`o.enabled == false`) lorsqu'une requête de rechargement unique (`dev.reload_single`) est active.
+- **Validation** : Vérification par logs que les métadonnées (Nom, Unités) sont bien extraites et transmises à HA lors d'un clic sur "Reload" dans l'UI.
+
+## État au 4 Juin 2026 (HA Discovery Cleanup - v6.2.2) - DÉPLOYÉ
+- **Version** : v6.2.2
+- **Auto-Cleanup Home Assistant** : Implémentation du nettoyage automatique des entités HA lorsque l'option "HA Auto-Discovery" est décochée.
+- **Logique de Suppression** : La Gateway envoie désormais des payloads vides aux topics de configuration MQTT pour tous les objets actifs, forçant Home Assistant à retirer les entités de son registre.
+- **Détection d'État** : Ajout d'une surveillance du changement d'état `ha_discover` dans le handler `/save` pour déclencher `unpublish_ha_discovery()` uniquement lors d'une transition ON -> OFF.
+
+## État au 4 Juin 2026 (Smart Logs & Sécurité API - v6.2.1) - DÉPLOYÉ
+- **Version** : v6.2.1
+- **Sécurisation NVS/WiFi** : Correction de la route API `/save` pour éviter l'écrasement des mots de passe avec des chaînes vides si le champ UI est laissé tel quel (condition `length > 0 && != "******"`).
+- **Validation IP Stricte** : Ajout d'une vérification native `IPAddress.fromString()` sur les champs Local IP, Gateway et Subnet avant la sauvegarde, prévenant la corruption de la pile LwIP et le Fallback AP intempestif.
+- **Hot-Swap Log Level** : Le niveau de log (`lvl`) défini dans l'onglet "Security" est désormais appliqué à chaud, sans nécessiter de redémarrage.
+- **Smart Logs** :
+    - Déplacement des logs unitaires BACnet (Polling) et MQTT (Publishing) du niveau INFO vers DEBUG pour soulager le buffer WebSocket et LwIP lors des salves à haut débit (Burst Mode).
+    - Ajout de compteurs globaux `period_poll_count` et `period_mqtt_pub_count`.
+    - Centralisation de l'affichage dans le log "Heartbeat" (INFO, toutes les 60s) au format clair : `Polling device X - polling : Y` et `published topic : ... - published topics : Z`.
+- **Statut** : Compilation réussie et flash OTA déployé avec succès.
+
 ## État au 4 Juin 2026 (Mode Burst MS/TP - v6.2.0) - COMPILÉ
 - **Version** : v6.2.0
 - **Mode Burst (Max_Info_Frames)** : Implémentation complète des transitions normatives ASHRAE 135 "SendAnotherFrame" et "NothingToSend".

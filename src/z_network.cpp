@@ -267,7 +267,7 @@ void setup_network_infrastructure() {
                             if (dev.objects[i].instance == inst && dev.objects[i].type == type) {
                                 dev.reload_single = true;
                                 dev.disc_obj_idx = i;
-                                dev.disc_step = DISC_OBJ_VALUE; // On veut juste relire la valeur
+                                dev.disc_step = DISC_OBJ_NAME; // On veut rafraîchir toutes les métadonnées (Nom, Unités)
                                 dev.discovery_done = false;
                                 break;
                             }

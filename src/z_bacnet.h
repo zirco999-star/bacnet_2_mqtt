@@ -167,6 +167,9 @@ struct BACnetDevice {
 extern std::vector<BACnetDevice> bacnet_network_cache;
 extern SemaphoreHandle_t cache_mutex;
 
+extern uint32_t period_poll_count;
+extern uint32_t period_mqtt_pub_count;
+
 // --- ÉTATS FSM MS/TP (ASHRAE 135) ---
 enum RX_STATE { 
     RX_IDLE, 
