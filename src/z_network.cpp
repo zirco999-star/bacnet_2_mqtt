@@ -422,22 +422,46 @@ void setup_network_infrastructure() {
 
         if (ft == "wifi") {
             strlcpy(sysCfg.wifi_ssid, request->getParam("ssid", true)->value().c_str(), 32);
-            if (request->getParam("pass", true)->value() != "******")
-                strlcpy(sysCfg.wifi_pass, request->getParam("pass", true)->value().c_str(), 64);
+            String p_val = request->getParam("pass", true)->value();
+            if (p_val.length() > 0 && p_val != "******") {
+                strlcpy(sysCfg.wifi_pass, p_val.c_str(), 64);
+            }
+            
             sysCfg.static_ip = request->hasParam("static_ip", true);
-            strlcpy(sysCfg.local_ip, request->getParam("local_ip", true)->value().c_str(), 16);
-            strlcpy(sysCfg.gateway, request->getParam("gateway", true)->value().c_str(), 16);
-            strlcpy(sysCfg.subnet, request->getParam("subnet", true)->value().c_str(), 16);
+            String l_ip = request->getParam("local_ip", true)->value();
+            String l_gw = request->getParam("gateway", true)->value();
+            String l_sn = request->getParam("subnet", true)->value();
+            
+            if (sysCfg.static_ip) {
+                IPAddress tmp;
+                if (!tmp.fromString(l_ip) || !tmp.fromString(l_gw) || !tmp.fromString(l_sn)) {
+                    request->send(400, "text/plain", "Invalid IP/GW/Subnet format.");
+                    return;
+                }
+            }
+            
+            strlcpy(sysCfg.local_ip, l_ip.c_str(), 16);
+            strlcpy(sysCfg.gateway, l_gw.c_str(), 16);
+            strlcpy(sysCfg.subnet, l_sn.c_str(), 16);
         } else if (ft == "mqtt") {
             char old_pr[64]; strlcpy(old_pr, sysCfg.mqtt_prefix, 64);
             strlcpy(sysCfg.mqtt_server, request->getParam("mqh", true)->value().c_str(), 32);
             strlcpy(sysCfg.mqtt_user, request->getParam("mqu", true)->value().c_str(), 32);
-            if (request->getParam("mqp", true)->value() != "******")
-                strlcpy(sysCfg.mqtt_pass, request->getParam("mqp", true)->value().c_str(), 32);
+            String mqp_val = request->getParam("mqp", true)->value();
+            if (mqp_val.length() > 0 && mqp_val != "******") {
+                strlcpy(sysCfg.mqtt_pass, mqp_val.c_str(), 32);
+            }
             strlcpy(sysCfg.mqtt_prefix, request->getParam("mqpr", true)->value().c_str(), 64);
+            bool old_ha_discover = sysCfg.ha_discover;
             sysCfg.ha_discover = request->hasParam("ha_disc", true);
             
-            // Si le préfixe change et que HA est actif, on nettoie d'abord l'ancien prefixe côté HA
+            // Si HA Discovery vient d'être désactivé, on supprime tout de HA
+            if (old_ha_discover && !sysCfg.ha_discover) {
+                unpublish_ha_discovery(0, 0xFFFFFFFF, 0xFFFF, sysCfg.mqtt_prefix);
+                z_log(LOG_INFO, "MQTT", "HA Discovery desactive. Nettoyage MQTT envoye.\n");
+            }
+
+            // Si le préfixe change et que HA est TOUJOURS actif, on nettoie d'abord l'ancien prefixe côté HA
             if (strcmp(old_pr, sysCfg.mqtt_prefix) != 0 && sysCfg.ha_discover) {
                 unpublish_ha_discovery(0, 0xFFFFFFFF, 0xFFFF, old_pr);
             }
@@ -455,8 +479,13 @@ void setup_network_infrastructure() {
             sysCfg.bacnet_poll_interval = request->getParam("bpi", true)->value().toInt();
         } else if (ft == "sec") {
             strlcpy(sysCfg.admin_user, request->getParam("admin_u", true)->value().c_str(), 32);
-            if (request->getParam("admin_p", true)->value() != "******")
-                strlcpy(sysCfg.admin_pass, request->getParam("admin_p", true)->value().c_str(), 64);
+            String ad_p = request->getParam("admin_p", true)->value();
+            if (ad_p.length() > 0 && ad_p != "******") {
+                strlcpy(sysCfg.admin_pass, ad_p.c_str(), 64);
+            }
+            if (request->hasParam("lvl", true)) {
+                sysCfg.log_level = request->getParam("lvl", true)->value().toInt();
+            }
         }
 
         save_configuration();
