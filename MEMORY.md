@@ -18,7 +18,18 @@
     - BACnet: Station MAC, Device ID (did), Max Master (mm), Max Retries, APDU Timeout, Token Skip (tskip), Heartbeat Interval (hbeat).
     - MQTT: Broker IP, User, Password, Root Prefix (mqpr).
 
+## Protocole de Découverte et Activation (MANDATOIRE)
+- **Règle d'or :** AUCUNE activation automatique (Device ou Objet).
+- **Cycle de Vie :**
+    1. **Découverte Auto (MAC ID) :** Identification MAC.
+    2. **Phase 1 (Automatique) :** Lecture exclusive de l'ID Device, Nom, Vendor et Nombre d'objets.
+    3. **POINT D'ARRÊT :** Si l'automate est `enabled == false`, le scan s'arrête là (pas de lecture d'objets).
+    4. **Phase 2 (Action Utilisateur) :** L'utilisateur active l'automate via l'UI. Le moteur reprend la lecture des métadonnées des objets (OID, Name, Units, Value).
+    5. **Phase 3 (Action Utilisateur) :** Les objets découverts sont créés avec `enabled = false`. L'utilisateur doit activer manuellement chaque objet désiré pour lancer le Polling et la diffusion MQTT/HA.
+- **Protection Bus :** Ce flux empêche la saturation du bus RS-485 lors de l'ajout de nouveaux équipements.
+
 ## NVS Persistence Logic
+- **Standard Namespace :** Utiliser exclusivement le préfixe `dv_` (ex: `dv_364004`). Ne plus utiliser de versioning dans le namespace (`dv3_`, `dv4_`).
 - **Discovery State:** Always persist disc_step and disc_obj_idx in BACnetPersistenceDev to allow resumption of discovery after reboot.
 - **Multi-Device Support:** The engine must handle multiple devices via rotation. No hardcoding index 0.
 - **Safe Boot:** Use standard malloc for NVS blobs during boot phases.

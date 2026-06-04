@@ -341,3 +341,18 @@
 - **Planification** : Création du `plans/PLAN_MAX_INFO_FRAMES.md` pour implémenter les transitions normatives "SendAnotherFrame" et "NothingToSend".
 - **Objectif** : Multiplier par 3 (ou `max_info_frames`) le débit de données par cycle de jeton.
 
+
+## [2026-06-04 19:30] v6.3.1: Debug Restoration & Discovery Fix
+- **Logs**: Restored verbose FSM (Token, PFM, Data) and frame-level debug logs in `z_bacnet.cpp`.
+- **Logic**: Restored name fallback logic for objects returning "Unknown" or empty strings.
+- **MQTT**: Fixed race condition in `pending_discovery` using `exchange(false)` to prevent discovery loops.
+- **Stats**: Fixed `ms_msgs_rx` counter which was stuck at 0 in the heartbeat.
+- **Build**: Successfully compiled v6.3.1.
+
+## [2026-06-04 23:10] v6.3.8: Passive Discovery Restored & NVS Standardized
+- **Zero-Spam Protocol**: Restored mandatory stop point after Phase 1 (Device Info). The scan now pauses until the user enables the device via the UI.
+- **No Auto-Enable**: Removed the temporary v6.3.6 auto-enable logic. Discovered objects remain `enabled=false` by default.
+- **NVS Standard**: Fixed the namespace to **`dv_`** (unique). Removed legacy `dv3_`/`dv4_` prefixes.
+- **HA Cleanup**: Improved ghost entity cleanup using `Retain=1` for deletion payloads.
+- **Discovery Throttling**: Hardened the MQTT gatekeeper with a 5s cooldown for single objects and 30s for global triggers.
+- **Stability**: Fixed a bug where discovery resumption failed due to incorrect `discovery_done` flag handling in the toggle API.

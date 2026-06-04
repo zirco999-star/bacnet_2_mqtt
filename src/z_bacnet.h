@@ -8,12 +8,15 @@
 #pragma pack(push, 1)
 struct BACnetPersistenceObj {
     uint32_t val;         // [TYPE:10][INSTANCE:22]
-    char name[32];        // ASHRAE Friendly
+    char name[32];        // friendly name
     char unit_text[12];
     bool poll;
     bool name_published;
-    bool is_commandable;  // Nouveau champ pour Prop 87
-};
+    bool is_commandable;  
+    uint16_t units;       
+    uint8_t states_count; 
+    char last_ha_component[16]; // v6.3.6: For ghost entity cleanup (sensor/select/switch)
+}; // Total: 4 + 32 + 12 + 3 + 2 + 1 + 16 = 70 bytes
 
 struct BACnetPersistenceDev {
     uint32_t device_id;
@@ -21,7 +24,7 @@ struct BACnetPersistenceDev {
     bool enabled;
     char name[32];
     char vendor[32];
-    uint8_t count;
+    uint16_t count;       // uint16_t for > 255 objects safety
     bool discovery_done;
     uint16_t disc_obj_idx;
     uint8_t disc_step;
@@ -142,6 +145,7 @@ struct BACnetObject {
     char unit_text[20] = "";
     bool discovery_done = false;
     bool is_commandable = false; // Prop 87
+    char last_ha_component[16] = ""; // Pour nettoyer les doublons si on change sensor -> select
     // state_texts reste dynamique en RAM, mais n'est pas persisté (ou alors avec une logique à part)
     std::vector<String> state_texts; 
 };

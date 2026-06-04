@@ -386,6 +386,12 @@ void setup_network_infrastructure() {
                 for (auto& dev : bacnet_network_cache) {
                     if (dev.device_id == did) {
                         dev.enabled = !dev.enabled; // Bascule de l'état
+                        
+                        // v6.3.8: Reprise de la Phase 2 si l'automate est activé manuellement
+                        if (dev.enabled && dev.discovery_done && dev.disc_step == DISC_OBJ_OID) {
+                            z_log(LOG_INFO, "WEB", "User Activation: Resuming discovery for MAC %d (Phase 2)\n", dev.mac_address);
+                            dev.discovery_done = false;
+                        }
                         break; 
                     }
                 }

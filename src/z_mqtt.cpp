@@ -148,18 +148,34 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 static void mqtt_gatekeeper_task(void *pv) {
     z_log(LOG_INFO, "MQTT", "Gatekeeper Task Operational.\n");
     uint32_t last_status_pub = 0;
+    uint32_t last_global_disc = 0;
+    uint32_t last_single_disc = 0;
 
     while (1) {
         if (mqtt_is_connected && !circuit_breaker_active) {
-            // 1. Traitement de l'Auto-Discovery
-            if (pending_discovery.load(std::memory_order_acquire)) {
-                if (force_full_discovery) {
-                    target_did = 0; // Force le scan global
-                    force_full_discovery = false;
+            // 1. Traitement de l'Auto-Discovery (Atomique pour éviter les loops de triggers)
+            if (pending_discovery.exchange(false, std::memory_order_acq_rel)) {
+                uint32_t t_did = target_did.load();
+                bool is_global = (t_did == 0 || force_full_discovery);
+                
+                uint32_t now = millis();
+                bool can_pub = false;
+                if (is_global) {
+                    if (now - last_global_disc > 30000) { can_pub = true; last_global_disc = now; }
+                } else {
+                    if (now - last_single_disc > 5000) { can_pub = true; last_single_disc = now; }
                 }
-                publish_ha_autodiscovery();
-                target_did = 0; // Reset pour le prochain scan (soit ciblé, soit global)
-                pending_discovery.store(false, std::memory_order_release);
+
+                if (can_pub) {
+                    if (force_full_discovery) {
+                        target_did = 0; 
+                        force_full_discovery = false;
+                    }
+                    publish_ha_autodiscovery();
+                } else {
+                    z_log(LOG_DEBUG, "MQTT", "HA Discovery throttled\n");
+                }
+                target_did = 0; 
             }
 
             // 2. Traitement de la queue de publication
@@ -446,8 +462,12 @@ void publish_ha_autodiscovery() {
                             case OBJ_MULTI_STATE_OUTPUT:
                             case OBJ_MULTI_STATE_VALUE: 
                                 t_str = (obj.type == OBJ_MULTI_STATE_OUTPUT) ? "MSO" : "MSV"; 
-                                // Fallback MSV: si on a des textes, on force select même sans Prop 87 (écriture simple sans priorité)
-                                ha_component = (is_command || obj.type == OBJ_MULTI_STATE_OUTPUT || !obj.state_texts.empty()) ? "select" : "sensor"; 
+                                // Fallback MSV: si on a des textes, on force select. Sinon, number pour rester visible.
+                                if (obj.state_texts.empty()) {
+                                    ha_component = (is_command || obj.type == OBJ_MULTI_STATE_OUTPUT) ? "number" : "sensor";
+                                } else {
+                                    ha_component = "select";
+                                }
                                 break;
                         }
 
@@ -455,11 +475,18 @@ void publish_ha_autodiscovery() {
                         snprintf(uniq_id, sizeof(uniq_id), "bacnet_%lu_%s_%lu", (unsigned long)dev.device_id, t_str, (unsigned long)obj.instance);
                         snprintf(final_topic, sizeof(final_topic), "homeassistant/%s/%s/config", ha_component, uniq_id);
 
+                        // --- NETTOYAGE DES DOUBLONS (v6.3.6) ---
+                        // Si le composant HA change (ex: sensor -> select), on doit supprimer l'ancien AVEC RETAIN=1
+                        if (strlen(obj.last_ha_component) > 0 && strcmp(obj.last_ha_component, ha_component) != 0) {
+                            char old_topic[128];
+                            snprintf(old_topic, sizeof(old_topic), "homeassistant/%s/%s/config", obj.last_ha_component, uniq_id);
+                            z_log(LOG_INFO, "MQTT", "[MQTT] Cleaning old entity: %s (Retain 1)\n", old_topic);
+                            esp_mqtt_client_publish(mqtt_client, old_topic, "", 0, 1, 1); 
+                        }
+                        strlcpy(obj.last_ha_component, ha_component, sizeof(obj.last_ha_component));
+
                         bool is_single_request = (t_did != 0);
 
-                        // On ne publie la config que si l'appareil ET l'objet sont activés ET que l'objet a un nom décent.
-                        // Si c'est un scan global, on ignore les objets désactivés pour ne pas spammer HA.
-                        // Si c'est une requête ciblée (on vient de désactiver l'objet ou l'appareil), on envoie le payload vide.
                         if (dev.enabled && obj.enabled && strcmp(obj.name, "Unknown") != 0) {
                             JsonDocument doc; 
                             char base_topic[128];
@@ -467,36 +494,32 @@ void publish_ha_autodiscovery() {
                             
                             doc["~"] = String(base_topic);
                             doc["uniq_id"] = String(uniq_id);
-                            doc["name"] = String(obj.name); // Force la copie
+                            doc["name"] = String(obj.name); 
                             doc["stat_t"] = "~/state";
                             doc["avty_t"] = String(lwt_topic);
                             doc["pl_avail"] = "online";
                             doc["pl_not_avail"] = "offline";
 
-                            // Si le composant n'est pas un simple capteur, il lui faut un topic de commande
                             if (strcmp(ha_component, "sensor") != 0 && strcmp(ha_component, "binary_sensor") != 0) {
                                 doc["cmd_t"] = "~/set";
                             }
 
                             if (obj.type == OBJ_BINARY_INPUT || obj.type == OBJ_BINARY_OUTPUT || obj.type == OBJ_BINARY_VALUE) {
-                                doc["pl_on"] = "1.00";
-                                doc["pl_off"] = "0.00";
+                                doc["pl_on"] = "1.00"; doc["pl_off"] = "0.00";
                             }
 
                             if (strcmp(ha_component, "number") == 0) {
-                                doc["min"] = -100; doc["max"] = 1000; doc["step"] = 0.1;
+                                doc["min"] = 1; doc["max"] = 255; doc["step"] = 1;
                             }
 
+                            // --- GESTION DES UNITÉS (v6.3.4) ---
                             if (obj.type == OBJ_ANALOG_INPUT || obj.type == OBJ_ANALOG_VALUE || obj.type == OBJ_ANALOG_OUTPUT) {
                                 String unit = String(obj.unit_text);
-                                if (unit == "Unknown" || unit.length() == 0) {
+                                if (unit == "Unknown" || unit.length() == 0 || unit == "none") {
                                     unit = get_unit_text(obj.units);
                                 }
                                 
-                                // Nettoyage pour HA
-                                if (unit == "no-units" || unit == "none") unit = "";
-
-                                if (unit.length() > 0) {
+                                if (unit != "no-units" && unit.length() > 0) {
                                     doc["unit_of_meas"] = unit;
                                     if (unit == "°C" || unit == "°F" || unit == "°K") doc["dev_cla"] = "temperature";
                                     else if (unit == "%" || unit == "%RH") doc["dev_cla"] = "humidity";
@@ -510,15 +533,15 @@ void publish_ha_autodiscovery() {
 
                             bool can_publish = true;
                             if (obj.type == OBJ_MULTI_STATE_INPUT || obj.type == OBJ_MULTI_STATE_OUTPUT || obj.type == OBJ_MULTI_STATE_VALUE) {
-                                if (obj.state_texts.empty()) {
-                                    can_publish = false;
-                                    should_publish = false;
-                                } else {
+                                if (!obj.state_texts.empty()) {
                                     JsonArray opts = doc["options"].to<JsonArray>();
                                     for (size_t i = 0; i < obj.state_texts.size(); i++) {
                                         opts.add(String(obj.state_texts[i]));
                                     }
                                     if (strcmp(ha_component, "sensor") == 0) doc["dev_cla"] = "enum";
+                                } else {
+                                    // Pas de textes: on publie en tant que nombre brut pour le moment
+                                    if (strcmp(ha_component, "sensor") == 0) doc["icon"] = "mdi:numeric";
                                 }
                             }
 

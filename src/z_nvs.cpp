@@ -17,12 +17,12 @@ static SemaphoreHandle_t nvs_mutex = NULL;
 void load_device_objects(uint32_t device_id) {
     if (nvs_mutex == NULL) nvs_mutex = xSemaphoreCreateMutex();
     char ns[16]; 
-    snprintf(ns, sizeof(ns), "dev_%lu", (unsigned long)device_id);
+    snprintf(ns, sizeof(ns), "dv_%lu", (unsigned long)device_id); // Namespace standard
     Preferences prefs;
     
     if (prefs.begin(ns, true)) {
         BACnetPersistenceDev head;
-        if (prefs.getBytes("head", &head, sizeof(head)) > 0) {
+        if (prefs.getBytes("head", &head, sizeof(head)) == sizeof(head)) {
             
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(1000))) {
                 bool exists = false;
@@ -43,8 +43,9 @@ void load_device_objects(uint32_t device_id) {
                     for (int p = 0; p * 20 < head.count; p++) {
                         char key[16]; snprintf(key, 16, "p%d", p);
                         BACnetPersistencePage page;
+                        memset(&page, 0, sizeof(page));
                         
-                        if (prefs.getBytes(key, &page, sizeof(page)) > 0) {
+                        if (prefs.getBytes(key, &page, sizeof(page)) == sizeof(page)) {
                             if (page.device_id != device_id) continue;
 
                             for (int i = 0; i < 20 && (p * 20 + i) < head.count; i++) {
@@ -54,10 +55,13 @@ void load_device_objects(uint32_t device_id) {
                                 obj.enabled = page.objects[i].poll;
                                 obj.name_published = page.objects[i].name_published;
                                 obj.is_commandable = page.objects[i].is_commandable;
+                                obj.units = page.objects[i].units;
+                                obj.expected_states_count = page.objects[i].states_count;
                                 
                                 strlcpy(obj.name, page.objects[i].name, sizeof(obj.name));
                                 strlcpy(obj.unit_text, page.objects[i].unit_text, sizeof(obj.unit_text));
                                 strlcpy(obj.last_mqtt_name, page.objects[i].name, sizeof(obj.last_mqtt_name));
+                                strlcpy(obj.last_ha_component, page.objects[i].last_ha_component, sizeof(obj.last_ha_component));
                                 
                                 obj.present_value = 0.0f;
                                 dev.objects.push_back(obj);
@@ -216,7 +220,7 @@ void save_device_objects_locked(uint32_t device_id) {
         for (auto& dev : bacnet_network_cache) {
             if (dev.device_id == device_id) {
                 char ns[16]; 
-                snprintf(ns, sizeof(ns), "dev_%lu", (unsigned long)device_id);
+                snprintf(ns, sizeof(ns), "dv_%lu", (unsigned long)device_id); // Namespace standard
                 Preferences prefs;
                 
                 if (prefs.begin(ns, false)) {
@@ -227,7 +231,7 @@ void save_device_objects_locked(uint32_t device_id) {
                     head.device_id = dev.device_id;
                     head.mac_address = dev.mac_address;
                     head.enabled = dev.enabled;
-                    head.count = (uint8_t)std::min((int)dev.objects.size(), 100);
+                    head.count = (uint16_t)dev.objects.size();
                     head.discovery_done = dev.discovery_done;
                     head.disc_step = (uint8_t)dev.disc_step;
                     head.disc_obj_idx = dev.disc_obj_idx;
@@ -236,20 +240,23 @@ void save_device_objects_locked(uint32_t device_id) {
                     
                     prefs.putBytes("head", &head, sizeof(head));
 
-                    for (int p = 0; p * 20 < head.count; p++) {
+                    for (int p = 0; p * 20 < (int)dev.objects.size(); p++) {
                         BACnetPersistencePage page;
                         memset(&page, 0, sizeof(page));
                         page.device_id = device_id;
                         page.page_index = p;
 
-                        for (int i = 0; i < 20 && (p * 20 + i) < head.count; i++) {
+                        for (int i = 0; i < 20 && (p * 20 + i) < (int)dev.objects.size(); i++) {
                             auto& o = dev.objects[p * 20 + i];
                             page.objects[i].val = ((uint32_t)o.type << 22) | (o.instance & 0x3FFFFF);
                             page.objects[i].poll = o.enabled;
                             page.objects[i].name_published = o.name_published;
                             page.objects[i].is_commandable = o.is_commandable;
+                            page.objects[i].units = o.units;
+                            page.objects[i].states_count = (uint8_t)std::min((int)o.expected_states_count, 255);
                             strlcpy(page.objects[i].name, o.name, 32);
                             strlcpy(page.objects[i].unit_text, o.unit_text, 12);
+                            strlcpy(page.objects[i].last_ha_component, o.last_ha_component, 16);
                         }
                         char key[16]; snprintf(key, 16, "p%d", p);
                         prefs.putBytes(key, &page, sizeof(page));
