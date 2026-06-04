@@ -35,6 +35,32 @@ static uint8_t next_station = 127;
 static uint8_t poll_station = 0;
 static bool ring_stable = false;
 
+// --- BURST MODE UTILS (v6.2.0) ---
+static bool has_bacnet_work() {
+    // 1. Priorité aux travaux en file d'attente (Commandes/Ecritures)
+    if (uxQueueMessagesWaiting(bacnet_job_queue) > 0) return true;
+
+    // 2. Vérification du polling échu
+    bool work_found = false;
+    if (xSemaphoreTake(cache_mutex, 0)) { // Check non-bloquant pour la FSM
+        for (const auto& dev : bacnet_network_cache) {
+            // Un device en cours de découverte est considéré comme du travail
+            if (!dev.discovery_done) { work_found = true; break; }
+            
+            for (const auto& obj : dev.objects) {
+                // Si l'objet est activé et que son polling est échu (ou jamais fait)
+                if (obj.enabled && (obj.last_update == 0 || (millis() - obj.last_update) >= (sysCfg.bacnet_poll_interval * 1000))) {
+                    work_found = true;
+                    break;
+                }
+            }
+            if (work_found) break;
+        }
+        xSemaphoreGive(cache_mutex);
+    }
+    return work_found;
+}
+
 // --- UTILS CRC ---
 static uint8_t calc_header_crc(uint8_t *data, size_t len) {
     uint8_t crc = 0xFF;
@@ -449,9 +475,20 @@ static void bacnet_task(void *pv) {
                     mstp_state = MSTP_WAIT_FOR_REPLY;
                 }
                 break;
-            case MSTP_USE_TOKEN:
+            case MSTP_USE_TOKEN: {
+                // --- ACTION: NothingToSend (ASHRAE 135 v6.2.0) ---
+                if (frame_count == 0 && !has_bacnet_work()) {
+                    frame_count = sysCfg.max_info_frames; // Force transition vers PASS_TOKEN
+                    mstp_state = MSTP_DONE_WITH_TOKEN;
+                    break;
+                }
+
                 if (frame_count == 0) token_skip_count++;
-                if (frame_count > 0 || token_skip_count >= sysCfg.token_skip) { 
+                
+                // Priorité aux travaux forcés (WHO-IS, Ecritures)
+                bool high_priority_work = (uxQueueMessagesWaiting(bacnet_job_queue) > 0);
+
+                if (frame_count > 0 || high_priority_work || token_skip_count >= sysCfg.token_skip) { 
                     if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(20))) { // On s'autorise 20ms d'attente (T_usage_timeout = 30ms)
                         BACnetJob current_job;
                         bool has_job = (xQueueReceive(bacnet_job_queue, &current_job, 0) == pdTRUE);
@@ -469,8 +506,7 @@ static void bacnet_task(void *pv) {
                             send_mstp_frame(0xFF, 0x06, buffer, len);
                             token_skip_count = 0;
                             frame_count++;
-                            if (frame_count < sysCfg.max_info_frames) mstp_state = MSTP_USE_TOKEN;
-                            else mstp_state = MSTP_DONE_WITH_TOKEN;
+                            mstp_state = MSTP_DONE_WITH_TOKEN; 
                         } else if (has_job && current_job.type == JOB_WRITE_PROP) {
                             uint8_t buffer[256];
                             uint16_t apdu_len = 0;
@@ -570,6 +606,7 @@ static void bacnet_task(void *pv) {
                     mstp_state = MSTP_DONE_WITH_TOKEN; 
                 }
                 break;
+            }
             case MSTP_WAIT_FOR_REPLY:
                 if (ReceivedValidFrame) {
                     waiting_for_reply = false;
@@ -1002,7 +1039,8 @@ static void bacnet_task(void *pv) {
 
             case MSTP_ANSWER_DATA_REQUEST: z_log(LOG_INFO,"MSTP","Serving request...\n"); mstp_state = MSTP_IDLE; break;
             case MSTP_DONE_WITH_TOKEN: 
-                if (frame_count < sysCfg.max_info_frames) {
+                if (frame_count < sysCfg.max_info_frames && has_bacnet_work()) {
+                    // Transition SendAnotherFrame (ASHRAE 135 v6.2.0)
                     mstp_state = MSTP_USE_TOKEN;
                 } else {
                     mstp_state = MSTP_PASS_TOKEN;

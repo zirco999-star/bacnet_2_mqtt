@@ -1,5 +1,13 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 4 Juin 2026 (Mode Burst MS/TP - v6.2.0) - COMPILÉ
+- **Version** : v6.2.0
+- **Mode Burst (Max_Info_Frames)** : Implémentation complète des transitions normatives ASHRAE 135 "SendAnotherFrame" et "NothingToSend".
+- **Optimisation Débit** : La Gateway peut désormais envoyer jusqu'à `sysCfg.max_info_frames` (défaut: 3) trames par cycle de jeton si du travail est en attente.
+- **Détection Intelligente** : Ajout de `has_bacnet_work()` pour vérifier dynamiquement la présence de jobs en file d'attente ou d'objets nécessitant un polling avant de décider de conserver le jeton.
+- **Libération Anticipée** : Si aucun travail n'est prêt au moment de la réception du jeton, celui-ci est passé immédiatement au successeur (gain de bande passante pour les autres maîtres).
+- **Stabilité FSM** : Correction des problèmes de portée de variables (brackets de case) et validation par compilation réussie.
+
 ## État au 3 Juin 2026 (Hard Real-Time & Ring Stability - v6.0.5) - DÉPLOYÉ
 - **Version** : v6.0.5
 - **FSM MS/TP BTL** : Migration complète vers `micros()` pour la conformité ASHRAE 135.
@@ -277,9 +285,24 @@
     - **Circuit Breaker MQTT (Best Practices)** : Désactivation de l'auto-reconnect du driver au profit d'une gestion applicative différée (`esp_mqtt_client_stop` & `esp_mqtt_client_destroy` sur le Core 0). Neutralisation réelle des boucles infinies de reconnexion en cas de broker hors-ligne.
     - **Considération de l'UI** : Toutes les modifications respectent les variables de configuration ajoutées dans le menu SETTINGS de l'interface Web.
 
-## Historique des Incidents Résolus
+- [v5.6] MQTT Storm -> Boucle de reconnexion infinie saturant LwIP.
 - [v5.6] Discovery Failure -> Parser NPCI à offset fixe ignorait les I-Am routés.
 - [v5.6] Token Regeneration -> Blocage synchrone du Core 1 par les appels WebSockets.
 - [v5.6] MQTT Storm -> Boucle de reconnexion infinie saturant LwIP.
 - [v4.7.45] Unit Persistence Loss -> Champ `units` manquant dans les structures NVS.
-- **v6.1.10** : Restauration de la publication MQTT (trigger_ha_discovery) suite a la modification locale d'un nom d'objet. Remplacement de l'obsolete JOB_READ_PROP dans l'API par la reutilisation de la FSM de decouverte asynchrone (dev.reload_single). Purge de BACnetJobType. L'Etape 5 du plan de refactoring BTL est achevee.
+
+## État au 3 Juin 2026 (Diagnostic Polling & Prop 87 Hybride - v6.1.2) - DÉPLOYÉ
+- **Version** : v6.1.2
+- **Vérification Prop 87 Hybride** : Réintégration de la vérification de la Propriété 87 (Priority_Array) pour identifier les objets pilotables, conformément aux recommandations de l'expert.
+- **Logique "Best Effort"** : Implémentation d'un mécanisme non-bloquant. En cas d'erreur `Busy` (145), `Unknown Property` ou `Timeout` sur la Prop 87, la Gateway bascule automatiquement sur une déduction par type (v6.0.5) et passe à l'objet suivant.
+- **Correction Polling** : 
+    - Suppression du délai d'attente au démarrage : les objets avec `last_update == 0` sont désormais prioritaires.
+    - Correction du blocage sur erreur : un objet en échec définitif est marqué comme "tenté" pour ne pas stopper la boucle de scan.
+- **Visibilité accrue** : Passage des logs `Poll Request/Result` au niveau INFO et ajout du compteur d'objets activés (`Enabled: X`) dans le Heartbeat.
+- **Stabilité** : Correction des erreurs de parenthésage de la v6.1.0 empêchant la compilation.
+
+## État au 3 Juin 2026 (Conception Burst Mode - v6.2.0) - PLANIFIÉ
+- **Analyse Expert** : Identification d'une sous-utilisation du `Max_Info_Frames` limitant le débit.
+- **Planification** : Création du `plans/PLAN_MAX_INFO_FRAMES.md` pour implémenter les transitions normatives "SendAnotherFrame" et "NothingToSend".
+- **Objectif** : Multiplier par 3 (ou `max_info_frames`) le débit de données par cycle de jeton.
+

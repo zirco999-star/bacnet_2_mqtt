@@ -12,7 +12,7 @@
 #include <mqtt_client.h>
 
 // DEFAULT SYSTEM CONFIGURATION
-#define VERSION_GLOBAL "v6.1.2"
+#define VERSION_GLOBAL "v6.2.0"
 #define DEFAULT_SSID    "Freebox-A4297A"
 #define DEFAULT_STATIC_IP "192.168.1.50"
 #define DEFAULT_GATEWAY "192.168.1.254"

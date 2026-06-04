@@ -22,3 +22,11 @@
 - **Discovery State:** Always persist disc_step and disc_obj_idx in BACnetPersistenceDev to allow resumption of discovery after reboot.
 - **Multi-Device Support:** The engine must handle multiple devices via rotation. No hardcoding index 0.
 - **Safe Boot:** Use standard malloc for NVS blobs during boot phases.
+
+## Lessons Learned & Best Practices
+- **Prop 87 (Commandable):** The most reliable way to identify writable points is reading Prop 87 (Priority_Array). However, to avoid blocking slow automates (like ECB-203 which returns Code 145 - Busy), a "Best Effort" approach with immediate fallback to type-based deduction (v6.0.5) is mandatory.
+- **Polling Loop Robustness:** The polling scanner must always increment even on error/timeout. Objects with `last_update = 0` must be treated as high priority to ensure immediate state sync after boot.
+- **Brace Integrity:** In the complex MS/TP FSM, ensure that the cache mutex scope correctly wraps all logic accessing `bacnet_network_cache` to avoid race conditions or accessibility errors of local variables like `apdu_len`.
+
+## Future Optimizations (Planned)
+- **Burst Mode (Max_Info_Frames):** To maximize throughput, the FSM will be updated to send multiple frames per token cycle. This requires strict implementation of "SendAnotherFrame" (looping back to `USE_TOKEN`) and "NothingToSend" (immediate `PASS_TOKEN`).
