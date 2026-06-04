@@ -170,6 +170,33 @@ extern SemaphoreHandle_t cache_mutex;
 extern uint32_t period_poll_count;
 extern uint32_t period_mqtt_pub_count;
 
+// --- CONSTANTES DE TEMPS ASHRAE 135 (v6.3.0) ---
+const uint32_t T_REPLY_TIMEOUT_US = 265000; // 265 ms (ASHRAE: 255-300ms)
+const uint32_t T_USAGE_TIMEOUT_US = 15000;  // 15 ms (T_usage_timeout)
+const uint32_t T_FRAME_ABORT_US   = 50000;  // 50 ms pour abandonner une trame incomplète
+
+// --- STRUCTURE DE TRANSPORT MS/TP ---
+struct MSTP_Frame {
+    uint8_t type;
+    uint8_t dest;
+    uint8_t src;
+    uint16_t len;
+    uint8_t data[512]; // APDU
+    uint32_t timestamp_us;
+};
+
+// --- PROTOTYPES REFACTORISATION MODULAIRE (v6.3.0) ---
+void handle_mstp_idle();
+void handle_mstp_use_token();
+void handle_mstp_wait_for_reply();
+void handle_mstp_pass_token();
+void handle_mstp_poll_for_master();
+void process_incoming_frame(MSTP_Frame &frame);
+void execute_bacnet_work();
+void execute_discovery_logic(BACnetDevice &dev);
+void execute_polling_logic(BACnetDevice &dev);
+bool has_bacnet_work();
+
 // --- ÉTATS FSM MS/TP (ASHRAE 135) ---
 enum RX_STATE { 
     RX_IDLE, 
@@ -212,6 +239,7 @@ bool enqueue_bacnet_job(BACnetJob job);
 void publish_all_names();
 String get_unit_text(uint16_t units);
 
+uint16_t build_read_property_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, uint8_t property_id, int32_t array_index);
 uint16_t build_write_property_name_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, const char* new_name);
 uint16_t build_write_property_value_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, uint8_t prop_id, float value);
 

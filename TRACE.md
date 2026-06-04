@@ -1,5 +1,17 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 4 Juin 2026 (Refactorisation FSM & Découplage RX - v6.3.0) - COMPILÉ
+- **Version** : v6.3.0
+- **Refactorisation Modulaire** : Division de la fonction monolithique `bacnet_task` en sous-fonctions spécialisées (`handle_mstp_*`, `execute_bacnet_work`, `process_incoming_frame`). Code plus lisible et maintenable.
+- **Découplage Multi-Tâches** :
+    - **`mstp_rx_task`** (Priorité 20) : Dédiée à la lecture UART temps réel et à l'assemblage des trames. Garantit qu'aucun octet n'est manqué pendant les traitements lourds.
+    - **`bacnet_task`** (Priorité 15) : Orchestrateur de la machine à états Maître, consommant les trames via une `mstp_rx_queue`.
+- **Conformité ASHRAE 135** :
+    - **T_reply_timeout** : Fixé à **265 ms** (strict) pour la couche MAC.
+    - **Silence Detection** : Migration vers `esp_timer_get_time()` pour une précision à la microseconde, éliminant le jitter lié à l'ordonnanceur FreeRTOS.
+- **Sécurité Mutex** : Utilisation de timeouts non-bloquants (`pdMS_TO_TICKS(15)`) pour l'accès au cache lors de la possession du jeton, garantissant le respect du `T_usage_timeout`.
+- **Validation** : Compilation réussie. Prêt pour déploiement OTA.
+
 ## État au 4 Juin 2026 (Single-Object Reload & HA Sync - v6.2.3) - DÉPLOYÉ
 - **Version** : v6.2.3
 - **Correction Reload Object** : L'API `/api/reload_object` démarre désormais la découverte à l'étape `DISC_OBJ_NAME` au lieu de `DISC_OBJ_VALUE`. Cela garantit que le nom, les unités et l'état commandable (Prop 87) sont rafraîchis depuis l'automate avant de mettre à jour Home Assistant.
