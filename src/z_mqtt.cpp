@@ -475,13 +475,13 @@ void publish_ha_autodiscovery() {
                         snprintf(uniq_id, sizeof(uniq_id), "bacnet_%lu_%s_%lu", (unsigned long)dev.device_id, t_str, (unsigned long)obj.instance);
                         snprintf(final_topic, sizeof(final_topic), "homeassistant/%s/%s/config", ha_component, uniq_id);
 
-                        // --- NETTOYAGE DES DOUBLONS (v6.3.6) ---
-                        // Si le composant HA change (ex: sensor -> select), on doit supprimer l'ancien AVEC RETAIN=1
+                        // --- NETTOYAGE DES DOUBLONS (v6.4.0 Optimized) ---
+                        // On ne supprime que si on a une trace d'un composant précédent DIFFÉRENT
                         if (strlen(obj.last_ha_component) > 0 && strcmp(obj.last_ha_component, ha_component) != 0) {
                             char old_topic[128];
                             snprintf(old_topic, sizeof(old_topic), "homeassistant/%s/%s/config", obj.last_ha_component, uniq_id);
-                            z_log(LOG_INFO, "MQTT", "[MQTT] Cleaning old entity: %s (Retain 1)\n", old_topic);
                             esp_mqtt_client_publish(mqtt_client, old_topic, "", 0, 1, 1); 
+                            vTaskDelay(pdMS_TO_TICKS(50)); // Petit délai entre unpublish et publish
                         }
                         strlcpy(obj.last_ha_component, ha_component, sizeof(obj.last_ha_component));
 
@@ -576,7 +576,7 @@ void publish_ha_autodiscovery() {
             if (should_publish) { 
                 // Utilisation de esp_mqtt_client_publish avec QoS 1 pour garantir la délivrance et le traitement synchrone
                 esp_mqtt_client_publish(mqtt_client, final_topic, final_payload.c_str(), final_payload.length(), 1, 1);
-                vTaskDelay(pdMS_TO_TICKS(100)); // Délai augmenté à 100ms pour stabiliser le volume
+                vTaskDelay(pdMS_TO_TICKS(150)); // Augmenté à 150ms pour laisser respirer HA
             }
         }
     }
