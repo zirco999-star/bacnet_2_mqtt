@@ -171,7 +171,7 @@ void setup_network_infrastructure() {
         doc["adu"] = sysCfg.admin_user;
         doc["lvl"] = sysCfg.log_level;
 
-        doc["mstp_t"] = (bacnetStats.tokens_seen > 0);
+        doc["mstp_t"] = bacnetStats.ring_active;
         doc["mstp_cnt"] = bacnetStats.tokens_seen;
         doc["mstp_rx"] = bacnetStats.ms_msgs_rx;
         doc["mstp_tx"] = bacnetStats.ms_msgs_tx;

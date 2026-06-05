@@ -356,9 +356,8 @@
 - **Hardened Unpublish** : Balayage systématique des 5 domaines HA lors d'un retrait d'objet.
 - **Robustesse** : Passage à `pending_discovery.load/store` pour garantir l'atomicité.
 
-## [2026-06-05] v6.4.3 : Limites Dynamiques Objets (Min/Max)
-- **Problème** : Les entités `number` dans HA étaient bridées à [1, 255] par défaut, empêchant le réglage des offsets de température (ex: -5 à +5).
-- **Correction BACnet** : Ajout de deux étapes de découverte FSM pour lire les propriétés `Min_Pres_Value` (69) et `Max_Pres_Value` (65).
-- **Correction MQTT** : Utilisation des limites réelles lues sur l'automate dans le payload Auto-Discovery.
-- **Fallback Configurable** : Ajout de `default_number_min/max/step` dans `sysCfg` et l'UI (onglet Settings) pour les objets ne supportant pas les propriétés 65/69.
-- **Persistence** : Mise à jour de la structure NVS `BACnetPersistenceObj` pour stocker les limites.
+## [2026-06-05] v6.4.4 : Indicateur de santé MS/TP temps réel
+- **Problème** : Le voyant MSTP restait à "RUNNING" même si le bus était coupé (basé sur un compteur cumulatif).
+- **Correction** : Implémentation d'un flag `ring_active` dans la FSM MS/TP.
+- **Logique Liveness** : Le flag passe à `false` sur `Silence Timeout` (perte de jeton) et repasse à `true` dès réception d'une trame valide d'un tiers.
+- **UI Sync** : L'API `/api/status` remonte désormais cet état dynamique pour une mise à jour instantanée du voyant MSTP (vert/rouge).

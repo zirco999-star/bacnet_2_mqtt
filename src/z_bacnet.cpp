@@ -9,7 +9,7 @@
 #include "z_nvs.h"
 
 uint32_t period_poll_count = 0;
-BACnet_Stats bacnetStats = {0, 0, 0, 0, 0, 0, 0};
+BACnet_Stats bacnetStats = {0, 0, 0, 0, 0, 0, 0, false};
 std::vector<BACnetDevice> bacnet_network_cache;
 QueueHandle_t bacnet_job_queue = NULL;
 QueueHandle_t uart_evt_queue = NULL;
@@ -287,6 +287,9 @@ static void log_mstp_state_change(MSTP_MASTER_STATE new_state) {
 void handle_mstp_idle() {
     uint32_t tnt = T_NO_TOKEN_US + (sysCfg.mac_address * 10000);
     if (ReceivedValidFrame) {
+        // v6.4.4: Tout trafic valide d'un tiers indique que le bus est vivant
+        if (src_mac != sysCfg.mac_address) bacnetStats.ring_active = true;
+
         if (frame_type == 0x00 && dest_mac == sysCfg.mac_address) { 
             bacnetStats.tokens_seen++; frame_count = 0; mstp_state = MSTP_USE_TOKEN; 
         }
@@ -300,7 +303,11 @@ void handle_mstp_idle() {
             memcpy(f.data, data_buf, data_len); process_incoming_frame(f);
         }
     } else if (timer_silence_us >= tnt) {
-        z_log(LOG_INFO, "MSTP", "Silence Timeout (%lu us). Lost Token? Claiming.\n", timer_silence_us);
+        // v6.4.4: Silence Timeout = Perte de communication réelle
+        if (bacnetStats.ring_active) {
+            z_log(LOG_INFO, "MSTP", "Silence Timeout (%lu us). Lost Token? Claiming.\n", timer_silence_us);
+            bacnetStats.ring_active = false;
+        }
         mstp_state = MSTP_NO_TOKEN;
     }
 }
@@ -317,6 +324,9 @@ void handle_mstp_use_token() {
 
 void handle_mstp_wait_for_reply() {
     if (ReceivedValidFrame) {
+        // v6.4.4: Réponse reçue = communication active
+        bacnetStats.ring_active = true;
+
         MSTP_Frame f = { frame_type, dest_mac, src_mac, data_len, {0}, (uint32_t)esp_timer_get_time() };
         memcpy(f.data, data_buf, data_len); process_incoming_frame(f);
         waiting_for_reply = false; mstp_state = MSTP_DONE_WITH_TOKEN;

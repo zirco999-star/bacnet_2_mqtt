@@ -131,6 +131,7 @@ struct BACnet_Stats {
     uint32_t errors_crc;
     uint8_t current_index; 
     uint8_t total_objects; 
+    bool ring_active;
 };
 extern BACnet_Stats bacnetStats;
 
