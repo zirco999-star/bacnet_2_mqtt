@@ -130,6 +130,10 @@ void setup_network_infrastructure() {
         request->send_P(200, "text/html", INDEX_HTML);
     });
 
+    webServer.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send_P(200, "image/x-icon", favicon_ico, favicon_ico_len);
+    });
+
     webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!is_authenticated(request)) return;
         JsonDocument doc;

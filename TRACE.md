@@ -356,6 +356,12 @@
 - **Hardened Unpublish** : Balayage systématique des 5 domaines HA lors d'un retrait d'objet.
 - **Robustesse** : Passage à `pending_discovery.load/store` pour garantir l'atomicité.
 
+## [2026-06-05] v6.4.5 : Intégration du Favicon en PROGMEM
+- **Amélioration** : Ajout d'un favicon officiel au serveur web pour finaliser l'esthétique et supprimer les erreurs 404 `/favicon.ico`.
+- **Technique** : Conversion du binaire `favicon.ico` en tableau C (`uint8_t[]`) stocké en Flash via un script d'injection Python.
+- **Route** : Ajout du handler `/favicon.ico` avec le type MIME `image/x-icon`.
+- **UI** : Ajout de la balise `<link rel="icon">` dans le template HTML.
+
 ## [2026-06-05] v6.4.4 : Indicateur de santé MS/TP temps réel
 - **Problème** : Le voyant MSTP restait à "RUNNING" même si le bus était coupé (basé sur un compteur cumulatif).
 - **Correction** : Implémentation d'un flag `ring_active` dans la FSM MS/TP.
