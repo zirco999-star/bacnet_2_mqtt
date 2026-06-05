@@ -506,9 +506,12 @@ void setup_network_infrastructure() {
 
     webServer.on("/api/reset_cache", HTTP_ANY, [](AsyncWebServerRequest *request) {
         if (!is_authenticated(request)) return;
+        // 1. Nettoyage préventif MQTT (avant de perdre les pointeurs)
+        unpublish_ha_discovery(); 
+        
         if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(1000))) {
             for (auto& dev : bacnet_network_cache) {
-                char ns[16]; snprintf(ns, sizeof(ns), "dev_%lu", (unsigned long)dev.device_id);
+                char ns[16]; snprintf(ns, sizeof(ns), "dv_%lu", (unsigned long)dev.device_id); // Correction namespace v6.4.1
                 Preferences p; p.begin(ns, false); p.clear(); p.end();
             }
             Preferences reg; reg.begin("registry", false); reg.clear(); reg.end();

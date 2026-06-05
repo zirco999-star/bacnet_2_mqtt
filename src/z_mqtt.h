@@ -22,7 +22,7 @@ bool enqueue_mqtt_publish(MQTTPublishJob pubJob);
 
 // Fonction centralisée pour la publication
 void publish_mqtt_topic(uint32_t device_id, BACnetObject& obj, uint8_t prop_id, bool retain);
-void publish_ha_autodiscovery();
+void publish_ha_autodiscovery(uint32_t did = 0, uint32_t inst = 0xFFFFFFFF, uint16_t type = 0xFFFF);
 void unpublish_ha_discovery(uint32_t did = 0, uint32_t inst = 0xFFFFFFFF, uint16_t type = 0xFFFF, const char* old_prefix = NULL);
 void trigger_ha_discovery(uint32_t did = 0, uint32_t inst = 0xFFFFFFFF, uint16_t type = 0xFFFF);
 

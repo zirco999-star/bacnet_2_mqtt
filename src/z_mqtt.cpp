@@ -154,8 +154,10 @@ static void mqtt_gatekeeper_task(void *pv) {
     while (1) {
         if (mqtt_is_connected && !circuit_breaker_active) {
             // 1. Traitement de l'Auto-Discovery (Atomique pour éviter les loops de triggers)
-            if (pending_discovery.exchange(false, std::memory_order_acq_rel)) {
+            if (pending_discovery.load(std::memory_order_acquire)) {
                 uint32_t t_did = target_did.load();
+                uint32_t t_inst = target_inst.load();
+                uint16_t t_type = target_type.load();
                 bool is_global = (t_did == 0 || force_full_discovery);
                 
                 uint32_t now = millis();
@@ -167,15 +169,22 @@ static void mqtt_gatekeeper_task(void *pv) {
                 }
 
                 if (can_pub) {
+                    pending_discovery.store(false, std::memory_order_release);
                     if (force_full_discovery) {
-                        target_did = 0; 
+                        t_did = 0; 
+                        t_inst = 0xFFFFFFFF;
                         force_full_discovery = false;
                     }
-                    publish_ha_autodiscovery();
+                    publish_ha_autodiscovery(t_did, t_inst, t_type);
                 } else {
-                    z_log(LOG_DEBUG, "MQTT", "HA Discovery throttled\n");
+                    // On ne reset PAS pending_discovery, on attendra la prochaine boucle (non-dropping)
+                    // On logue une seule fois pour éviter le flood de logs
+                    static uint32_t last_log = 0;
+                    if (now - last_log > 5000) {
+                        z_log(LOG_DEBUG, "MQTT", "HA Discovery deferred (throttle active)\n");
+                        last_log = now;
+                    }
                 }
-                target_did = 0; 
             }
 
             // 2. Traitement de la queue de publication
@@ -308,9 +317,26 @@ bool is_mqtt_connected() { return mqtt_is_connected; }
 
 void trigger_ha_discovery(uint32_t did, uint32_t inst, uint16_t type) {
     if (!sysCfg.ha_discover) return;
-    target_did = did;
-    target_inst = inst;
-    target_type = type;
+    
+    // Stratégie de Coalescence (v6.4.2)
+    // Si une demande est déjà en attente :
+    if (pending_discovery.load()) {
+        if (target_did != did) {
+            // Changement de device -> On passe en global pour tout republier proprement
+            target_did = 0;
+            target_inst = 0xFFFFFFFF;
+        } else if (target_inst != inst || target_type != type) {
+            // Même device mais objet différent -> On passe en mode "tout le device"
+            target_inst = 0xFFFFFFFF;
+            target_type = 0xFFFF;
+        }
+    } else {
+        // Nouvelle demande fraîche
+        target_did = did;
+        target_inst = inst;
+        target_type = type;
+    }
+    
     pending_discovery = true;
 }
 
@@ -334,52 +360,56 @@ void handle_mqtt() {
     }
 }
 
-void publish_ha_autodiscovery() {
+void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) {
     if (!mqtt_is_connected || circuit_breaker_active || !sysCfg.ha_discover) return;
-    z_log(LOG_INFO, "MQTT", "Starting HA Auto-Discovery...\n");
 
-    // Étape 0 : Discovery de la Gateway elle-même (Diagnostics)
-    char base_b2m[128];
-    snprintf(base_b2m, sizeof(base_b2m), "%s/B2M", sysCfg.mqtt_prefix);
-    
-    auto pub_gw_sensor = [&](const char* key, const char* name, const char* dev_cla, const char* unit, const char* icon = NULL, bool is_binary = false) {
-        JsonDocument doc;
-        char topic[128], uniq[64];
-        snprintf(uniq, sizeof(uniq), "b2m_gw_%s", key);
-        snprintf(topic, sizeof(topic), "homeassistant/%s/%s/config", is_binary ? "binary_sensor" : "sensor", uniq);
-        
-        doc["name"] = name;
-        doc["uniq_id"] = uniq;
-        char stat_t[128]; snprintf(stat_t, sizeof(stat_t), "%s/%s/state", base_b2m, key);
-        doc["stat_t"] = stat_t;
-        doc["avty_t"] = lwt_topic;
-        
-        if (dev_cla) doc["dev_cla"] = dev_cla;
-        if (unit) doc["unit_of_meas"] = unit;
-        if (icon) doc["icon"] = icon;
-        if (is_binary) {
-            doc["pl_on"] = "ON";
-            doc["pl_off"] = "OFF";
-        }
-        
-        JsonObject device = doc["dev"].to<JsonObject>();
-        JsonArray ids = device["ids"].to<JsonArray>();
-        ids.add("b2m_gateway");
-        device["name"] = "BACnet2MQTT Gateway";
-        device["mf"] = "Custom";
-        device["mdl"] = "ESP32-S3";
-        device["sw"] = VERSION_GLOBAL;
-
-        String payload;
-        serializeJson(doc, payload);
-        esp_mqtt_client_publish(mqtt_client, topic, payload.c_str(), 0, 1, 1);
-        z_log(LOG_DEBUG, "MQTT", "HA Discovery: %s\n", uniq);
-    };
-
-    // On ne publie les capteurs de diagnostic globaux que si la découverte n'est pas limitée à un seul objet précis
-    bool is_single_object = (target_did.load() != 0 && target_inst.load() != 0xFFFFFFFF);
+    // Détermination si c'est une requête ciblée
+    bool is_single_object = (t_did != 0 && t_inst != 0xFFFFFFFF);
     
     if (!is_single_object) {
+        z_log(LOG_INFO, "MQTT", "Starting HA Auto-Discovery%s...\n", (t_did != 0) ? " (Single Device)" : "");
+    }
+
+    // Étape 0 : Discovery de la Gateway elle-même (Diagnostics)
+    // On ne publie les capteurs de diagnostic globaux que si la découverte n'est pas limitée à un seul objet précis
+    if (!is_single_object && t_did == 0) {
+        char base_b2m[128];
+        snprintf(base_b2m, sizeof(base_b2m), "%s/B2M", sysCfg.mqtt_prefix);
+        
+        auto pub_gw_sensor = [&](const char* key, const char* name, const char* dev_cla, const char* unit, const char* icon = NULL, bool is_binary = false) {
+            JsonDocument doc;
+            char topic[128], uniq[64];
+            snprintf(uniq, sizeof(uniq), "b2m_gw_%s", key);
+            snprintf(topic, sizeof(topic), "homeassistant/%s/%s/config", is_binary ? "binary_sensor" : "sensor", uniq);
+            
+            doc["name"] = name;
+            doc["uniq_id"] = uniq;
+            char stat_t[128]; snprintf(stat_t, sizeof(stat_t), "%s/%s/state", base_b2m, key);
+            doc["stat_t"] = stat_t;
+            doc["avty_t"] = lwt_topic;
+            
+            if (dev_cla) doc["dev_cla"] = dev_cla;
+            if (unit) doc["unit_of_meas"] = unit;
+            if (icon) doc["icon"] = icon;
+            if (is_binary) {
+                doc["pl_on"] = "ON";
+                doc["pl_off"] = "OFF";
+            }
+            
+            JsonObject device = doc["dev"].to<JsonObject>();
+            JsonArray ids = device["ids"].to<JsonArray>();
+            ids.add("b2m_gateway");
+            device["name"] = "BACnet2MQTT Gateway";
+            device["mf"] = "Custom";
+            device["mdl"] = "ESP32-S3";
+            device["sw"] = VERSION_GLOBAL;
+
+            String payload;
+            serializeJson(doc, payload);
+            esp_mqtt_client_publish(mqtt_client, topic, payload.c_str(), 0, 1, 1);
+            z_log(LOG_DEBUG, "MQTT", "HA Discovery: %s\n", uniq);
+        };
+
         pub_gw_sensor("ver", "Gateway Version", NULL, NULL, "mdi:information-outline");
         pub_gw_sensor("uptime", "Gateway Uptime", "duration", "s", "mdi:timer-outline");
         pub_gw_sensor("rssi", "Gateway WiFi RSSI", "signal_strength", "dBm");
@@ -421,14 +451,11 @@ void publish_ha_autodiscovery() {
                     auto& dev = bacnet_network_cache[d];
                     auto& obj = dev.objects[o];
 
-                    // Filtrage ciblé (Optimisation v5.8.1 & v5.8.9)
-                    uint32_t t_did = target_did.load();
+                    // Filtrage ciblé (v6.4.2 Param-based)
                     if (t_did != 0) {
                         bool match_dev = (dev.device_id == t_did);
                         if (!match_dev) { xSemaphoreGive(cache_mutex); continue; }
                         
-                        uint32_t t_inst = target_inst.load();
-                        uint16_t t_type = target_type.load();
                         if (t_inst != 0xFFFFFFFF && obj.instance != t_inst) { xSemaphoreGive(cache_mutex); continue; }
                         if (t_type != 0xFFFF && obj.type != t_type) { xSemaphoreGive(cache_mutex); continue; }
                     }
@@ -639,22 +666,28 @@ void unpublish_ha_discovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type, co
                 if (t_type != 0xFFFF && obj.type != t_type) continue;
 
                 const char* t_str = "OBJ";
-                const char* ha_comp = "sensor";
                 switch(obj.type) {
-                    case 0: t_str="AI"; ha_comp="sensor"; break;
-                    case 1: t_str="AO"; ha_comp="number"; break;
-                    case 2: t_str="AV"; ha_comp="number"; break;
-                    case 3: t_str="BI"; ha_comp="binary_sensor"; break;
-                    case 4: t_str="BO"; ha_comp="switch"; break;
-                    case 5: t_str="BV"; ha_comp="switch"; break;
-                    case 13: t_str="MSI"; ha_comp="sensor"; break;
-                    case 14: t_str="MSO"; ha_comp="select"; break;
-                    case 19: t_str="MSV"; ha_comp="select"; break;
+                    case 0: t_str="AI"; break;
+                    case 1: t_str="AO"; break;
+                    case 2: t_str="AV"; break;
+                    case 3: t_str="BI"; break;
+                    case 4: t_str="BO"; break;
+                    case 5: t_str="BV"; break;
+                    case 13: t_str="MSI"; break;
+                    case 14: t_str="MSO"; break;
+                    case 19: t_str="MSV"; break;
                 }
-                char topic[128], uniq[64];
-                snprintf(uniq, sizeof(uniq), "bacnet_%lu_%s_%lu", (unsigned long)dev.device_id, t_str, (unsigned long)obj.instance);
-                snprintf(topic, sizeof(topic), "homeassistant/%s/%s/config", ha_comp, uniq);
-                esp_mqtt_client_publish(mqtt_client, topic, "", 0, 1, 1);
+                char uniq_id[64];
+                snprintf(uniq_id, sizeof(uniq_id), "bacnet_%lu_%s_%lu", (unsigned long)dev.device_id, t_str, (unsigned long)obj.instance);
+                
+                // Balayage de TOUS les composants possibles pour cet ID unique (v6.4.1 Hardened)
+                const char* components[] = {"sensor", "binary_sensor", "switch", "number", "select"};
+                for (const char* comp : components) {
+                    char topic[128];
+                    snprintf(topic, sizeof(topic), "homeassistant/%s/%s/config", comp, uniq_id);
+                    esp_mqtt_client_publish(mqtt_client, topic, "", 0, 1, 1);
+                }
+                vTaskDelay(pdMS_TO_TICKS(10)); // Petit pacing pour le cleanup
             }
         }
         xSemaphoreGive(cache_mutex);
