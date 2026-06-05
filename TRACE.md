@@ -1,5 +1,75 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 4 Juin 2026 (Refactorisation FSM & Découplage RX - v6.3.0) - COMPILÉ
+- **Version** : v6.3.0
+- **Refactorisation Modulaire** : Division de la fonction monolithique `bacnet_task` en sous-fonctions spécialisées (`handle_mstp_*`, `execute_bacnet_work`, `process_incoming_frame`). Code plus lisible et maintenable.
+- **Découplage Multi-Tâches** :
+    - **`mstp_rx_task`** (Priorité 20) : Dédiée à la lecture UART temps réel et à l'assemblage des trames. Garantit qu'aucun octet n'est manqué pendant les traitements lourds.
+    - **`bacnet_task`** (Priorité 15) : Orchestrateur de la machine à états Maître, consommant les trames via une `mstp_rx_queue`.
+- **Conformité ASHRAE 135** :
+    - **T_reply_timeout** : Fixé à **265 ms** (strict) pour la couche MAC.
+    - **Silence Detection** : Migration vers `esp_timer_get_time()` pour une précision à la microseconde, éliminant le jitter lié à l'ordonnanceur FreeRTOS.
+- **Sécurité Mutex** : Utilisation de timeouts non-bloquants (`pdMS_TO_TICKS(15)`) pour l'accès au cache lors de la possession du jeton, garantissant le respect du `T_usage_timeout`.
+- **Validation** : Compilation réussie. Prêt pour déploiement OTA.
+
+## État au 4 Juin 2026 (Single-Object Reload & HA Sync - v6.2.3) - DÉPLOYÉ
+- **Version** : v6.2.3
+- **Correction Reload Object** : L'API `/api/reload_object` démarre désormais la découverte à l'étape `DISC_OBJ_NAME` au lieu de `DISC_OBJ_VALUE`. Cela garantit que le nom, les unités et l'état commandable (Prop 87) sont rafraîchis depuis l'automate avant de mettre à jour Home Assistant.
+- **Transilience FSM** : Modification de la FSM BACnet pour autoriser la transition vers la lecture de valeur même pour les objets désactivés (`o.enabled == false`) lorsqu'une requête de rechargement unique (`dev.reload_single`) est active.
+- **Validation** : Vérification par logs que les métadonnées (Nom, Unités) sont bien extraites et transmises à HA lors d'un clic sur "Reload" dans l'UI.
+
+## État au 4 Juin 2026 (HA Discovery Cleanup - v6.2.2) - DÉPLOYÉ
+- **Version** : v6.2.2
+- **Auto-Cleanup Home Assistant** : Implémentation du nettoyage automatique des entités HA lorsque l'option "HA Auto-Discovery" est décochée.
+- **Logique de Suppression** : La Gateway envoie désormais des payloads vides aux topics de configuration MQTT pour tous les objets actifs, forçant Home Assistant à retirer les entités de son registre.
+- **Détection d'État** : Ajout d'une surveillance du changement d'état `ha_discover` dans le handler `/save` pour déclencher `unpublish_ha_discovery()` uniquement lors d'une transition ON -> OFF.
+
+## État au 4 Juin 2026 (Smart Logs & Sécurité API - v6.2.1) - DÉPLOYÉ
+- **Version** : v6.2.1
+- **Sécurisation NVS/WiFi** : Correction de la route API `/save` pour éviter l'écrasement des mots de passe avec des chaînes vides si le champ UI est laissé tel quel (condition `length > 0 && != "******"`).
+- **Validation IP Stricte** : Ajout d'une vérification native `IPAddress.fromString()` sur les champs Local IP, Gateway et Subnet avant la sauvegarde, prévenant la corruption de la pile LwIP et le Fallback AP intempestif.
+- **Hot-Swap Log Level** : Le niveau de log (`lvl`) défini dans l'onglet "Security" est désormais appliqué à chaud, sans nécessiter de redémarrage.
+- **Smart Logs** :
+    - Déplacement des logs unitaires BACnet (Polling) et MQTT (Publishing) du niveau INFO vers DEBUG pour soulager le buffer WebSocket et LwIP lors des salves à haut débit (Burst Mode).
+    - Ajout de compteurs globaux `period_poll_count` et `period_mqtt_pub_count`.
+    - Centralisation de l'affichage dans le log "Heartbeat" (INFO, toutes les 60s) au format clair : `Polling device X - polling : Y` et `published topic : ... - published topics : Z`.
+- **Statut** : Compilation réussie et flash OTA déployé avec succès.
+
+## État au 4 Juin 2026 (Mode Burst MS/TP - v6.2.0) - COMPILÉ
+- **Version** : v6.2.0
+- **Mode Burst (Max_Info_Frames)** : Implémentation complète des transitions normatives ASHRAE 135 "SendAnotherFrame" et "NothingToSend".
+- **Optimisation Débit** : La Gateway peut désormais envoyer jusqu'à `sysCfg.max_info_frames` (défaut: 3) trames par cycle de jeton si du travail est en attente.
+- **Détection Intelligente** : Ajout de `has_bacnet_work()` pour vérifier dynamiquement la présence de jobs en file d'attente ou d'objets nécessitant un polling avant de décider de conserver le jeton.
+- **Libération Anticipée** : Si aucun travail n'est prêt au moment de la réception du jeton, celui-ci est passé immédiatement au successeur (gain de bande passante pour les autres maîtres).
+- **Stabilité FSM** : Correction des problèmes de portée de variables (brackets de case) et validation par compilation réussie.
+
+## État au 3 Juin 2026 (Hard Real-Time & Ring Stability - v6.0.5) - DÉPLOYÉ
+- **Version** : v6.0.5
+- **FSM MS/TP BTL** : Migration complète vers `micros()` pour la conformité ASHRAE 135.
+- **Ring Management** : Restauration de l'apprentissage dynamique du successeur (PFM Reply) et de la recherche active (Poll For Master).
+- **Hard Real-Time** : Implémentation du Gatekeeper TX avec attente active (Busy Wait) sur Core 1, garantissant le `T_turnaround` strict de 1050µs.
+- **Synchronisation UART** : `uart_tx` attend désormais la fin physique du transfert (`uart_wait_tx_done`) avant de réinitialiser le timer de silence.
+- **Metadata Recovery** : Correction de la logique de récupération des états MSV (Multi-State Value) pour qu'elle soit non-bloquante vis-à-vis du polling normal.
+- **Stabilité** : Polling fluide validé avec automate ECB-203.
+
+## État au 2 Juin 2026 (Diagnostics Gateway & Auto-Discovery - v6.0.2) - DÉPLOYÉ
+- **Version** : v6.0.2
+- **Toggle Home Assistant** : Implémentation complète du bouton "HA Auto-Discovery" dans l'UI (Settings > MQTT).
+- **Backend & NVS** : Correction de l'API `/api/status` et du parsing `/save` pour assurer la persistance réelle du choix utilisateur.
+- **Enrichissement des Métriques** : Ajout de la Température du Chip (ESP32-S3), de l'Uptime (secondes), du Minimal Heap (détection de fuites) et du statut de santé MS/TP.
+- **Santé MS/TP** : Logique de détection d'activité basée sur le mouvement du jeton (`tokens_seen`) entre deux cycles de publication.
+- **MQTT Auto-Discovery Gateway** : Implémentation du bloc de déclaration des capteurs internes de la gateway dans Home Assistant.
+- **Groupement d'Équipement** : Toutes les métriques de diagnostic sont désormais regroupées sous un seul appareil "BACnet2MQTT Gateway" dans Home Assistant.
+- **Optimisation** : Ajout d'un `vTaskDelay` de 100ms après l'envoi du bloc de découverte pour éviter la saturation du broker.
+
+## État au 2 Juin 2026 (Toggle Home Assistant Auto-Discovery - v6.0.1) - DÉPLOYÉ
+- **Version** : v6.0.1
+- **Contrôle Auto-Discovery** : Ajout d'une option "With Home Assistant Auto-Discovery" dans les réglages MQTT.
+- **Logique Conditionnelle** : Les fonctions `publish_ha_autodiscovery` et `trigger_ha_discovery` sont désormais inopérantes si l'option est désactivée (`sysCfg.ha_discover`).
+- **Persistance NVS** : Le paramètre est sauvegardé en NVS sous la clé `ha_disc`.
+- **Interface Web** : Ajout d'une checkbox dédiée dans l'onglet MQTT pour un pilotage à chaud.
+- **Stabilité** : Compilation validée.
+
 ## État au 1 Juin 2026 (Consolidation UI & Découverte Partielle - v5.9.3) - DÉPLOYÉ
 - **Version** : v5.9.3
 - **Terminal Unifié à Onglets** : Fusion des deux fenêtres de logs (Core 0 et Core 1) en un seul composant à onglets. Optimisation de l'espace sur le Dashboard tout en conservant le flux temps réel WebSocket pour chaque coeur.
@@ -250,8 +320,44 @@
     - **Circuit Breaker MQTT (Best Practices)** : Désactivation de l'auto-reconnect du driver au profit d'une gestion applicative différée (`esp_mqtt_client_stop` & `esp_mqtt_client_destroy` sur le Core 0). Neutralisation réelle des boucles infinies de reconnexion en cas de broker hors-ligne.
     - **Considération de l'UI** : Toutes les modifications respectent les variables de configuration ajoutées dans le menu SETTINGS de l'interface Web.
 
-## Historique des Incidents Résolus
+- [v5.6] MQTT Storm -> Boucle de reconnexion infinie saturant LwIP.
 - [v5.6] Discovery Failure -> Parser NPCI à offset fixe ignorait les I-Am routés.
 - [v5.6] Token Regeneration -> Blocage synchrone du Core 1 par les appels WebSockets.
 - [v5.6] MQTT Storm -> Boucle de reconnexion infinie saturant LwIP.
 - [v4.7.45] Unit Persistence Loss -> Champ `units` manquant dans les structures NVS.
+
+## État au 3 Juin 2026 (Diagnostic Polling & Prop 87 Hybride - v6.1.2) - DÉPLOYÉ
+- **Version** : v6.1.2
+- **Vérification Prop 87 Hybride** : Réintégration de la vérification de la Propriété 87 (Priority_Array) pour identifier les objets pilotables, conformément aux recommandations de l'expert.
+- **Logique "Best Effort"** : Implémentation d'un mécanisme non-bloquant. En cas d'erreur `Busy` (145), `Unknown Property` ou `Timeout` sur la Prop 87, la Gateway bascule automatiquement sur une déduction par type (v6.0.5) et passe à l'objet suivant.
+- **Correction Polling** : 
+    - Suppression du délai d'attente au démarrage : les objets avec `last_update == 0` sont désormais prioritaires.
+    - Correction du blocage sur erreur : un objet en échec définitif est marqué comme "tenté" pour ne pas stopper la boucle de scan.
+- **Visibilité accrue** : Passage des logs `Poll Request/Result` au niveau INFO et ajout du compteur d'objets activés (`Enabled: X`) dans le Heartbeat.
+- **Stabilité** : Correction des erreurs de parenthésage de la v6.1.0 empêchant la compilation.
+
+## État au 3 Juin 2026 (Conception Burst Mode - v6.2.0) - PLANIFIÉ
+- **Analyse Expert** : Identification d'une sous-utilisation du `Max_Info_Frames` limitant le débit.
+- **Planification** : Création du `plans/PLAN_MAX_INFO_FRAMES.md` pour implémenter les transitions normatives "SendAnotherFrame" et "NothingToSend".
+- **Objectif** : Multiplier par 3 (ou `max_info_frames`) le débit de données par cycle de jeton.
+
+
+## [2026-06-04 19:30] v6.3.1: Debug Restoration & Discovery Fix
+- **Logs**: Restored verbose FSM (Token, PFM, Data) and frame-level debug logs in `z_bacnet.cpp`.
+- **Logic**: Restored name fallback logic for objects returning "Unknown" or empty strings.
+- **MQTT**: Fixed race condition in `pending_discovery` using `exchange(false)` to prevent discovery loops.
+- **Stats**: Fixed `ms_msgs_rx` counter which was stuck at 0 in the heartbeat.
+- **Build**: Successfully compiled v6.3.1.
+
+## [2026-06-05] v6.4.2 : Throttle Non-Destructif et Coalescence
+- **Diagnostic** : Les désactivations/activations rapides dans l'UI saturaient le Gatekeeper MQTT, entraînant des pertes de synchronisation.
+- **Correction** : Implémentation d'un throttle différé (`deferred`) au lieu de rejeter les requêtes.
+- **Coalescence** : Promotion automatique du niveau de scan si une requête est déjà en attente (Objet -> Device -> Global).
+- **Hardened Unpublish** : Balayage systématique des 5 domaines HA lors d'un retrait d'objet.
+- **Robustesse** : Passage à `pending_discovery.load/store` pour garantir l'atomicité.
+
+## [2026-06-05] v6.4.4 : Indicateur de santé MS/TP temps réel
+- **Problème** : Le voyant MSTP restait à "RUNNING" même si le bus était coupé (basé sur un compteur cumulatif).
+- **Correction** : Implémentation d'un flag `ring_active` dans la FSM MS/TP.
+- **Logique Liveness** : Le flag passe à `false` sur `Silence Timeout` (perte de jeton) et repasse à `true` dès réception d'une trame valide d'un tiers.
+- **UI Sync** : L'API `/api/status` remonte désormais cet état dynamique pour une mise à jour instantanée du voyant MSTP (vert/rouge).

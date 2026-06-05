@@ -237,10 +237,17 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 <summary>MQTT Server Configuration</summary>
                 <form id="f-mqtt" class="form-grid">
                     <input type="hidden" name="form_type" value="mqtt">
-                    <div class="span-2 f-item"><label>Broker Server IP</label><input type="text" name="mqh" id="in-mqh"></div>
+                    <div class="f-item"><label>Broker Server IP</label><input type="text" name="mqh" id="in-mqh"></div>
+                    <div class="f-item" >
+                        <label>HA Auto-Discovery</label>
+                        <label class="switch" style="inset-inline-start: 25px; align-self: center;"><input type="checkbox" name="ha_disc" id="in-hadisc"><span class="slider"></span></label>
+                    </div>
                     <div class="f-item"><label>MQTT User</label><input type="text" name="mqu" id="in-mqu"></div>
                     <div class="f-item"><label>MQTT Password</label><input type="password" name="mqp" id="in-mqp" placeholder="******"></div>
-                    <div class="span-2 f-item"><label>Topic Prefix</label><input type="text" name="mqpr" id="in-mqpr"></div>
+                    <div class="f-item"><label>Topic Prefix</label><input type="text" name="mqpr" id="in-mqpr"></div>
+                    <div class="f-item"><label>Default Num Min</label><input type="number" step="any" name="n_min" id="in-nummin"></div>
+                    <div class="f-item"><label>Default Num Max</label><input type="number" step="any" name="n_max" id="in-nummax"></div>
+                    <div class="f-item span-2"><label>Default Num Step</label><input type="number" step="any" name="n_stp" id="in-numstep"></div>
                     <div class="span-2"><button type="button" class="btn btn-p" style="width:100%" onclick="saveForm('f-mqtt')">Apply MQTT Settings</button></div>
                 </form>
             </details>
@@ -248,6 +255,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             <details>
                 <summary>BACnet MS/TP Configuration</summary>
                 <form id="f-bac" class="form-grid">
+                    <input type="hidden" name="form_type" value="bac">
                     <div class="f-item"><label>MAC Address</label><input type="number" name="mac" id="in-mac"></div>
                     <div class="f-item"><label>Device Instance</label><input type="number" name="did" id="in-did"></div>
                     <div class="f-item"><label>Max Master</label><input type="number" name="mm" id="in-mm"></div>
@@ -263,6 +271,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             <details>
                 <summary>Polling Configuration</summary>
                 <form id="f-poll" class="form-grid">
+                    <input type="hidden" name="form_type" value="poll">
                     <div class="f-item"><label>MQTT Polling (sec)</label><input type="number" name="mpi" id="in-mpi"></div>
                     <div class="f-item"><label>BACnet Polling (sec)</label><input type="number" name="bpi" id="in-bpi"></div>
                     <div class="span-2"><button type="button" class="btn btn-p" style="width:100%" onclick="saveForm('f-poll')">Apply Polling Settings</button></div>
@@ -270,10 +279,19 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             </details>
 
             <details>
-                <summary>Security Configuration</summary>
+                <summary>System Configuration</summary>
                 <form id="f-sec" class="form-grid">
+                    <input type="hidden" name="form_type" value="sec">
                     <div class="f-item"><label>Admin User</label><input type="text" name="admin_u" id="in-adu"></div>
                     <div class="f-item"><label>Admin Password</label><input type="password" name="admin_p" id="in-adp" placeholder="******"></div>
+                    <div class="span-2 f-item"><label>Log Level</label>
+                        <select name="lvl" id="in-lvl">
+                            <option value="1">ERROR</option>
+                            <option value="2">WARN</option>
+                            <option value="3">INFO</option>
+                            <option value="4">DEBUG</option>
+                        </select>
+                    </div>
                     <div class="span-2"><button type="button" class="btn btn-p" style="width:100%" onclick="saveForm('f-sec')">Apply Security Settings</button></div>
                 </form>
             </details>
@@ -316,6 +334,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('in-mqh').value = d.mqs || "";
                 document.getElementById('in-mqu').value = d.mqu || "";
                 document.getElementById('in-mqpr').value = d.mqpr || "bacnet";
+                document.getElementById('in-nummin').value = d.n_min !== undefined ? d.n_min : -100;
+                document.getElementById('in-nummax').value = d.n_max !== undefined ? d.n_max : 100;
+                document.getElementById('in-numstep').value = d.n_stp !== undefined ? d.n_stp : 1;
+                document.getElementById('in-hadisc').checked = d.ha_disc !== undefined ? d.ha_disc : true;
                 document.getElementById('in-mpi').value = d.mpi || 30;
                 document.getElementById('in-bpi').value = d.bpi || 30;
                 document.getElementById('in-mac').value = d.mac || 1;
@@ -327,6 +349,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('in-tskip').value = d.tskip || 0;
                 document.getElementById('in-mif').value = d.mif || 3;
                 document.getElementById('in-adu').value = d.adu || "admin";
+                document.getElementById('in-lvl').value = d.lvl || 3;
                 toggleStatic();
             }).catch(e => console.error("Config load error", e));
         }
@@ -337,7 +360,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         }
 
         function confirmAction(url, msg) { if(confirm(msg)) fetch(url, {method:'POST'}).then(()=>alert("Action triggered.")); }
-        function confirmReboot() { if(confirm("Reboot Gateway?")) fetch('/reboot'); }
+        function confirmReboot() { if(confirm("Reboot Gateway?")) fetch('/api/reboot'); }
 
         function refreshBACnet() {
             if (currentTab !== 't-bac') return;

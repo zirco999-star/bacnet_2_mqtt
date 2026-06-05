@@ -8,11 +8,17 @@
 #pragma pack(push, 1)
 struct BACnetPersistenceObj {
     uint32_t val;         // [TYPE:10][INSTANCE:22]
-    char name[32];        // ASHRAE Friendly
+    char name[32];        // friendly name
     char unit_text[12];
     bool poll;
     bool name_published;
-};
+    bool is_commandable;  
+    uint16_t units;       
+    uint8_t states_count; 
+    float min_value;      // v6.4.3: Prop 69
+    float max_value;      // v6.4.3: Prop 65
+    char last_ha_component[16]; // v6.3.6: For ghost entity cleanup (sensor/select/switch)
+}; // Total: 4 + 32 + 12 + 3 + 2 + 1 + 4 + 4 + 16 = 78 bytes
 
 struct BACnetPersistenceDev {
     uint32_t device_id;
@@ -20,7 +26,7 @@ struct BACnetPersistenceDev {
     bool enabled;
     char name[32];
     char vendor[32];
-    uint8_t count;
+    uint16_t count;       // uint16_t for > 255 objects safety
     bool discovery_done;
     uint16_t disc_obj_idx;
     uint8_t disc_step;
@@ -101,16 +107,19 @@ enum BACnetObjectType {
 };
 
 // --- ÉTATS DE DÉCOUVERTE ---
-enum DISC_STEP_T { 
-    DISC_DEV_ID = 0, 
-    DISC_DEV_NAME, 
-    DISC_DEV_VENDOR, 
-    DISC_OBJ_COUNT,   
-    DISC_OBJ_OID,     
-    DISC_OBJ_NAME,    
+enum DISC_STEP_T {
+    DISC_DEV_ID = 0,
+    DISC_DEV_NAME,
+    DISC_DEV_VENDOR,
+    DISC_OBJ_COUNT,
+    DISC_OBJ_OID,
+    DISC_OBJ_NAME,
     DISC_OBJ_UNITS,
-    DISC_OBJ_STATES,   
-    DISC_OBJ_VALUE    
+    DISC_OBJ_MIN,         // Prop 69
+    DISC_OBJ_MAX,         // Prop 65
+    DISC_OBJ_STATES,
+    DISC_OBJ_COMMANDABLE, // Propriété 87 (Priority_Array)
+    DISC_OBJ_VALUE
 };
 
 // --- STATISTIQUES MS/TP ---
@@ -122,6 +131,7 @@ struct BACnet_Stats {
     uint32_t errors_crc;
     uint8_t current_index; 
     uint8_t total_objects; 
+    bool ring_active;
 };
 extern BACnet_Stats bacnetStats;
 
@@ -138,7 +148,11 @@ struct BACnetObject {
     uint16_t expected_states_count = 0;
     uint16_t units = 95;
     char unit_text[20] = "";
+    float min_value = NAN;
+    float max_value = NAN;
     bool discovery_done = false;
+    bool is_commandable = false; // Prop 87
+    char last_ha_component[16] = ""; // Pour nettoyer les doublons si on change sensor -> select
     // state_texts reste dynamique en RAM, mais n'est pas persisté (ou alors avec une logique à part)
     std::vector<String> state_texts; 
 };
@@ -164,6 +178,36 @@ struct BACnetDevice {
 extern std::vector<BACnetDevice> bacnet_network_cache;
 extern SemaphoreHandle_t cache_mutex;
 
+extern uint32_t period_poll_count;
+extern uint32_t period_mqtt_pub_count;
+
+// --- CONSTANTES DE TEMPS ASHRAE 135 (v6.3.0) ---
+const uint32_t T_REPLY_TIMEOUT_US = 265000; // 265 ms (ASHRAE: 255-300ms)
+const uint32_t T_USAGE_TIMEOUT_US = 15000;  // 15 ms (T_usage_timeout)
+const uint32_t T_FRAME_ABORT_US   = 50000;  // 50 ms pour abandonner une trame incomplète
+
+// --- STRUCTURE DE TRANSPORT MS/TP ---
+struct MSTP_Frame {
+    uint8_t type;
+    uint8_t dest;
+    uint8_t src;
+    uint16_t len;
+    uint8_t data[512]; // APDU
+    uint32_t timestamp_us;
+};
+
+// --- PROTOTYPES REFACTORISATION MODULAIRE (v6.3.0) ---
+void handle_mstp_idle();
+void handle_mstp_use_token();
+void handle_mstp_wait_for_reply();
+void handle_mstp_pass_token();
+void handle_mstp_poll_for_master();
+void process_incoming_frame(MSTP_Frame &frame);
+void execute_bacnet_work();
+void execute_discovery_logic(BACnetDevice &dev);
+void execute_polling_logic(BACnetDevice &dev);
+bool has_bacnet_work();
+
 // --- ÉTATS FSM MS/TP (ASHRAE 135) ---
 enum RX_STATE { 
     RX_IDLE, 
@@ -185,38 +229,28 @@ enum MSTP_MASTER_STATE {
     MSTP_POLL_FOR_MASTER,
     MSTP_ANSWER_DATA_REQUEST
 };
-enum BACnetJobType { JOB_WHO_IS, JOB_I_AM, JOB_READ_PROP, JOB_WRITE_PROP, JOB_READ_UNITS, JOB_CHECK_COMMANDABLE, JOB_READ_STATE_TEXT };
+enum BACnetJobType { JOB_WHO_IS, JOB_I_AM, JOB_WRITE_PROP };
 struct BACnetJob {
     BACnetJobType type;
     uint8_t target_mac;
     uint16_t obj_type;
     uint32_t obj_instance;
     uint8_t prop_id;
-    uint16_t array_index; // Pour State_Text
+    uint16_t array_index; // Gardé au cas où, mais n'est plus utilisé pour State_Text
     float write_value;
     uint8_t priority;
     char name[50]; 
 };
 
-struct MQTTPublishJob {
-    uint32_t device_id;
-    uint16_t obj_type;
-    uint32_t obj_instance;
-    uint8_t prop_id;
-    char value_string[64];
-    bool retain;
-};
-
-extern QueueHandle_t mqtt_publish_queue;
 extern QueueHandle_t bacnet_job_queue;
 
 void setup_bacnet_engine();
 void bacnet_abort_current_transaction();
 bool enqueue_bacnet_job(BACnetJob job);
-bool enqueue_mqtt_publish(MQTTPublishJob pubJob);
 void publish_all_names();
 String get_unit_text(uint16_t units);
 
+uint16_t build_read_property_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, uint8_t property_id, int32_t array_index);
 uint16_t build_write_property_name_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, const char* new_name);
 uint16_t build_write_property_value_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, uint8_t prop_id, float value);
 

@@ -3,13 +3,21 @@
 ## 🛠 Commande de Reprise
 Pour reprendre le travail après une interruption, lire ce fichier et le fichier `TRACE.md` associé.
 ## 📍 Dernier Point de Travail (Checkpoint)
-- **Action** : Réorganisation du projet BACnet2MQTT (Sources dans `src/`, Plans dans `plans/`, Utils dans `utils/`).
-- **Statut** : Compilation validée ✅ (v4.5.33).
-- **Prochaine Étape** : Implémenter le fix `UART_TX_DONE` dans `src/z_bacnet.cpp` et corriger la Gateway dans `src/z_network.cpp`.
+- **Action** : Consolidation UI, Terminal à onglets et Découverte Partielle (Lazy Scan).
+- **Statut** : v6.0.2 Déployée ✅.
+- **Prochaine Étape** : Optimisation du Discovery Home Assistant (regroupement des publications MQTT).
 
-## 🚀 Workflow de Build (Obligatoire)
+## 🚀 Workflow de Build & Dev (Obligatoire)
+- **Développement UI** : Utiliser le proxy (`utils/dev_ui/2_server_proxy.py`) sur le port 8000.
+- **Injection UI** : `python3 utils/dev_ui/3_inject_ui.py` (met à jour `src/z_ui.h`).
 - **Compilation** : `./utils/compil.sh`
 - **Flash OTA** : `./utils/flashOTA.sh`
+
+## 💡 Architecture v6.0.2
+- **Lazy Discovery** : Scan auto de l'identité (Step 0-3) même si disabled. Scan objets (Step 4+) différé à l'activation.
+- **UI Terminal** : Fusion Core 0/1 dans un seul composant à onglets (WebSocket routing compatible localhost).
+- **ASHRAE ID** : Standardisé en `(did * 1000) + mac`.
+
 
 ## 🌐 Environnement Réseau
 ...
