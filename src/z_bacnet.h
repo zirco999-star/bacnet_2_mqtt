@@ -15,8 +15,10 @@ struct BACnetPersistenceObj {
     bool is_commandable;  
     uint16_t units;       
     uint8_t states_count; 
+    float min_value;      // v6.4.3: Prop 69
+    float max_value;      // v6.4.3: Prop 65
     char last_ha_component[16]; // v6.3.6: For ghost entity cleanup (sensor/select/switch)
-}; // Total: 4 + 32 + 12 + 3 + 2 + 1 + 16 = 70 bytes
+}; // Total: 4 + 32 + 12 + 3 + 2 + 1 + 4 + 4 + 16 = 78 bytes
 
 struct BACnetPersistenceDev {
     uint32_t device_id;
@@ -113,6 +115,8 @@ enum DISC_STEP_T {
     DISC_OBJ_OID,
     DISC_OBJ_NAME,
     DISC_OBJ_UNITS,
+    DISC_OBJ_MIN,         // Prop 69
+    DISC_OBJ_MAX,         // Prop 65
     DISC_OBJ_STATES,
     DISC_OBJ_COMMANDABLE, // Propriété 87 (Priority_Array)
     DISC_OBJ_VALUE
@@ -143,6 +147,8 @@ struct BACnetObject {
     uint16_t expected_states_count = 0;
     uint16_t units = 95;
     char unit_text[20] = "";
+    float min_value = NAN;
+    float max_value = NAN;
     bool discovery_done = false;
     bool is_commandable = false; // Prop 87
     char last_ha_component[16] = ""; // Pour nettoyer les doublons si on change sensor -> select

@@ -381,6 +381,8 @@ void execute_discovery_logic(BACnetDevice &dev) {
             if (dev.disc_step == DISC_OBJ_OID) al = build_read_property_apdu(a, next_invoke_id++, 8, dev.device_id, 76, dev.disc_obj_idx + 1);
             else if (dev.disc_step == DISC_OBJ_NAME) al = build_read_property_apdu(a, next_invoke_id++, o.type, o.instance, 77, -1);
             else if (dev.disc_step == DISC_OBJ_UNITS) al = build_read_property_apdu(a, next_invoke_id++, o.type, o.instance, 117, -1);
+            else if (dev.disc_step == DISC_OBJ_MIN) al = build_read_property_apdu(a, next_invoke_id++, o.type, o.instance, 69, -1);
+            else if (dev.disc_step == DISC_OBJ_MAX) al = build_read_property_apdu(a, next_invoke_id++, o.type, o.instance, 65, -1);
             else if (dev.disc_step == DISC_OBJ_STATES) { if (o.expected_states_count == 0) al = build_read_property_apdu(a, next_invoke_id++, o.type, o.instance, 110, 0); else if (o.state_texts.empty()) al = build_read_property_apdu(a, next_invoke_id++, o.type, o.instance, 110, -1); else { dev.disc_step = DISC_OBJ_COMMANDABLE; al = build_read_property_apdu(a, next_invoke_id++, o.type, o.instance, 87, -1); } }
             else if (dev.disc_step == DISC_OBJ_COMMANDABLE) al = build_read_property_apdu(a, next_invoke_id++, o.type, o.instance, 87, -1);
             else if (dev.disc_step == DISC_OBJ_VALUE) al = build_read_property_apdu(a, next_invoke_id++, o.type, o.instance, 85, -1);
@@ -490,7 +492,27 @@ void process_incoming_frame(MSTP_Frame &frame) {
                                         else if(o.type==13||o.type==14||o.type==19){ o.state_texts.clear(); o.expected_states_count=0; dev.disc_step=DISC_OBJ_STATES; } 
                                         else dev.disc_step=DISC_OBJ_COMMANDABLE; 
                                     }
-                                    else if (dev.disc_step == DISC_OBJ_UNITS) { uint32_t u=0; for(int i=0;i<vt.len;i++) u=(u<<8)|apdu[ap+i]; o.units=u; String us=get_unit_text(u); strlcpy(o.unit_text,us.c_str(),sizeof(o.unit_text)); z_log(LOG_INFO, "BACNET", "Obj %u Units: %s\n", dev.disc_obj_idx+1, o.unit_text); if(o.type==13||o.type==14||o.type==19){ o.state_texts.clear(); o.expected_states_count=0; dev.disc_step=DISC_OBJ_STATES; } else dev.disc_step=DISC_OBJ_COMMANDABLE; }
+                                    else if (dev.disc_step == DISC_OBJ_UNITS) { 
+                                        uint32_t u=0; for(int i=0;i<vt.len;i++) u=(u<<8)|apdu[ap+i]; 
+                                        o.units=u; String us=get_unit_text(u); strlcpy(o.unit_text,us.c_str(),sizeof(o.unit_text)); 
+                                        z_log(LOG_INFO, "BACNET", "Obj %u Units: %s\n", dev.disc_obj_idx+1, o.unit_text); 
+                                        dev.disc_step = DISC_OBJ_MIN; 
+                                    }
+                                    else if (dev.disc_step == DISC_OBJ_MIN) {
+                                        if (vt.number == 4) { // REAL
+                                            float v; uint32_t tm; memcpy(&tm, &apdu[ap], 4); tm = __builtin_bswap32(tm); memcpy(&v, &tm, 4);
+                                            o.min_value = v; z_log(LOG_INFO, "BACNET", "Obj %u Min: %.2f\n", dev.disc_obj_idx+1, v);
+                                        }
+                                        dev.disc_step = DISC_OBJ_MAX;
+                                    }
+                                    else if (dev.disc_step == DISC_OBJ_MAX) {
+                                        if (vt.number == 4) { // REAL
+                                            float v; uint32_t tm; memcpy(&tm, &apdu[ap], 4); tm = __builtin_bswap32(tm); memcpy(&v, &tm, 4);
+                                            o.max_value = v; z_log(LOG_INFO, "BACNET", "Obj %u Max: %.2f\n", dev.disc_obj_idx+1, v);
+                                        }
+                                        if(o.type==13||o.type==14||o.type==19){ o.state_texts.clear(); o.expected_states_count=0; dev.disc_step=DISC_OBJ_STATES; } 
+                                        else dev.disc_step=DISC_OBJ_COMMANDABLE;
+                                    }
                                     else if (dev.disc_step == DISC_OBJ_STATES) { 
                                         if(vt.number==2){ uint32_t c=0; for(int i=0;i<vt.len;i++) c=(c<<8)|apdu[ap+i]; o.expected_states_count=c; z_log(LOG_INFO, "BACNET", "Obj %u State Count: %lu\n", dev.disc_obj_idx+1, (unsigned long)c); if(c==0) dev.disc_step=DISC_OBJ_VALUE; } 
                                         else if(vt.number==7){ char n[33]; uint8_t enc=apdu[ap]; int sl=0; if(enc==0){sl=std::min((int)vt.len-1,32); memcpy(n,&apdu[ap+1],sl);} else {for(int i=2;i<vt.len&&sl<32;i+=2) n[sl++]=apdu[ap+i];} n[sl]=0; o.state_texts.push_back(String(n)); z_log(LOG_INFO, "BACNET", "Obj %u State %zu: %s\n", dev.disc_obj_idx+1, o.state_texts.size(), n); if(o.state_texts.size()>=o.expected_states_count) dev.disc_step=DISC_OBJ_COMMANDABLE; } 
@@ -534,9 +556,17 @@ void process_incoming_frame(MSTP_Frame &frame) {
         if (current_dev_idx < bacnet_network_cache.size()) {
 
             auto& dev = bacnet_network_cache[current_dev_idx];
-            if (!dev.discovery_done && dev.disc_obj_idx < dev.objects.size() && dev.disc_step == DISC_OBJ_COMMANDABLE) {
-                auto& o = dev.objects[dev.disc_obj_idx]; o.is_commandable = (o.type==13||o.type==14||o.type==19||o.type<=5);
-                if(o.enabled||dev.reload_single) dev.disc_step=DISC_OBJ_VALUE; else { if(!dev.reload_single) dev.disc_obj_idx++; dev.disc_step=DISC_OBJ_OID; if(dev.reload_single){dev.discovery_done=true; dev.reload_single=false;} }
+            if (!dev.discovery_done && dev.disc_obj_idx < dev.objects.size()) {
+                auto& o = dev.objects[dev.disc_obj_idx];
+                if (dev.disc_step == DISC_OBJ_MIN) { dev.disc_step = DISC_OBJ_MAX; }
+                else if (dev.disc_step == DISC_OBJ_MAX) {
+                    if(o.type==13||o.type==14||o.type==19){ o.state_texts.clear(); o.expected_states_count=0; dev.disc_step=DISC_OBJ_STATES; } 
+                    else dev.disc_step=DISC_OBJ_COMMANDABLE;
+                }
+                else if (dev.disc_step == DISC_OBJ_COMMANDABLE) { 
+                    o.is_commandable = (o.type==13||o.type==14||o.type==19||o.type<=5);
+                    if(o.enabled||dev.reload_single) dev.disc_step=DISC_OBJ_VALUE; else { if(!dev.reload_single) dev.disc_obj_idx++; dev.disc_step=DISC_OBJ_OID; if(dev.reload_single){dev.discovery_done=true; dev.reload_single=false;} }
+                } else { if (retry_count < sysCfg.max_retries) { retry_count++; send_mstp_frame(dev.mac_address, 0x05, last_apdu, last_apdu_len); waiting_for_reply = true; } else { retry_count = 0; if(!dev.discovery_done){dev.disc_obj_idx++; dev.disc_step=DISC_OBJ_OID;} current_dev_idx = (current_dev_idx + 1) % bacnet_network_cache.size(); } }
             } else { if (retry_count < sysCfg.max_retries) { retry_count++; send_mstp_frame(dev.mac_address, 0x05, last_apdu, last_apdu_len); waiting_for_reply = true; } else { retry_count = 0; if(!dev.discovery_done){dev.disc_obj_idx++; dev.disc_step=DISC_OBJ_OID;} current_dev_idx = (current_dev_idx + 1) % bacnet_network_cache.size(); } }
         }
     }

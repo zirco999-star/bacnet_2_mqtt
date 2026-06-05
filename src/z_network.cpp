@@ -150,6 +150,9 @@ void setup_network_infrastructure() {
         doc["mqu"] = sysCfg.mqtt_user;
         doc["mqpr"] = sysCfg.mqtt_prefix;
         doc["ha_disc"] = sysCfg.ha_discover;
+        doc["n_min"] = sysCfg.default_number_min;
+        doc["n_max"] = sysCfg.default_number_max;
+        doc["n_stp"] = sysCfg.default_number_step;
         
         doc["mqtt"] = is_mqtt_connected();
         doc["heap"] = ESP.getFreeHeap() / 1024;
@@ -461,6 +464,10 @@ void setup_network_infrastructure() {
             bool old_ha_discover = sysCfg.ha_discover;
             sysCfg.ha_discover = request->hasParam("ha_disc", true);
             
+            if (request->hasParam("n_min", true)) sysCfg.default_number_min = request->getParam("n_min", true)->value().toFloat();
+            if (request->hasParam("n_max", true)) sysCfg.default_number_max = request->getParam("n_max", true)->value().toFloat();
+            if (request->hasParam("n_stp", true)) sysCfg.default_number_step = request->getParam("n_stp", true)->value().toFloat();
+
             // Si HA Discovery vient d'être désactivé, on supprime tout de HA
             if (old_ha_discover && !sysCfg.ha_discover) {
                 unpublish_ha_discovery(0, 0xFFFFFFFF, 0xFFFF, sysCfg.mqtt_prefix);

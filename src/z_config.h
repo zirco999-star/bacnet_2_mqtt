@@ -12,7 +12,7 @@
 #include <mqtt_client.h>
 
 // DEFAULT SYSTEM CONFIGURATION
-#define VERSION_GLOBAL "v6.4.2"
+#define VERSION_GLOBAL "v6.4.3"
 #define DEFAULT_SSID    "Freebox-A4297A"
 #define DEFAULT_STATIC_IP "192.168.1.50"
 #define DEFAULT_GATEWAY "192.168.1.254"
@@ -26,6 +26,10 @@
 #define DEFAULT_MQTT_SERVER "192.168.1.11"
 #define DEFAULT_MQTT_POLL 30
 #define DEFAULT_HA_DISCOVER true
+
+#define DEFAULT_NUM_MIN -100.0f
+#define DEFAULT_NUM_MAX 100.0f
+#define DEFAULT_NUM_STEP 1.0f
 
 #define DEFAULT_MAX_INFO_FRAMES 3
 #define DEFAULT_HEARBEAT_INTERVAL 50000
@@ -65,6 +69,9 @@ struct Config {
     char mqtt_prefix[64];           // Base topic for MQTT messages
     uint16_t mqtt_poll_interval;    // Time between MQTT status updates
     bool ha_discover;               // Enable Home Assistant auto-discovery
+    float default_number_min;       // Default MIN for 'number' entities in HA
+    float default_number_max;       // Default MAX for 'number' entities in HA
+    float default_number_step;      // Default STEP for 'number' entities in HA
     uint8_t log_level;              // Amount of detail in system logs
     char admin_user[32];            // Web interface admin username
     char admin_pass[64];            // Web interface admin password

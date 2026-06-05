@@ -536,7 +536,9 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                             }
 
                             if (strcmp(ha_component, "number") == 0) {
-                                doc["min"] = 1; doc["max"] = 255; doc["step"] = 1;
+                                doc["min"] = isnan(obj.min_value) ? sysCfg.default_number_min : obj.min_value;
+                                doc["max"] = isnan(obj.max_value) ? sysCfg.default_number_max : obj.max_value;
+                                doc["step"] = sysCfg.default_number_step;
                             }
 
                             // --- GESTION DES UNITÉS (v6.3.4) ---

@@ -57,6 +57,8 @@ void load_device_objects(uint32_t device_id) {
                                 obj.is_commandable = page.objects[i].is_commandable;
                                 obj.units = page.objects[i].units;
                                 obj.expected_states_count = page.objects[i].states_count;
+                                obj.min_value = page.objects[i].min_value;
+                                obj.max_value = page.objects[i].max_value;
                                 
                                 strlcpy(obj.name, page.objects[i].name, sizeof(obj.name));
                                 strlcpy(obj.unit_text, page.objects[i].unit_text, sizeof(obj.unit_text));
@@ -107,6 +109,9 @@ void load_configuration() {
     sysCfg.log_level = LOG_INFO;
     sysCfg.max_info_frames = DEFAULT_MAX_INFO_FRAMES;
     sysCfg.ha_discover = DEFAULT_HA_DISCOVER;
+    sysCfg.default_number_min = DEFAULT_NUM_MIN;
+    sysCfg.default_number_max = DEFAULT_NUM_MAX;
+    sysCfg.default_number_step = DEFAULT_NUM_STEP;
     strlcpy(sysCfg.admin_user, "admin", 32);
     strlcpy(sysCfg.admin_pass, "admin1234", 64);
 
@@ -141,6 +146,9 @@ void load_configuration() {
         if (prefs.isKey("adp")) prefs.getString("adp", sysCfg.admin_pass, 64);
         if (prefs.isKey("lvl")) sysCfg.log_level = prefs.getUChar("lvl", LOG_INFO);
         if (prefs.isKey("ha_disc")) sysCfg.ha_discover = prefs.getBool("ha_disc", DEFAULT_HA_DISCOVER);
+        if (prefs.isKey("n_min")) sysCfg.default_number_min = prefs.getFloat("n_min", DEFAULT_NUM_MIN);
+        if (prefs.isKey("n_max")) sysCfg.default_number_max = prefs.getFloat("n_max", DEFAULT_NUM_MAX);
+        if (prefs.isKey("n_stp")) sysCfg.default_number_step = prefs.getFloat("n_stp", DEFAULT_NUM_STEP);
         
         prefs.end();
     }
@@ -205,6 +213,9 @@ void save_configuration() {
         prefs.putString("adp", sysCfg.admin_pass);
         prefs.putUChar("lvl", sysCfg.log_level);
         prefs.putBool("ha_disc", sysCfg.ha_discover);
+        prefs.putFloat("n_min", sysCfg.default_number_min);
+        prefs.putFloat("n_max", sysCfg.default_number_max);
+        prefs.putFloat("n_stp", sysCfg.default_number_step);
         
         prefs.end();
     }
@@ -254,6 +265,8 @@ void save_device_objects_locked(uint32_t device_id) {
                             page.objects[i].is_commandable = o.is_commandable;
                             page.objects[i].units = o.units;
                             page.objects[i].states_count = (uint8_t)std::min((int)o.expected_states_count, 255);
+                            page.objects[i].min_value = o.min_value;
+                            page.objects[i].max_value = o.max_value;
                             strlcpy(page.objects[i].name, o.name, 32);
                             strlcpy(page.objects[i].unit_text, o.unit_text, 12);
                             strlcpy(page.objects[i].last_ha_component, o.last_ha_component, 16);

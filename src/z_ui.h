@@ -245,6 +245,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     <div class="f-item"><label>MQTT User</label><input type="text" name="mqu" id="in-mqu"></div>
                     <div class="f-item"><label>MQTT Password</label><input type="password" name="mqp" id="in-mqp" placeholder="******"></div>
                     <div class="f-item"><label>Topic Prefix</label><input type="text" name="mqpr" id="in-mqpr"></div>
+                    <div class="f-item"><label>Default Num Min</label><input type="number" step="any" name="n_min" id="in-nummin"></div>
+                    <div class="f-item"><label>Default Num Max</label><input type="number" step="any" name="n_max" id="in-nummax"></div>
+                    <div class="f-item span-2"><label>Default Num Step</label><input type="number" step="any" name="n_stp" id="in-numstep"></div>
                     <div class="span-2"><button type="button" class="btn btn-p" style="width:100%" onclick="saveForm('f-mqtt')">Apply MQTT Settings</button></div>
                 </form>
             </details>
@@ -331,6 +334,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('in-mqh').value = d.mqs || "";
                 document.getElementById('in-mqu').value = d.mqu || "";
                 document.getElementById('in-mqpr').value = d.mqpr || "bacnet";
+                document.getElementById('in-nummin').value = d.n_min !== undefined ? d.n_min : -100;
+                document.getElementById('in-nummax').value = d.n_max !== undefined ? d.n_max : 100;
+                document.getElementById('in-numstep').value = d.n_stp !== undefined ? d.n_stp : 1;
                 document.getElementById('in-hadisc').checked = d.ha_disc !== undefined ? d.ha_disc : true;
                 document.getElementById('in-mpi').value = d.mpi || 30;
                 document.getElementById('in-bpi').value = d.bpi || 30;

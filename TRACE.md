@@ -349,10 +349,16 @@
 - **Stats**: Fixed `ms_msgs_rx` counter which was stuck at 0 in the heartbeat.
 - **Build**: Successfully compiled v6.3.1.
 
-## [2026-06-04 23:10] v6.3.8: Passive Discovery Restored & NVS Standardized
-- **Zero-Spam Protocol**: Restored mandatory stop point after Phase 1 (Device Info). The scan now pauses until the user enables the device via the UI.
-- **No Auto-Enable**: Removed the temporary v6.3.6 auto-enable logic. Discovered objects remain `enabled=false` by default.
-- **NVS Standard**: Fixed the namespace to **`dv_`** (unique). Removed legacy `dv3_`/`dv4_` prefixes.
-- **HA Cleanup**: Improved ghost entity cleanup using `Retain=1` for deletion payloads.
-- **Discovery Throttling**: Hardened the MQTT gatekeeper with a 5s cooldown for single objects and 30s for global triggers.
-- **Stability**: Fixed a bug where discovery resumption failed due to incorrect `discovery_done` flag handling in the toggle API.
+## [2026-06-05] v6.4.2 : Throttle Non-Destructif et Coalescence
+- **Diagnostic** : Les désactivations/activations rapides dans l'UI saturaient le Gatekeeper MQTT, entraînant des pertes de synchronisation.
+- **Correction** : Implémentation d'un throttle différé (`deferred`) au lieu de rejeter les requêtes.
+- **Coalescence** : Promotion automatique du niveau de scan si une requête est déjà en attente (Objet -> Device -> Global).
+- **Hardened Unpublish** : Balayage systématique des 5 domaines HA lors d'un retrait d'objet.
+- **Robustesse** : Passage à `pending_discovery.load/store` pour garantir l'atomicité.
+
+## [2026-06-05] v6.4.3 : Limites Dynamiques Objets (Min/Max)
+- **Problème** : Les entités `number` dans HA étaient bridées à [1, 255] par défaut, empêchant le réglage des offsets de température (ex: -5 à +5).
+- **Correction BACnet** : Ajout de deux étapes de découverte FSM pour lire les propriétés `Min_Pres_Value` (69) et `Max_Pres_Value` (65).
+- **Correction MQTT** : Utilisation des limites réelles lues sur l'automate dans le payload Auto-Discovery.
+- **Fallback Configurable** : Ajout de `default_number_min/max/step` dans `sysCfg` et l'UI (onglet Settings) pour les objets ne supportant pas les propriétés 65/69.
+- **Persistence** : Mise à jour de la structure NVS `BACnetPersistenceObj` pour stocker les limites.
