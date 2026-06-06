@@ -29,16 +29,13 @@ static uint32_t last_ws_event = 0;
 
 void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type,
              void *arg, uint8_t *data, size_t len) {
-    // v6.5.2: Protéger toute modification de la liste des clients
-    if (xSemaphoreTake(ws_mutex, pdMS_TO_TICKS(100))) {
-        if (type == WS_EVT_CONNECT) {
-            z_log(LOG_INFO, "WEB", "WS Client Connected (%u)\n", client->id());
-            last_ws_event = millis();
-        } else if (type == WS_EVT_DISCONNECT) {
-            z_log(LOG_INFO, "WEB", "WS Client Disconnected\n");
-            last_ws_event = millis();
-        }
-        xSemaphoreGive(ws_mutex);
+    if (type == WS_EVT_CONNECT) {
+        // v6.5.3: Mode Exclusif - Fermer tous les autres clients pour libérer la RAM
+        // On ne fait pas de z_log ici pour éviter la réentrance
+        server->cleanupClients(1); // Limiter à 1 client (le plus récent)
+        last_ws_event = millis();
+    } else if (type == WS_EVT_DISCONNECT) {
+        last_ws_event = millis();
     }
 }
 
@@ -191,6 +188,7 @@ void setup_network_infrastructure() {
         if (xSemaphoreTake(api_mutex, pdMS_TO_TICKS(1000))) {
             AsyncResponseStream *stream = request->beginResponseStream("application/json");
             if (!stream) { xSemaphoreGive(api_mutex); return; }
+            stream->addHeader("Connection", "close");
 
             // v6.4.9: Force PSRAM allocation
             JsonDocument doc(&psram_alloc);
@@ -276,6 +274,7 @@ void setup_network_infrastructure() {
         if (xSemaphoreTake(api_mutex, pdMS_TO_TICKS(1000))) {
             AsyncResponseStream *stream = request->beginResponseStream("application/json");
             if (!stream) { xSemaphoreGive(api_mutex); return; }
+            stream->addHeader("Connection", "close");
 
             // v6.4.9: Force PSRAM allocation
             JsonDocument doc(&psram_alloc); 
