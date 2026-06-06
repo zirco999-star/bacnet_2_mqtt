@@ -23,36 +23,39 @@ typedef struct {
 QueueHandle_t log_queue = NULL;
 SemaphoreHandle_t api_mutex = NULL;
 SemaphoreHandle_t ws_mutex = NULL;
+PSRAM_Allocator psram_alloc;
 
-// Custom Allocator for ArduinoJson to use PSRAM (v6.4.9)
-struct PSRAM_Allocator : ArduinoJson::Allocator {
-    void* allocate(size_t size) override {
-        return heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+static uint32_t last_ws_event = 0;
+
+void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type,
+             void *arg, uint8_t *data, size_t len) {
+    // v6.5.2: Protéger toute modification de la liste des clients
+    if (xSemaphoreTake(ws_mutex, pdMS_TO_TICKS(100))) {
+        if (type == WS_EVT_CONNECT) {
+            z_log(LOG_INFO, "WEB", "WS Client Connected (%u)\n", client->id());
+            last_ws_event = millis();
+        } else if (type == WS_EVT_DISCONNECT) {
+            z_log(LOG_INFO, "WEB", "WS Client Disconnected\n");
+            last_ws_event = millis();
+        }
+        xSemaphoreGive(ws_mutex);
     }
-    void deallocate(void* ptr) override {
-        heap_caps_free(ptr);
-    }
-    void* reallocate(void* ptr, size_t new_size) override {
-        return heap_caps_realloc(ptr, new_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    }
-};
-static PSRAM_Allocator psram_alloc;
+}
 
 // Task running on Core 0 to send logs to the web interface via WebSockets
 static void websocket_log_task(void *pvParameters) {
     LogMessage received_log;
     for( ;; ) {
         if (xQueueReceive(log_queue, &received_log, portMAX_DELAY) == pdTRUE) {
-            // v6.4.7: Garde-fou mémoire
-            if (ESP.getFreeHeap() > 30000 && ws.count() > 0) {
-                // v6.4.9: Mutex pour protéger la pile TCP lors des diffusions massives
+            // v6.5.2: Silence radio pendant 2s après un événement WS pour stabiliser la pile TCP
+            if (millis() - last_ws_event < 2000) continue;
+
+            if (ESP.getFreeHeap() > 40000 && ws.count() > 0) {
                 if (xSemaphoreTake(ws_mutex, pdMS_TO_TICKS(50))) {
                     ws.textAll(received_log.message);
                     xSemaphoreGive(ws_mutex);
                 }
-                if (uxQueueMessagesWaiting(log_queue) > 10) {
-                    vTaskDelay(pdMS_TO_TICKS(5));
-                }
+                vTaskDelay(pdMS_TO_TICKS(10)); // Pacing accru
             }
         }
     }
@@ -146,39 +149,34 @@ void setup_network_infrastructure() {
                 WiFi.config(ip, gw, sn);
             }
         }
-        WiFi.begin(sysCfg.wifi_ssid, sysCfg.wifi_pass);
+            WiFi.begin(sysCfg.wifi_ssid, sysCfg.wifi_pass);
         wifi_connect_start = millis();
     }
 
+    ws.onEvent(onEvent); // v6.5.2: Callback obligatoire pour la thread-safety
     webServer.addHandler(&ws);
     webServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!is_authenticated(request)) return;
         request->send_P(200, "text/html", INDEX_HTML);
     });
 
+    /* v6.5.2: Désactivation temporaire pour isoler la cause du crash parallel sockets
     webServer.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request) {
         AsyncWebServerResponse *response = request->beginResponse_P(200, "image/x-icon", favicon_ico, favicon_ico_len);
-        response->addHeader("Cache-Control", "public, max-age=31536000");
-        request->send(response);
-    });
-
-    webServer.on("/favicon-96x96.png", HTTP_GET, [](AsyncWebServerRequest *request) {
-        AsyncWebServerResponse *response = request->beginResponse_P(200, "image/png", favicon_96, favicon_96_len);
-        response->addHeader("Cache-Control", "public, max-age=31536000");
-        request->send(response);
-    });
-
-    webServer.on("/web-app-manifest-192x192.png", HTTP_GET, [](AsyncWebServerRequest *request) {
-        AsyncWebServerResponse *response = request->beginResponse_P(200, "image/png", favicon_192, favicon_192_len);
-        response->addHeader("Cache-Control", "public, max-age=31536000");
-        request->send(response);
+        if (response) {
+            response->addHeader("Cache-Control", "public, max-age=31536000");
+            request->send(response);
+        }
     });
 
     webServer.on("/apple-touch-icon.png", HTTP_GET, [](AsyncWebServerRequest *request) {
         AsyncWebServerResponse *response = request->beginResponse_P(200, "image/png", favicon_apple, favicon_apple_len);
-        response->addHeader("Cache-Control", "public, max-age=31536000");
-        request->send(response);
+        if (response) {
+            response->addHeader("Cache-Control", "public, max-age=31536000");
+            request->send(response);
+        }
     });
+    */
 
     webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!is_authenticated(request)) return;
