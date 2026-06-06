@@ -373,3 +373,15 @@
 - **Correction** : Implémentation d'un flag `ring_active` dans la FSM MS/TP.
 - **Logique Liveness** : Le flag passe à `false` sur `Silence Timeout` (perte de jeton) et repasse à `true` dès réception d'une trame valide d'un tiers.
 - **UI Sync** : L'API `/api/status` remonte désormais cet état dynamique pour une mise à jour instantanée du voyant MSTP (vert/rouge).
+
+## [2026-06-05] v6.4.9 : Utilisation de la PSRAM et Sécurisation Thread-Safe
+- **Problème** : Reboots persistants lors de rafraîchissements rapides (LoadProhibited) dus à la fragmentation de la RAM interne.
+- **Correction PSRAM** : Migration des allocations `JsonDocument` (ArduinoJson 7) vers la **PSRAM (8 Mo)** via un allocateur personnalisé. Cela préserve la RAM interne pour la pile TCP/IP.
+- **Thread-Safety** : Ajout d'un `ws_mutex` pour protéger les appels `ws.textAll()` contre les collisions avec le serveur web sur le Core 0.
+- **Robustesse** : Réduction du timeout du verrou API à 1s et vérification de la validité du flux de réponse (stream).
+
+## [2026-06-05] v6.4.8 : Sérialisation API et Protection Heap
+- **Problème** : Corruption de la heap lors de l'entrelacement de plusieurs requêtes HTTP lourdes (98 objets).
+- **Verrou Global** : Implémentation d'un sémaphore `api_mutex` garantissant qu'une seule API JSON est générée à la fois.
+- **Garde-fou RAM** : Vérification stricte de la mémoire libre (> 50 Ko) avant tout traitement d'API lourde, avec renvoi d'une erreur 503 si nécessaire.
+- **Optimisation** : Réduction de la queue de logs WebSocket à 20 messages pour économiser la RAM permanente.
