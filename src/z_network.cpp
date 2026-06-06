@@ -27,11 +27,13 @@ static void websocket_log_task(void *pvParameters) {
     LogMessage received_log;
     for( ;; ) {
         if (xQueueReceive(log_queue, &received_log, portMAX_DELAY) == pdTRUE) {
-            if (ws.count() > 0) {
+            // v6.4.7: Garde-fou mémoire pour éviter les crashs lors de forte charge réseau
+            // Si la RAM descend sous 30KB, on ignore l'envoi vers l'UI
+            if (ESP.getFreeHeap() > 30000 && ws.count() > 0) {
                 ws.textAll(received_log.message);
                 // Petit délai si beaucoup de messages pour laisser le temps au driver WiFi
                 if (uxQueueMessagesWaiting(log_queue) > 10) {
-                    vTaskDelay(pdMS_TO_TICKS(2));
+                    vTaskDelay(pdMS_TO_TICKS(5));
                 }
             }
         }
@@ -99,7 +101,7 @@ void setup_network_infrastructure() {
 
     log_queue = xQueueCreate(50, sizeof(LogMessage));
     if (log_queue != NULL) {
-        xTaskCreatePinnedToCore(websocket_log_task, "WS_Log", 4096, NULL, 2, NULL, 0);
+        xTaskCreatePinnedToCore(websocket_log_task, "WS_Log", 8192, NULL, 2, NULL, 0);
     }
 
     // 2. Load Settings (now safe because cache_mutex exists)
@@ -131,23 +133,32 @@ void setup_network_infrastructure() {
     });
 
     webServer.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send_P(200, "image/x-icon", favicon_ico, favicon_ico_len);
+        AsyncWebServerResponse *response = request->beginResponse_P(200, "image/x-icon", favicon_ico, favicon_ico_len);
+        response->addHeader("Cache-Control", "public, max-age=31536000");
+        request->send(response);
     });
 
     webServer.on("/favicon-96x96.png", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send_P(200, "image/png", favicon_96, favicon_96_len);
+        AsyncWebServerResponse *response = request->beginResponse_P(200, "image/png", favicon_96, favicon_96_len);
+        response->addHeader("Cache-Control", "public, max-age=31536000");
+        request->send(response);
     });
 
     webServer.on("/web-app-manifest-192x192.png", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send_P(200, "image/png", favicon_192, favicon_192_len);
+        AsyncWebServerResponse *response = request->beginResponse_P(200, "image/png", favicon_192, favicon_192_len);
+        response->addHeader("Cache-Control", "public, max-age=31536000");
+        request->send(response);
     });
 
     webServer.on("/apple-touch-icon.png", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send_P(200, "image/png", favicon_apple, favicon_apple_len);
+        AsyncWebServerResponse *response = request->beginResponse_P(200, "image/png", favicon_apple, favicon_apple_len);
+        response->addHeader("Cache-Control", "public, max-age=31536000");
+        request->send(response);
     });
 
     webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!is_authenticated(request)) return;
+        AsyncResponseStream *stream = request->beginResponseStream("application/json");
         JsonDocument doc;
         doc["ver"] = VERSION_GLOBAL;
         doc["rssi"] = WiFi.RSSI();
@@ -155,7 +166,6 @@ void setup_network_infrastructure() {
         doc["cur_mask"] = WiFi.subnetMask().toString();
         doc["cur_gw"] = WiFi.gatewayIP().toString();
         
-        // Champs de configuration (pour l'onglet Settings)
         doc["ssid"] = sysCfg.wifi_ssid;
         doc["static"] = sysCfg.static_ip;
         doc["ip"] = sysCfg.local_ip;
@@ -211,13 +221,16 @@ void setup_network_infrastructure() {
             xSemaphoreGive(cache_mutex);
         }
 
-        String out; serializeJson(doc, out);
-        request->send(200, "application/json", out);
+        serializeJson(doc, *stream);
+        request->send(stream);
     });
 
     webServer.on("/api/objects", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!is_authenticated(request)) return;
-        JsonDocument* doc_ptr = new JsonDocument(); JsonDocument& doc = *doc_ptr; JsonArray controllers = doc.to<JsonArray>();
+        AsyncResponseStream *stream = request->beginResponseStream("application/json");
+        JsonDocument doc; 
+        JsonArray controllers = doc.to<JsonArray>();
+        
         if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
             for (auto& dev : bacnet_network_cache) {
                 JsonObject c = controllers.add<JsonObject>();
@@ -233,9 +246,8 @@ void setup_network_infrastructure() {
             }
             xSemaphoreGive(cache_mutex);
         }
-        String response; serializeJson(doc, response);
-        request->send(200, "application/json", response);
-        delete doc_ptr;
+        serializeJson(doc, *stream);
+        request->send(stream);
     });
 
     webServer.on("/api/whois", HTTP_POST, [](AsyncWebServerRequest *request) {
