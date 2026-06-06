@@ -30,9 +30,14 @@ static uint32_t last_ws_event = 0;
 void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type,
              void *arg, uint8_t *data, size_t len) {
     if (type == WS_EVT_CONNECT) {
-        // v6.5.3: Mode Exclusif - Fermer tous les autres clients pour libérer la RAM
-        // On ne fait pas de z_log ici pour éviter la réentrance
-        server->cleanupClients(1); // Limiter à 1 client (le plus récent)
+        // v6.5.4: Nettoyage intelligent - Fermer les sessions fantômes de la même IP
+        IPAddress newIP = client->remoteIP();
+        // Utilisation de auto& car getClients() retourne une std::list<AsyncWebSocketClient>
+        for (auto &c : server->getClients()) {
+            if (c.id() != client->id() && c.remoteIP() == newIP) {
+                c.close();
+            }
+        }
         last_ws_event = millis();
     } else if (type == WS_EVT_DISCONNECT) {
         last_ws_event = millis();

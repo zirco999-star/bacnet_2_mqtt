@@ -385,3 +385,10 @@
 - **Verrou Global** : Implémentation d'un sémaphore `api_mutex` garantissant qu'une seule API JSON est générée à la fois.
 - **Garde-fou RAM** : Vérification stricte de la mémoire libre (> 50 Ko) avant tout traitement d'API lourde, avec renvoi d'une erreur 503 si nécessaire.
 - **Optimisation** : Réduction de la queue de logs WebSocket à 20 messages pour économiser la RAM permanente.
+
+## [2026-06-06] v6.5.4 : Gestion intelligente des sessions (iPhone Refresh Fix)
+- **Problème** : Crash LoadProhibited (0x30) lors du "slide refresh" sur mobile. Les navigateurs empilaient plusieurs WebSockets avant de fermer les anciens.
+- **v6.5.2** : Implémentation du mutex WebSocket et délai de grâce post-connexion (2s) pour stabiliser la pile TCP.
+- **v6.5.3** : Mode WebSocket exclusif (limité à 1 client) et ajout du header 'Connection: close' pour forcer le nettoyage des sockets HTTP.
+- **v6.5.4** : Gestion intelligente par IP. Autorise plusieurs appareils (PC + Mobile) mais détecte les rafraîchissements sur un même appareil pour fermer l'ancienne session avant d'activer la nouvelle.
+- **Résultat** : Stabilité accrue sous refresh intensif tout en conservant le support multi-client.
