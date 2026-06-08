@@ -392,3 +392,10 @@
 - **v6.5.3** : Mode WebSocket exclusif (limité à 1 client) et ajout du header 'Connection: close' pour forcer le nettoyage des sockets HTTP.
 - **v6.5.4** : Gestion intelligente par IP. Autorise plusieurs appareils (PC + Mobile) mais détecte les rafraîchissements sur un même appareil pour fermer l'ancienne session avant d'activer la nouvelle.
 - **Résultat** : Stabilité accrue sous refresh intensif tout en conservant le support multi-client.
+
+## [2026-06-08] v6.6.1 - Persistance MSV & Stabilité WebSocket
+- **Stabilité (v6.6.0)** : Résolution définitive du crash 0x30 (Heap corruption). Implémentation du 'Safe Log Delivery' avec mutex sur l'API JSON et pacing WebSocket de 50ms.
+- **Persistance (v6.6.1)** : Implémentation de la sauvegarde/restauration des labels Multi-State (MSI/MSO/MSV) en NVS.
+- **Optimisation NVS** : Utilisation de namespaces dynamiques `st_[DEVICE_ID]` pour contourner la limite de 1984 octets par namespace.
+- **Résultat** : Boot instantané sans cycle de recovery pour les objets MSV. Ring stable.
+- **Git** : Version v6.6.1 mergée dans main et taguée.

@@ -41,3 +41,7 @@
 
 ## Future Optimizations (Planned)
 - **Burst Mode (Max_Info_Frames):** To maximize throughput, the FSM will be updated to send multiple frames per token cycle. This requires strict implementation of "SendAnotherFrame" (looping back to `USE_TOKEN`) and "NothingToSend" (immediate `PASS_TOKEN`).
+### [v6.6.1] Persistence & Crash Recovery
+- **WebSocket Safety**: Le crash 0x30 était causé par un conflit entre l'envoi de logs via WebSocket et les requêtes API JSON lourdes sur l'ESP32-S3. La solution utilise un `api_mutex` pour prioriser l'API et supprimer les logs si le canal est saturé.
+- **NVS Multi-Namespace**: Pour stocker de grands volumes de strings (labels MSV), utiliser des namespaces par device (`st_[DEVICE_ID]`). Un namespace unique sature à 1984 octets.
+- **MSV Recovery**: Le système utilise maintenant la présence de labels en NVS pour décider s'il doit entrer en `recovery_mode`. Si les labels sont restaurés, le polling commence immédiatement.
