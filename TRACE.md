@@ -356,8 +356,39 @@
 - **Hardened Unpublish** : Balayage systématique des 5 domaines HA lors d'un retrait d'objet.
 - **Robustesse** : Passage à `pending_discovery.load/store` pour garantir l'atomicité.
 
+## [2026-06-05] v6.4.6 : Favicons Haute Résolution et Web App
+- **Amélioration** : Remplacement de l'icône 16x16 par un jeu complet d'icônes HD (96x96, 192x192) et Apple Touch Icon.
+- **Support Mobile** : L'interface est désormais prête pour l'ajout à l'écran d'accueil (icône nette sur iOS et Android).
+- **Technique** : Injection de 4 tableaux PROGMEM distincts dans `z_ui.h` (~107 KB de Flash utilisés).
+- **Stabilité** : Routes dédiées ajoutées dans `z_network.cpp` pour chaque résolution.
+
+## [2026-06-05] v6.4.5 : Intégration du Favicon en PROGMEM
+- **Amélioration** : Ajout d'un favicon officiel au serveur web pour finaliser l'esthétique et supprimer les erreurs 404 `/favicon.ico`.
+- **Technique** : Conversion du binaire `favicon.ico` en tableau C (`uint8_t[]`) stocké en Flash via un script d'injection Python.
+- **Route** : Ajout du handler `/favicon.ico` avec le type MIME `image/x-icon`.
+- **UI** : Ajout de la balise `<link rel="icon">` dans le template HTML.
+
 ## [2026-06-05] v6.4.4 : Indicateur de santé MS/TP temps réel
 - **Problème** : Le voyant MSTP restait à "RUNNING" même si le bus était coupé (basé sur un compteur cumulatif).
 - **Correction** : Implémentation d'un flag `ring_active` dans la FSM MS/TP.
 - **Logique Liveness** : Le flag passe à `false` sur `Silence Timeout` (perte de jeton) et repasse à `true` dès réception d'une trame valide d'un tiers.
 - **UI Sync** : L'API `/api/status` remonte désormais cet état dynamique pour une mise à jour instantanée du voyant MSTP (vert/rouge).
+
+## [2026-06-05] v6.4.9 : Utilisation de la PSRAM et Sécurisation Thread-Safe
+- **Problème** : Reboots persistants lors de rafraîchissements rapides (LoadProhibited) dus à la fragmentation de la RAM interne.
+- **Correction PSRAM** : Migration des allocations `JsonDocument` (ArduinoJson 7) vers la **PSRAM (8 Mo)** via un allocateur personnalisé. Cela préserve la RAM interne pour la pile TCP/IP.
+- **Thread-Safety** : Ajout d'un `ws_mutex` pour protéger les appels `ws.textAll()` contre les collisions avec le serveur web sur le Core 0.
+- **Robustesse** : Réduction du timeout du verrou API à 1s et vérification de la validité du flux de réponse (stream).
+
+## [2026-06-05] v6.4.8 : Sérialisation API et Protection Heap
+- **Problème** : Corruption de la heap lors de l'entrelacement de plusieurs requêtes HTTP lourdes (98 objets).
+- **Verrou Global** : Implémentation d'un sémaphore `api_mutex` garantissant qu'une seule API JSON est générée à la fois.
+- **Garde-fou RAM** : Vérification stricte de la mémoire libre (> 50 Ko) avant tout traitement d'API lourde, avec renvoi d'une erreur 503 si nécessaire.
+- **Optimisation** : Réduction de la queue de logs WebSocket à 20 messages pour économiser la RAM permanente.
+
+## [2026-06-06] v6.5.4 : Gestion intelligente des sessions (iPhone Refresh Fix)
+- **Problème** : Crash LoadProhibited (0x30) lors du "slide refresh" sur mobile. Les navigateurs empilaient plusieurs WebSockets avant de fermer les anciens.
+- **v6.5.2** : Implémentation du mutex WebSocket et délai de grâce post-connexion (2s) pour stabiliser la pile TCP.
+- **v6.5.3** : Mode WebSocket exclusif (limité à 1 client) et ajout du header 'Connection: close' pour forcer le nettoyage des sockets HTTP.
+- **v6.5.4** : Gestion intelligente par IP. Autorise plusieurs appareils (PC + Mobile) mais détecte les rafraîchissements sur un même appareil pour fermer l'ancienne session avant d'activer la nouvelle.
+- **Résultat** : Stabilité accrue sous refresh intensif tout en conservant le support multi-client.

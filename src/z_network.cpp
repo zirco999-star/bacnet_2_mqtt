@@ -21,18 +21,55 @@ typedef struct {
 } LogMessage;
 
 QueueHandle_t log_queue = NULL;
+SemaphoreHandle_t api_mutex = NULL;
+SemaphoreHandle_t ws_mutex = NULL;
+PSRAM_Allocator psram_alloc;
+
+static uint32_t last_ws_event = 0;
+static uint32_t active_ws_id = 0;
+
+void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type,
+             void *arg, uint8_t *data, size_t len) {
+    // v6.6.0: Callbacks atomiques pour éviter tout blocage TCP
+    if (type == WS_EVT_CONNECT) {
+        last_ws_event = millis();
+        active_ws_id = client->id();
+        Serial.printf("[WEB] WS Session Link: %u\n", active_ws_id);
+    } 
+    else if (type == WS_EVT_DISCONNECT) {
+        if (active_ws_id == client->id()) active_ws_id = 0;
+        last_ws_event = millis();
+        Serial.printf("[WEB] WS Session Terminated\n");
+    }
+}
 
 // Task running on Core 0 to send logs to the web interface via WebSockets
 static void websocket_log_task(void *pvParameters) {
     LogMessage received_log;
+    // v6.6.0: Silence radio total de 10s au démarrage pour laisser le WiFi et MQTT s'établir
+    vTaskDelay(pdMS_TO_TICKS(10000));
+    
     for( ;; ) {
         if (xQueueReceive(log_queue, &received_log, portMAX_DELAY) == pdTRUE) {
-            if (ws.count() > 0) {
-                ws.textAll(received_log.message);
-                // Petit délai si beaucoup de messages pour laisser le temps au driver WiFi
-                if (uxQueueMessagesWaiting(log_queue) > 10) {
-                    vTaskDelay(pdMS_TO_TICKS(2));
+            // v6.6.0: Pas d'envoi si un événement réseau récent (< 5s) pour éviter collision au refresh
+            if (millis() - last_ws_event < 5000) continue;
+
+            // v6.6.0: SI L'API EST OCCUPEE (chargement page/JSON), ON JETTE LE LOG
+            // C'est la protection ultime contre le crash 0x30
+            if (api_mutex == NULL || uxSemaphoreGetCount(api_mutex) == 0) continue;
+
+            if (active_ws_id > 0 && ESP.getFreeHeap() > 50000) {
+                if (xSemaphoreTake(ws_mutex, pdMS_TO_TICKS(20))) {
+                    AsyncWebSocketClient* target = ws.client(active_ws_id);
+                    if (target && target->status() == WS_CONNECTED) {
+                        target->text(received_log.message);
+                    } else {
+                        active_ws_id = 0;
+                    }
+                    xSemaphoreGive(ws_mutex);
                 }
+                // v6.6.0: Délai forcé entre chaque message pour ne pas saturer la pile AsyncTCP
+                vTaskDelay(pdMS_TO_TICKS(50));
             }
         }
     }
@@ -96,10 +133,16 @@ void setup_network_infrastructure() {
     if (cache_mutex == NULL) {
         cache_mutex = xSemaphoreCreateMutex();
     }
+    if (api_mutex == NULL) {
+        api_mutex = xSemaphoreCreateMutex();
+    }
+    if (ws_mutex == NULL) {
+        ws_mutex = xSemaphoreCreateMutex();
+    }
 
-    log_queue = xQueueCreate(50, sizeof(LogMessage));
+    log_queue = xQueueCreate(20, sizeof(LogMessage));
     if (log_queue != NULL) {
-        xTaskCreatePinnedToCore(websocket_log_task, "WS_Log", 4096, NULL, 2, NULL, 0);
+        xTaskCreatePinnedToCore(websocket_log_task, "WS_Log", 8192, NULL, 2, NULL, 0);
     }
 
     // 2. Load Settings (now safe because cache_mutex exists)
@@ -120,106 +163,161 @@ void setup_network_infrastructure() {
                 WiFi.config(ip, gw, sn);
             }
         }
-        WiFi.begin(sysCfg.wifi_ssid, sysCfg.wifi_pass);
+            WiFi.begin(sysCfg.wifi_ssid, sysCfg.wifi_pass);
         wifi_connect_start = millis();
     }
 
+    ws.onEvent(onEvent); // v6.5.2: Callback obligatoire pour la thread-safety
     webServer.addHandler(&ws);
     webServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!is_authenticated(request)) return;
         request->send_P(200, "text/html", INDEX_HTML);
     });
 
+    /* v6.5.2: Désactivation temporaire pour isoler la cause du crash parallel sockets
+    webServer.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request) {
+        AsyncWebServerResponse *response = request->beginResponse_P(200, "image/x-icon", favicon_ico, favicon_ico_len);
+        if (response) {
+            response->addHeader("Cache-Control", "public, max-age=31536000");
+            request->send(response);
+        }
+    });
+
+    webServer.on("/apple-touch-icon.png", HTTP_GET, [](AsyncWebServerRequest *request) {
+        AsyncWebServerResponse *response = request->beginResponse_P(200, "image/png", favicon_apple, favicon_apple_len);
+        if (response) {
+            response->addHeader("Cache-Control", "public, max-age=31536000");
+            request->send(response);
+        }
+    });
+    */
+
     webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!is_authenticated(request)) return;
-        JsonDocument doc;
-        doc["ver"] = VERSION_GLOBAL;
-        doc["rssi"] = WiFi.RSSI();
-        doc["cur_ip"] = WiFi.localIP().toString();
-        doc["cur_mask"] = WiFi.subnetMask().toString();
-        doc["cur_gw"] = WiFi.gatewayIP().toString();
-        
-        // Champs de configuration (pour l'onglet Settings)
-        doc["ssid"] = sysCfg.wifi_ssid;
-        doc["static"] = sysCfg.static_ip;
-        doc["ip"] = sysCfg.local_ip;
-        doc["gw"] = sysCfg.gateway;
-        doc["mask"] = sysCfg.subnet;
-        
-        doc["mqs"] = sysCfg.mqtt_server;
-        doc["mqu"] = sysCfg.mqtt_user;
-        doc["mqpr"] = sysCfg.mqtt_prefix;
-        doc["ha_disc"] = sysCfg.ha_discover;
-        doc["n_min"] = sysCfg.default_number_min;
-        doc["n_max"] = sysCfg.default_number_max;
-        doc["n_stp"] = sysCfg.default_number_step;
-        
-        doc["mqtt"] = is_mqtt_connected();
-        doc["heap"] = ESP.getFreeHeap() / 1024;
-        doc["uptime"] = millis() / 1000;
-        
-        doc["mac"] = sysCfg.mac_address;
-        doc["mm"] = sysCfg.max_master;
-        doc["did"] = sysCfg.device_id;
-        doc["to"] = sysCfg.apdu_timeout;
-        doc["ret"] = sysCfg.max_retries;
-        doc["hbeat"] = sysCfg.heartbeat_interval;
-        doc["tskip"] = sysCfg.token_skip;
-        doc["mif"] = sysCfg.max_info_frames;
-        doc["mpi"] = sysCfg.mqtt_poll_interval;
-        doc["bpi"] = sysCfg.bacnet_poll_interval;
-        doc["adu"] = sysCfg.admin_user;
-        doc["lvl"] = sysCfg.log_level;
 
-        doc["mstp_t"] = bacnetStats.ring_active;
-        doc["mstp_cnt"] = bacnetStats.tokens_seen;
-        doc["mstp_rx"] = bacnetStats.ms_msgs_rx;
-        doc["mstp_tx"] = bacnetStats.ms_msgs_tx;
-        doc["mstp_err"] = bacnetStats.errors_crc;
-
-        JsonArray devices = doc["devices"].to<JsonArray>();
-        if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
-            for (auto& dev : bacnet_network_cache) {
-                JsonObject d = devices.add<JsonObject>();
-                d["id"] = dev.device_id;
-                d["step"] = (int)dev.disc_step;
-                d["idx"] = dev.disc_obj_idx;
-                d["total"] = dev.objects.size();
-                d["enabled"] = dev.enabled;
-                d["done"] = dev.discovery_done;
-                
-                int sel = 0;
-                for(auto& o : dev.objects) if(o.enabled) sel++;
-                d["sel"] = sel;
-            }
-            xSemaphoreGive(cache_mutex);
+        // v6.4.8: Strict Heap Protection
+        if (ESP.getFreeHeap() < 50000) {
+            request->send(503, "text/plain", "Service Unavailable: Low Memory");
+            return;
         }
 
-        String out; serializeJson(doc, out);
-        request->send(200, "application/json", out);
+        // v6.4.8: API Serialization
+        if (xSemaphoreTake(api_mutex, pdMS_TO_TICKS(1000))) {
+            AsyncResponseStream *stream = request->beginResponseStream("application/json");
+            if (!stream) { xSemaphoreGive(api_mutex); return; }
+            stream->addHeader("Connection", "close");
+
+            // v6.4.9: Force PSRAM allocation
+            JsonDocument doc(&psram_alloc);
+            doc["ver"] = VERSION_GLOBAL;
+            doc["rssi"] = WiFi.RSSI();
+            doc["cur_ip"] = WiFi.localIP().toString();
+            doc["cur_mask"] = WiFi.subnetMask().toString();
+            doc["cur_gw"] = WiFi.gatewayIP().toString();
+            
+            doc["ssid"] = sysCfg.wifi_ssid;
+            doc["static"] = sysCfg.static_ip;
+            doc["ip"] = sysCfg.local_ip;
+            doc["gw"] = sysCfg.gateway;
+            doc["mask"] = sysCfg.subnet;
+            
+            doc["mqs"] = sysCfg.mqtt_server;
+            doc["mqu"] = sysCfg.mqtt_user;
+            doc["mqpr"] = sysCfg.mqtt_prefix;
+            doc["ha_disc"] = sysCfg.ha_discover;
+            doc["n_min"] = sysCfg.default_number_min;
+            doc["n_max"] = sysCfg.default_number_max;
+            doc["n_stp"] = sysCfg.default_number_step;
+            
+            doc["mqtt"] = is_mqtt_connected();
+            doc["heap"] = ESP.getFreeHeap() / 1024;
+            doc["uptime"] = millis() / 1000;
+            
+            doc["mac"] = sysCfg.mac_address;
+            doc["mm"] = sysCfg.max_master;
+            doc["did"] = sysCfg.device_id;
+            doc["to"] = sysCfg.apdu_timeout;
+            doc["ret"] = sysCfg.max_retries;
+            doc["hbeat"] = sysCfg.heartbeat_interval;
+            doc["tskip"] = sysCfg.token_skip;
+            doc["mif"] = sysCfg.max_info_frames;
+            doc["mpi"] = sysCfg.mqtt_poll_interval;
+            doc["bpi"] = sysCfg.bacnet_poll_interval;
+            doc["adu"] = sysCfg.admin_user;
+            doc["lvl"] = sysCfg.log_level;
+
+            doc["mstp_t"] = bacnetStats.ring_active;
+            doc["mstp_cnt"] = bacnetStats.tokens_seen;
+            doc["mstp_rx"] = bacnetStats.ms_msgs_rx;
+            doc["mstp_tx"] = bacnetStats.ms_msgs_tx;
+            doc["mstp_err"] = bacnetStats.errors_crc;
+
+            JsonArray devices = doc["devices"].to<JsonArray>();
+            if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
+                for (auto& dev : bacnet_network_cache) {
+                    JsonObject d = devices.add<JsonObject>();
+                    d["id"] = dev.device_id;
+                    d["step"] = (int)dev.disc_step;
+                    d["idx"] = dev.disc_obj_idx;
+                    d["total"] = dev.objects.size();
+                    d["enabled"] = dev.enabled;
+                    d["done"] = dev.discovery_done;
+                    
+                    int sel = 0;
+                    for(auto& o : dev.objects) if(o.enabled) sel++;
+                    d["sel"] = sel;
+                }
+                xSemaphoreGive(cache_mutex);
+            }
+
+            serializeJson(doc, *stream);
+            request->send(stream);
+            xSemaphoreGive(api_mutex);
+        } else {
+            request->send(503, "text/plain", "Service Unavailable: API Busy");
+        }
     });
 
     webServer.on("/api/objects", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!is_authenticated(request)) return;
-        JsonDocument* doc_ptr = new JsonDocument(); JsonDocument& doc = *doc_ptr; JsonArray controllers = doc.to<JsonArray>();
-        if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
-            for (auto& dev : bacnet_network_cache) {
-                JsonObject c = controllers.add<JsonObject>();
-                c["device_id"] = dev.device_id;
-                c["name"] = dev.name; c["vendor"] = dev.vendor; c["enabled"] = dev.enabled;
-                JsonArray objs_arr = c["objects"].to<JsonArray>();
-                for (auto& o : dev.objects) {
-                    JsonObject obj = objs_arr.add<JsonObject>();
-                    obj["type"] = o.type; obj["inst"] = o.instance; obj["name"] = o.name;
-                    obj["val"] = o.present_value; obj["poll"] = o.enabled;
-                    obj["unit"] = o.unit_text;
-                }
-            }
-            xSemaphoreGive(cache_mutex);
+
+        // v6.4.8: Strict Heap Protection
+        if (ESP.getFreeHeap() < 50000) {
+            request->send(503, "text/plain", "Service Unavailable: Low Memory");
+            return;
         }
-        String response; serializeJson(doc, response);
-        request->send(200, "application/json", response);
-        delete doc_ptr;
+
+        // v6.4.8: API Serialization
+        if (xSemaphoreTake(api_mutex, pdMS_TO_TICKS(1000))) {
+            AsyncResponseStream *stream = request->beginResponseStream("application/json");
+            if (!stream) { xSemaphoreGive(api_mutex); return; }
+            stream->addHeader("Connection", "close");
+
+            // v6.4.9: Force PSRAM allocation
+            JsonDocument doc(&psram_alloc); 
+            JsonArray controllers = doc.to<JsonArray>();
+            
+            if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
+                for (auto& dev : bacnet_network_cache) {
+                    JsonObject c = controllers.add<JsonObject>();
+                    c["device_id"] = dev.device_id;
+                    c["name"] = dev.name; c["vendor"] = dev.vendor; c["enabled"] = dev.enabled;
+                    JsonArray objs_arr = c["objects"].to<JsonArray>();
+                    for (auto& o : dev.objects) {
+                        JsonObject obj = objs_arr.add<JsonObject>();
+                        obj["type"] = o.type; obj["inst"] = o.instance; obj["name"] = o.name;
+                        obj["val"] = o.present_value; obj["poll"] = o.enabled;
+                        obj["unit"] = o.unit_text;
+                    }
+                }
+                xSemaphoreGive(cache_mutex);
+            }
+            serializeJson(doc, *stream);
+            request->send(stream);
+            xSemaphoreGive(api_mutex);
+        } else {
+            request->send(503, "text/plain", "Service Unavailable: API Busy");
+        }
     });
 
     webServer.on("/api/whois", HTTP_POST, [](AsyncWebServerRequest *request) {

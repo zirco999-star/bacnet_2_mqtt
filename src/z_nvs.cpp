@@ -65,6 +65,11 @@ void load_device_objects(uint32_t device_id) {
                                 strlcpy(obj.last_mqtt_name, page.objects[i].name, sizeof(obj.last_mqtt_name));
                                 strlcpy(obj.last_ha_component, page.objects[i].last_ha_component, sizeof(obj.last_ha_component));
                                 
+                                // v6.6.1: Charger les labels des états MSI/MSO/MSV
+                                if (obj.type == OBJ_MULTI_STATE_INPUT || obj.type == OBJ_MULTI_STATE_OUTPUT || obj.type == OBJ_MULTI_STATE_VALUE) {
+                                    load_object_states(device_id, obj.type, obj.instance, obj.state_texts);
+                                }
+
                                 obj.present_value = 0.0f;
                                 dev.objects.push_back(obj);
                             }
@@ -302,5 +307,53 @@ void save_device_objects(uint32_t device_id) {
     if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(1000))) {
         save_device_objects_locked(device_id);
         xSemaphoreGive(cache_mutex);
+    }
+}
+
+/**
+ * Sauvegarde les labels des états (MSI/MSO/MSV) dans un namespace dédié.
+ */
+void save_object_states(uint32_t device_id, uint16_t type, uint32_t instance, const std::vector<String>& states) {
+    if (states.empty()) return;
+    
+    char ns[16]; snprintf(ns, sizeof(ns), "st_%lu", (unsigned long)device_id);
+    char key[16]; snprintf(key, sizeof(key), "o%u_%lu", type, (unsigned long)instance);
+    
+    String combined = "";
+    for (size_t i = 0; i < states.size(); i++) {
+        combined += states[i];
+        if (i < states.size() - 1) combined += "|";
+    }
+    
+    Preferences prefs;
+    if (prefs.begin(ns, false)) {
+        prefs.putString(key, combined);
+        prefs.end();
+        z_log(LOG_DEBUG, "NVS", "[NVS] Saved States for %u:%lu (%d labels)\n", type, instance, (int)states.size());
+    }
+}
+
+/**
+ * Charge les labels des états depuis le namespace dédié.
+ */
+void load_object_states(uint32_t device_id, uint16_t type, uint32_t instance, std::vector<String>& states) {
+    char ns[16]; snprintf(ns, sizeof(ns), "st_%lu", (unsigned long)device_id);
+    char key[16]; snprintf(key, sizeof(key), "o%u_%lu", type, (unsigned long)instance);
+    
+    Preferences prefs;
+    if (prefs.begin(ns, true)) {
+        String combined = prefs.getString(key, "");
+        if (combined.length() > 0) {
+            states.clear();
+            int start = 0;
+            int end = combined.indexOf('|');
+            while (end != -1) {
+                states.push_back(combined.substring(start, end));
+                start = end + 1;
+                end = combined.indexOf('|', start);
+            }
+            states.push_back(combined.substring(start));
+        }
+        prefs.end();
     }
 }
