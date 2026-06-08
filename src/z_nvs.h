@@ -9,5 +9,7 @@ void save_configuration();
 void load_device_objects(uint32_t device_id);
 void save_device_objects(uint32_t device_id);
 void save_device_objects_locked(uint32_t device_id);
+void save_object_states(uint32_t device_id, uint16_t type, uint32_t instance, const std::vector<String>& states);
+void load_object_states(uint32_t device_id, uint16_t type, uint32_t instance, std::vector<String>& states);
 
 #endif

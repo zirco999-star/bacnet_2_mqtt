@@ -525,7 +525,13 @@ void process_incoming_frame(MSTP_Frame &frame) {
                                     }
                                     else if (dev.disc_step == DISC_OBJ_STATES) { 
                                         if(vt.number==2){ uint32_t c=0; for(int i=0;i<vt.len;i++) c=(c<<8)|apdu[ap+i]; o.expected_states_count=c; z_log(LOG_INFO, "BACNET", "Obj %u State Count: %lu\n", dev.disc_obj_idx+1, (unsigned long)c); if(c==0) dev.disc_step=DISC_OBJ_VALUE; } 
-                                        else if(vt.number==7){ char n[33]; uint8_t enc=apdu[ap]; int sl=0; if(enc==0){sl=std::min((int)vt.len-1,32); memcpy(n,&apdu[ap+1],sl);} else {for(int i=2;i<vt.len&&sl<32;i+=2) n[sl++]=apdu[ap+i];} n[sl]=0; o.state_texts.push_back(String(n)); z_log(LOG_INFO, "BACNET", "Obj %u State %zu: %s\n", dev.disc_obj_idx+1, o.state_texts.size(), n); if(o.state_texts.size()>=o.expected_states_count) dev.disc_step=DISC_OBJ_COMMANDABLE; } 
+                                        else if(vt.number==7){ char n[33]; uint8_t enc=apdu[ap]; int sl=0; if(enc==0){sl=std::min((int)vt.len-1,32); memcpy(n,&apdu[ap+1],sl);} else {for(int i=2;i<vt.len&&sl<32;i+=2) n[sl++]=apdu[ap+i];} n[sl]=0; o.state_texts.push_back(String(n)); z_log(LOG_INFO, "BACNET", "Obj %u State %zu: %s\n", dev.disc_obj_idx+1, o.state_texts.size(), n); 
+                                        if(o.state_texts.size()>=o.expected_states_count) {
+                                            dev.disc_step=DISC_OBJ_COMMANDABLE;
+                                            // v6.6.1: Persistance immédiate des labels pour cet objet
+                                            save_object_states(dev.device_id, o.type, o.instance, o.state_texts);
+                                        } 
+                                        }
                                     }
                                     else if (dev.disc_step == DISC_OBJ_COMMANDABLE) { o.is_commandable=true; z_log(LOG_DEBUG, "BACNET", "Obj %u is commandable\n", dev.disc_obj_idx+1); if(o.enabled||dev.reload_single) dev.disc_step=DISC_OBJ_VALUE; else { if(!dev.reload_single) dev.disc_obj_idx++; dev.disc_step=DISC_OBJ_OID; if(dev.reload_single){dev.discovery_done=true; dev.reload_single=false;} } ap=al; break; }
                                     else if (dev.disc_step == DISC_OBJ_VALUE) { 
