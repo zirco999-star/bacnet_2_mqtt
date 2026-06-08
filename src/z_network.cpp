@@ -26,38 +26,50 @@ SemaphoreHandle_t ws_mutex = NULL;
 PSRAM_Allocator psram_alloc;
 
 static uint32_t last_ws_event = 0;
+static uint32_t active_ws_id = 0;
 
 void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type,
              void *arg, uint8_t *data, size_t len) {
+    // v6.6.0: Callbacks atomiques pour éviter tout blocage TCP
     if (type == WS_EVT_CONNECT) {
-        // v6.5.4: Nettoyage intelligent - Fermer les sessions fantômes de la même IP
-        IPAddress newIP = client->remoteIP();
-        // Utilisation de auto& car getClients() retourne une std::list<AsyncWebSocketClient>
-        for (auto &c : server->getClients()) {
-            if (c.id() != client->id() && c.remoteIP() == newIP) {
-                c.close();
-            }
-        }
         last_ws_event = millis();
-    } else if (type == WS_EVT_DISCONNECT) {
+        active_ws_id = client->id();
+        Serial.printf("[WEB] WS Session Link: %u\n", active_ws_id);
+    } 
+    else if (type == WS_EVT_DISCONNECT) {
+        if (active_ws_id == client->id()) active_ws_id = 0;
         last_ws_event = millis();
+        Serial.printf("[WEB] WS Session Terminated\n");
     }
 }
 
 // Task running on Core 0 to send logs to the web interface via WebSockets
 static void websocket_log_task(void *pvParameters) {
     LogMessage received_log;
+    // v6.6.0: Silence radio total de 10s au démarrage pour laisser le WiFi et MQTT s'établir
+    vTaskDelay(pdMS_TO_TICKS(10000));
+    
     for( ;; ) {
         if (xQueueReceive(log_queue, &received_log, portMAX_DELAY) == pdTRUE) {
-            // v6.5.2: Silence radio pendant 2s après un événement WS pour stabiliser la pile TCP
-            if (millis() - last_ws_event < 2000) continue;
+            // v6.6.0: Pas d'envoi si un événement réseau récent (< 5s) pour éviter collision au refresh
+            if (millis() - last_ws_event < 5000) continue;
 
-            if (ESP.getFreeHeap() > 40000 && ws.count() > 0) {
-                if (xSemaphoreTake(ws_mutex, pdMS_TO_TICKS(50))) {
-                    ws.textAll(received_log.message);
+            // v6.6.0: SI L'API EST OCCUPEE (chargement page/JSON), ON JETTE LE LOG
+            // C'est la protection ultime contre le crash 0x30
+            if (api_mutex == NULL || uxSemaphoreGetCount(api_mutex) == 0) continue;
+
+            if (active_ws_id > 0 && ESP.getFreeHeap() > 50000) {
+                if (xSemaphoreTake(ws_mutex, pdMS_TO_TICKS(20))) {
+                    AsyncWebSocketClient* target = ws.client(active_ws_id);
+                    if (target && target->status() == WS_CONNECTED) {
+                        target->text(received_log.message);
+                    } else {
+                        active_ws_id = 0;
+                    }
                     xSemaphoreGive(ws_mutex);
                 }
-                vTaskDelay(pdMS_TO_TICKS(10)); // Pacing accru
+                // v6.6.0: Délai forcé entre chaque message pour ne pas saturer la pile AsyncTCP
+                vTaskDelay(pdMS_TO_TICKS(50));
             }
         }
     }
