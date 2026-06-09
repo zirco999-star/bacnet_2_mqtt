@@ -226,7 +226,7 @@ static void mqtt_gatekeeper_task(void *pv) {
                     period_mqtt_pub_count++;
                     z_log(LOG_DEBUG, "MQTT", "Published: %s = %s\n", t, val.c_str());
                 };
-                pub_b2m("ver", VERSION_GLOBAL);
+                pub_b2m("ver", configVERSION_GLOBAL);
                 pub_b2m("rssi", String(WiFi.RSSI()));
                 pub_b2m("heap", String(ESP.getFreeHeap() / 1024));
                 pub_b2m("min_heap", String(ESP.getMinFreeHeap() / 1024));
@@ -402,7 +402,7 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
             device["name"] = "BACnet2MQTT Gateway";
             device["mf"] = "Custom";
             device["mdl"] = "ESP32-S3";
-            device["sw"] = VERSION_GLOBAL;
+            device["sw"] = configVERSION_GLOBAL;
 
             String payload;
             serializeJson(doc, payload);
@@ -582,7 +582,7 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                                 ids.add(String(dev_id_str));
                                 device["name"] = dev.name.length() > 0 ? String(dev.name) : String(dev_id_str);
                                 device["mf"] = dev.vendor.length() > 0 ? String(dev.vendor) : "BACnet Manufacturer";
-                                device["sw"] = VERSION_GLOBAL;
+                                device["sw"] = configVERSION_GLOBAL;
 
                                 serializeJson(doc, final_payload);
                                 should_publish = true;

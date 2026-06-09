@@ -23,6 +23,7 @@
 Le repertoire /home/dev/bacnet_2_mqtt etant un lien symbolique vers /mnt/save, l'agent doit utiliser la methode de copie :
 1. Editer le fichier dans le workspace local (ex: /home/dev/z_bacnet_edit.cpp).
 2. Copier vers la cible : cp /home/dev/z_bacnet_edit.cpp /home/dev/bacnet_2_mqtt/z_bacnet.cpp.
+3. **Respect des Normes** : Toute modification doit imperativement suivre les regles definies dans `CONVENTION_CODAGE.md` (Prefixes de types, macros preferees, gestion memoire Heap_4). Une verification systematique est exigee avant chaque commit. L'utilisation des préfixes compositionnels (uc, us, ul, x, p) est obligatoire pour toutes les nouvelles variables et la refactorisation du code existant.
 
 ### 2. Compilation et Deploiement OTA
 Utiliser impérativement les scripts du dossier `utils` :

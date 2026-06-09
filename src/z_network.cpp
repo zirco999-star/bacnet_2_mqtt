@@ -209,7 +209,7 @@ void setup_network_infrastructure() {
 
             // v6.4.9: Force PSRAM allocation
             JsonDocument doc(&psram_alloc);
-            doc["ver"] = VERSION_GLOBAL;
+            doc["ver"] = configVERSION_GLOBAL;
             doc["rssi"] = WiFi.RSSI();
             doc["cur_ip"] = WiFi.localIP().toString();
             doc["cur_mask"] = WiFi.subnetMask().toString();

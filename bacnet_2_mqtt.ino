@@ -29,7 +29,7 @@ void system_task(void *pvParameters) {
 void setup() {
     Serial.begin(115200);
     delay(1000);
-    Serial.println("\n\n>>> " + String(VERSION_GLOBAL) + " - DUAL CORE MODE <<<");
+    Serial.println("\n\n>>> " + String(configVERSION_GLOBAL) + " - DUAL CORE MODE <<<");
 
     // --- NVS (Non-Volatile Storage) Self-Healing Routine ---
     esp_err_t err = nvs_flash_init();
@@ -46,7 +46,7 @@ void setup() {
     // Create the System task on Core 0
     xTaskCreatePinnedToCore(system_task, "SystemTask", 8192, NULL, 5, NULL, 0);
 
-    Serial.println("[" + String(VERSION_GLOBAL) + "] System Operational.");
+    Serial.println("[" + String(configVERSION_GLOBAL) + "] System Operational.");
 }
 
 void loop() {
