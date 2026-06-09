@@ -395,16 +395,16 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                                 <tbody>`;
                     if (Array.isArray(dev.objects)) {
                         dev.objects.forEach((o, idx) => {
-                            if(o.usType === 8) return;
-                            let typeStr = ["AI","AO","AV","BI","BO","BV","CAL","CMD","DEV","EVN","FIL","GRP","LP","MSI","MSO","NOT","PRG","SCH","AVG","MSV"][o.usType] || "OBJ";
+                            if(o.type === 8) return;
+                            let typeStr = ["AI","AO","AV","BI","BO","BV","CAL","CMD","DEV","EVN","FIL","GRP","LP","MSI","MSO","NOT","PRG","SCH","AVG","MSV"][o.type] || "OBJ";
                             let rowClass = o.poll ? '' : 'grisé';
                             let valDisplay = (o.val !== null && !isNaN(o.val)) ? o.val.toFixed(2) : '--';
                             
-                            html += `<tr data-did="${dev.ulDeviceId}" data-inst="${o.inst}" data-type="${o.usType}" class="${rowClass}">
-                                <td style="text-align:center"><button class="btn btn-s btn-sm" style="padding:2px 4px" onclick="reloadObject(${dev.ulDeviceId}, ${o.inst}, ${o.usType})" title="Reload Object Properties">↻</button></td>
+                            html += `<tr data-did="${dev.ulDeviceId}" data-inst="${o.inst}" data-type="${o.type}" class="${rowClass}">
+                                <td style="text-align:center"><button class="btn btn-s btn-sm" style="padding:2px 4px" onclick="reloadObject(${dev.ulDeviceId}, ${o.inst}, ${o.type})" title="Reload Object Properties">↻</button></td>
                                 <td><span class="obj-badge">${typeStr}:${o.inst}</span></td>
                                 <td>
-                                    <input type="text" class="in-text" value="${o.cName || ''}" onchange="saveObj(this)">
+                                    <input type="text" class="in-text" value="${o.name || ''}" onchange="saveObj(this)">
                                     <select onchange="saveObj(this)" style="margin-top:4px">`;
                             for(let u in UNITS) {
                                 let label = UNITS[u];
@@ -495,8 +495,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                         let status = "Discovery...";
                         let sCol = 'var(--primary)';
 
-                        if(dev.step < 4) { // DISC_DEV_ID to DISC_OBJ_COUNT
-                            pct = (dev.step / 4) * 100;
+                        if(dev.step < 6) { // DISC_DEV_ID to DISC_OBJ_COUNT
+                            pct = (dev.step / 6) * 100;
                         } else if (!dev.xEnabled) {
                             status = "DESACTIVATED";
                             sCol = 'var(--muted)';
