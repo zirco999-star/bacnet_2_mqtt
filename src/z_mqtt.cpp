@@ -22,13 +22,13 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
     switch ((esp_mqtt_event_id_t)event_id) {
         case MQTT_EVENT_CONNECTED:
-            z_log(LOG_INFO, "MQTT", "Connected to Broker.\n");
+            z_log(pdLOG_INFO, "MQTT", "Connected to Broker.\n");
             mqtt_fail_count = 0; 
             circuit_breaker_active = false;
             mqtt_is_connected = true;
             {
                 char sub_topic[128];
-                snprintf(sub_topic, sizeof(sub_topic), "%s/+/+/+/set", sysCfg.mqtt_prefix);
+                snprintf(sub_topic, sizeof(sub_topic), "%s/+/+/+/set", sysCfg.cMqttPrefix);
                 esp_mqtt_client_subscribe(mqtt_client, sub_topic, 0);
                 
                 // Signal pour la découverte HA complète suite à reconnexion
@@ -48,7 +48,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             if (circuit_breaker_active) break;
             
             if (WiFi.status() != WL_CONNECTED) {
-                z_log(LOG_WARN, "MQTT", "Connection dropped due to Wi-Fi loss.\n");
+                z_log(pdLOG_WARN, "MQTT", "Connection dropped due to Wi-Fi loss.\n");
                 break;
             }
             
@@ -56,17 +56,17 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                 if (event->error_handle->error_type == MQTT_ERROR_TYPE_CONNECTION_REFUSED) {
                     if (event->error_handle->connect_return_code == MQTT_CONNECTION_REFUSE_BAD_USERNAME ||
                         event->error_handle->connect_return_code == MQTT_CONNECTION_REFUSE_NOT_AUTHORIZED) {
-                        z_log(LOG_ERROR, "MQTT", "FATAL: Invalid Broker Credentials.\n");
+                        z_log(pdLOG_ERROR, "MQTT", "FATAL: Invalid Broker Credentials.\n");
                         mqtt_fail_count = 3;
                     }
                 }
             }
             
             mqtt_fail_count++;
-            z_log(LOG_WARN, "MQTT", "Disconnected from Broker (%d/3).\n", mqtt_fail_count);
+            z_log(pdLOG_WARN, "MQTT", "Disconnected from Broker (%d/3).\n", mqtt_fail_count);
             
             if (mqtt_fail_count >= 3) {
-                z_log(LOG_ERROR, "MQTT", "CIRCUIT BREAKER: Halting MQTT connection attempts.\n");
+                z_log(pdLOG_ERROR, "MQTT", "CIRCUIT BREAKER: Halting MQTT connection attempts.\n");
                 circuit_breaker_active = true;
             }
             break;
@@ -146,7 +146,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 }
 
 static void mqtt_gatekeeper_task(void *pv) {
-    z_log(LOG_INFO, "MQTT", "Gatekeeper Task Operational.\n");
+    z_log(pdLOG_INFO, "MQTT", "Gatekeeper Task Operational.\n");
     uint32_t last_status_pub = 0;
     uint32_t last_global_disc = 0;
     uint32_t last_single_disc = 0;
@@ -181,7 +181,7 @@ static void mqtt_gatekeeper_task(void *pv) {
                     // On logue une seule fois pour éviter le flood de logs
                     static uint32_t last_log = 0;
                     if (now - last_log > 5000) {
-                        z_log(LOG_DEBUG, "MQTT", "HA Discovery deferred (throttle active)\n");
+                        z_log(pdLOG_DEBUG, "MQTT", "HA Discovery deferred (throttle active)\n");
                         last_log = now;
                     }
                 }
@@ -204,29 +204,29 @@ static void mqtt_gatekeeper_task(void *pv) {
                     case 19: t_str = "MSV"; break;
                 }
                 const char* subtopic = (pubJob.prop_id == 77) ? "name" : "state";
-                snprintf(topic, sizeof(topic), "%s/%lu/%s/%lu/%s", sysCfg.mqtt_prefix, (unsigned long)pubJob.device_id, t_str, (unsigned long)pubJob.obj_instance, subtopic);
+                snprintf(topic, sizeof(topic), "%s/%lu/%s/%lu/%s", sysCfg.cMqttPrefix, (unsigned long)pubJob.device_id, t_str, (unsigned long)pubJob.obj_instance, subtopic);
                 
                 if (esp_mqtt_client_publish(mqtt_client, topic, pubJob.value_string, 0, 1, pubJob.retain) < 0) {
-                    z_log(LOG_WARN, "MQTT", "Publish failed. Queue Full or Client error.\n");
+                    z_log(pdLOG_WARN, "MQTT", "Publish failed. Queue Full or Client error.\n");
                     vTaskDelay(pdMS_TO_TICKS(50));
                     break; 
                 } else {
                     period_mqtt_pub_count++;
-                    z_log(LOG_DEBUG, "MQTT", "Published: %s = %s\n", topic, pubJob.value_string);
+                    z_log(pdLOG_DEBUG, "MQTT", "Published: %s = %s\n", topic, pubJob.value_string);
                 }
                 vTaskDelay(pdMS_TO_TICKS(5)); 
             }
 
             // 3. Status Gateway périodique
-            if (millis() - last_status_pub > (sysCfg.mqtt_poll_interval * 1000)) {
+            if (millis() - last_status_pub > (sysCfg.usMqttPollInterval * 1000)) {
                 last_status_pub = millis();
                 auto pub_b2m = [&](const char* key, String val) {
-                    char t[128]; snprintf(t, sizeof(t), "%s/B2M/%s/state", sysCfg.mqtt_prefix, key);
+                    char t[128]; snprintf(t, sizeof(t), "%s/B2M/%s/state", sysCfg.cMqttPrefix, key);
                     esp_mqtt_client_publish(mqtt_client, t, val.c_str(), 0, 1, 0);
                     period_mqtt_pub_count++;
-                    z_log(LOG_DEBUG, "MQTT", "Published: %s = %s\n", t, val.c_str());
+                    z_log(pdLOG_DEBUG, "MQTT", "Published: %s = %s\n", t, val.c_str());
                 };
-                pub_b2m("ver", VERSION_GLOBAL);
+                pub_b2m("ver", configVERSION_GLOBAL);
                 pub_b2m("rssi", String(WiFi.RSSI()));
                 pub_b2m("heap", String(ESP.getFreeHeap() / 1024));
                 pub_b2m("min_heap", String(ESP.getMinFreeHeap() / 1024));
@@ -248,8 +248,8 @@ static void mqtt_gatekeeper_task(void *pv) {
                 last_token_count = bacnetStats.tokens_seen;
                 pub_b2m("mstp", mstp_active ? "ON" : "OFF");
                 
-                z_log(LOG_INFO, "MQTT", "Gateway Status published (Uptime: %lu s, Devices: %zu)\n", (unsigned long)(millis() / 1000), n_dev);
-                z_log(LOG_INFO, "MQTT", "Published topics : %s/+, %s/B2M, tele/%s - Total messages : %lu\n", sysCfg.mqtt_prefix, sysCfg.mqtt_prefix, sysCfg.mqtt_prefix, (unsigned long)period_mqtt_pub_count);
+                z_log(pdLOG_INFO, "MQTT", "Gateway Status published (Uptime: %lu s, Devices: %zu)\n", (unsigned long)(millis() / 1000), n_dev);
+                z_log(pdLOG_INFO, "MQTT", "Published topics : %s/+, %s/B2M, tele/%s - Total messages : %lu\n", sysCfg.cMqttPrefix, sysCfg.cMqttPrefix, sysCfg.cMqttPrefix, (unsigned long)period_mqtt_pub_count);
                 
                 period_mqtt_pub_count = 0;
             }
@@ -265,7 +265,7 @@ bool enqueue_mqtt_publish(MQTTPublishJob pubJob) { if (mqtt_publish_queue == NUL
 void init_mqtt_queue() {
     if (mqtt_publish_queue == NULL) {
         mqtt_publish_queue = xQueueCreate(100, sizeof(MQTTPublishJob));
-        z_log(LOG_INFO, "MQTT", "Queue Initialized\n");
+        z_log(pdLOG_INFO, "MQTT", "Queue Initialized\n");
     }
 }
 
@@ -279,17 +279,17 @@ void setup_mqtt() {
 
     mqtt_fail_count = 0;
     circuit_breaker_active = false;
-    if (strlen(sysCfg.mqtt_server) == 0) return;
+    if (strlen(sysCfg.cMqttServer) == 0) return;
     
     esp_mqtt_client_config_t mqtt_cfg = {};
-    mqtt_cfg.broker.address.hostname = sysCfg.mqtt_server;
-    mqtt_cfg.broker.address.port = sysCfg.mqtt_port;
+    mqtt_cfg.broker.address.hostname = sysCfg.cMqttServer;
+    mqtt_cfg.broker.address.port = sysCfg.usMqttPort;
     mqtt_cfg.broker.address.transport = MQTT_TRANSPORT_OVER_TCP;
-    mqtt_cfg.credentials.username = strlen(sysCfg.mqtt_user) > 0 ? sysCfg.mqtt_user : NULL;
-    mqtt_cfg.credentials.authentication.password = strlen(sysCfg.mqtt_pass) > 0 ? sysCfg.mqtt_pass : NULL;
+    mqtt_cfg.credentials.username = strlen(sysCfg.cMqttUser) > 0 ? sysCfg.cMqttUser : NULL;
+    mqtt_cfg.credentials.authentication.password = strlen(sysCfg.cMqttPass) > 0 ? sysCfg.cMqttPass : NULL;
 
     // Configuration LWT
-    snprintf(lwt_topic, sizeof(lwt_topic), "tele/%s/LWT", sysCfg.mqtt_prefix);
+    snprintf(lwt_topic, sizeof(lwt_topic), "tele/%s/LWT", sysCfg.cMqttPrefix);
     mqtt_cfg.session.last_will.topic = lwt_topic;
     mqtt_cfg.session.last_will.msg = "offline";
     mqtt_cfg.session.last_will.qos = 1;
@@ -316,7 +316,7 @@ void setup_mqtt() {
 bool is_mqtt_connected() { return mqtt_is_connected; }
 
 void trigger_ha_discovery(uint32_t did, uint32_t inst, uint16_t type) {
-    if (!sysCfg.ha_discover) return;
+    if (!sysCfg.xHaDiscover) return;
     
     // Stratégie de Coalescence (v6.4.2)
     // Si une demande est déjà en attente :
@@ -356,25 +356,25 @@ void handle_mqtt() {
         esp_mqtt_client_stop(mqtt_client);
         esp_mqtt_client_destroy(mqtt_client);
         mqtt_client = NULL;
-        z_log(LOG_ERROR, "MQTT", "Circuit Breaker Active. Client destroyed.\n");
+        z_log(pdLOG_ERROR, "MQTT", "Circuit Breaker Active. Client destroyed.\n");
     }
 }
 
 void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) {
-    if (!mqtt_is_connected || circuit_breaker_active || !sysCfg.ha_discover) return;
+    if (!mqtt_is_connected || circuit_breaker_active || !sysCfg.xHaDiscover) return;
 
     // Détermination si c'est une requête ciblée
     bool is_single_object = (t_did != 0 && t_inst != 0xFFFFFFFF);
     
     if (!is_single_object) {
-        z_log(LOG_INFO, "MQTT", "Starting HA Auto-Discovery%s...\n", (t_did != 0) ? " (Single Device)" : "");
+        z_log(pdLOG_INFO, "MQTT", "Starting HA Auto-Discovery%s...\n", (t_did != 0) ? " (Single Device)" : "");
     }
 
     // Étape 0 : Discovery de la Gateway elle-même (Diagnostics)
     // On ne publie les capteurs de diagnostic globaux que si la découverte n'est pas limitée à un seul objet précis
     if (!is_single_object && t_did == 0) {
         char base_b2m[128];
-        snprintf(base_b2m, sizeof(base_b2m), "%s/B2M", sysCfg.mqtt_prefix);
+        snprintf(base_b2m, sizeof(base_b2m), "%s/B2M", sysCfg.cMqttPrefix);
         
         auto pub_gw_sensor = [&](const char* key, const char* name, const char* dev_cla, const char* unit, const char* icon = NULL, bool is_binary = false) {
             JsonDocument doc;
@@ -402,12 +402,12 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
             device["name"] = "BACnet2MQTT Gateway";
             device["mf"] = "Custom";
             device["mdl"] = "ESP32-S3";
-            device["sw"] = VERSION_GLOBAL;
+            device["sw"] = configVERSION_GLOBAL;
 
             String payload;
             serializeJson(doc, payload);
             esp_mqtt_client_publish(mqtt_client, topic, payload.c_str(), 0, 1, 1);
-            z_log(LOG_DEBUG, "MQTT", "HA Discovery: %s\n", uniq);
+            z_log(pdLOG_DEBUG, "MQTT", "HA Discovery: %s\n", uniq);
         };
 
         pub_gw_sensor("ver", "Gateway Version", NULL, NULL, "mdi:information-outline");
@@ -517,7 +517,7 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                         if (dev.enabled && obj.enabled && strcmp(obj.name, "Unknown") != 0) {
                             JsonDocument doc; 
                             char base_topic[128];
-                            snprintf(base_topic, sizeof(base_topic), "%s/%lu/%s/%lu", sysCfg.mqtt_prefix, (unsigned long)dev.device_id, t_str, (unsigned long)obj.instance);
+                            snprintf(base_topic, sizeof(base_topic), "%s/%lu/%s/%lu", sysCfg.cMqttPrefix, (unsigned long)dev.device_id, t_str, (unsigned long)obj.instance);
                             
                             doc["~"] = String(base_topic);
                             doc["uniq_id"] = String(uniq_id);
@@ -536,9 +536,9 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                             }
 
                             if (strcmp(ha_component, "number") == 0) {
-                                doc["min"] = isnan(obj.min_value) ? sysCfg.default_number_min : obj.min_value;
-                                doc["max"] = isnan(obj.max_value) ? sysCfg.default_number_max : obj.max_value;
-                                doc["step"] = sysCfg.default_number_step;
+                                doc["min"] = isnan(obj.min_value) ? sysCfg.fDefaultNumberMin : obj.min_value;
+                                doc["max"] = isnan(obj.max_value) ? sysCfg.fDefaultNumberMax : obj.max_value;
+                                doc["step"] = sysCfg.fDefaultNumberStep;
                             }
 
                             // --- GESTION DES UNITÉS (v6.3.4) ---
@@ -582,7 +582,7 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                                 ids.add(String(dev_id_str));
                                 device["name"] = dev.name.length() > 0 ? String(dev.name) : String(dev_id_str);
                                 device["mf"] = dev.vendor.length() > 0 ? String(dev.vendor) : "BACnet Manufacturer";
-                                device["sw"] = VERSION_GLOBAL;
+                                device["sw"] = configVERSION_GLOBAL;
 
                                 serializeJson(doc, final_payload);
                                 should_publish = true;
@@ -611,7 +611,7 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
     }
     
     // Le log de fin est placé tout à la fin de la fonction
-    z_log(LOG_INFO, "MQTT", "HA Auto-Discovery payload sent.\n");
+    z_log(pdLOG_INFO, "MQTT", "HA Auto-Discovery payload sent.\n");
 }
 
 void publish_mqtt_topic(uint32_t device_id, BACnetObject& obj, uint8_t prop_id, bool retain) {
@@ -644,8 +644,8 @@ void publish_mqtt_topic(uint32_t device_id, BACnetObject& obj, uint8_t prop_id, 
 
 void unpublish_ha_discovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type, const char* old_prefix) {
     if (!mqtt_is_connected || circuit_breaker_active) return;
-    const char* prefix = old_prefix ? old_prefix : sysCfg.mqtt_prefix;
-    z_log(LOG_INFO, "MQTT", "Cleaning up HA Discovery (Prefix: %s)...\n", prefix);
+    const char* prefix = old_prefix ? old_prefix : sysCfg.cMqttPrefix;
+    z_log(pdLOG_INFO, "MQTT", "Cleaning up HA Discovery (Prefix: %s)...\n", prefix);
 
     // 1. Diagnostics Gateway
     auto unpub_gw = [&](const char* key, bool is_binary = false) {

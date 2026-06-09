@@ -77,7 +77,7 @@ void load_device_objects(uint32_t device_id) {
                     }
                     dev.last_seen = millis();   
                     bacnet_network_cache.push_back(dev);
-                    z_log(LOG_INFO, "NVS", "[NVS] Restored Device %lu (%d objs)\n", (unsigned long)device_id, (int)dev.objects.size());
+                    z_log(pdLOG_INFO, "NVS", "[NVS] Restored Device %lu (%d objs)\n", (unsigned long)device_id, (int)dev.objects.size());
                 }
                 xSemaphoreGive(cache_mutex);
             }
@@ -91,73 +91,73 @@ void load_device_objects(uint32_t device_id) {
  */
 void load_configuration() {
     // Initialisation des valeurs par défaut
-    strlcpy(sysCfg.wifi_ssid, DEFAULT_SSID, 32);
-    strlcpy(sysCfg.wifi_pass, "", 64);
-    sysCfg.static_ip = false;
-    strlcpy(sysCfg.local_ip, DEFAULT_STATIC_IP, 16);
-    strlcpy(sysCfg.gateway, DEFAULT_GATEWAY, 16);
-    strlcpy(sysCfg.subnet, DEFAULT_SUBNET, 16);
-    sysCfg.mac_address = DEFAULT_MAC_ADDRESS;
-    sysCfg.max_master = DEFAULT_MAX_MASTER;
-    sysCfg.device_id = DEFAULT_DEVICE_ID;
-    sysCfg.apdu_timeout = DEFAULT_APDU_TIMEOUT;
-    sysCfg.max_retries = DEFAULT_MAX_RETRIES;
-    strlcpy(sysCfg.mqtt_server, DEFAULT_MQTT_SERVER, 32);
-    sysCfg.mqtt_port = 1883;
-    strlcpy(sysCfg.mqtt_user, "", 32);
-    strlcpy(sysCfg.mqtt_pass, "", 32);
-    strlcpy(sysCfg.mqtt_prefix, "bacnet", 64);
-    sysCfg.heartbeat_interval = DEFAULT_HEARBEAT_INTERVAL;
-    sysCfg.mqtt_poll_interval = DEFAULT_MQTT_POLL;
-    sysCfg.bacnet_poll_interval = DEFAULT_BACNET_POLL;
-    sysCfg.token_skip = DEFAULT_TOKEN_SKIP;
-    sysCfg.log_level = LOG_INFO;
-    sysCfg.max_info_frames = DEFAULT_MAX_INFO_FRAMES;
-    sysCfg.ha_discover = DEFAULT_HA_DISCOVER;
-    sysCfg.default_number_min = DEFAULT_NUM_MIN;
-    sysCfg.default_number_max = DEFAULT_NUM_MAX;
-    sysCfg.default_number_step = DEFAULT_NUM_STEP;
-    strlcpy(sysCfg.admin_user, "admin", 32);
-    strlcpy(sysCfg.admin_pass, "admin1234", 64);
+    strlcpy(sysCfg.cWifiSsid, configDEFAULT_SSID, 32);
+    strlcpy(sysCfg.cWifiPass, "", 64);
+    sysCfg.xStaticIp = false;
+    strlcpy(sysCfg.cLocalIp, configDEFAULT_STATIC_IP, 16);
+    strlcpy(sysCfg.cGateway, configDEFAULT_GATEWAY, 16);
+    strlcpy(sysCfg.cSubnet, configDEFAULT_SUBNET, 16);
+    sysCfg.ucMacAddress = configDEFAULT_MAC_ADDRESS;
+    sysCfg.ucMaxMaster = configDEFAULT_MAX_MASTER;
+    sysCfg.ulDeviceId = configDEFAULT_DEVICE_ID;
+    sysCfg.usApduTimeout = configDEFAULT_APDU_TIMEOUT;
+    sysCfg.ucMaxRetries = configDEFAULT_MAX_RETRIES;
+    strlcpy(sysCfg.cMqttServer, configDEFAULT_MQTT_SERVER, 32);
+    sysCfg.usMqttPort = 1883;
+    strlcpy(sysCfg.cMqttUser, "", 32);
+    strlcpy(sysCfg.cMqttPass, "", 32);
+    strlcpy(sysCfg.cMqttPrefix, "bacnet", 64);
+    sysCfg.ulHeartbeatInterval = configDEFAULT_HEARTBEAT_INTERVAL;
+    sysCfg.usMqttPollInterval = configDEFAULT_MQTT_POLL;
+    sysCfg.usBacnetPollInterval = configDEFAULT_BACNET_POLL;
+    sysCfg.ucTokenSkip = configDEFAULT_TOKEN_SKIP;
+    sysCfg.ucLogLevel = pdLOG_INFO;
+    sysCfg.ucMaxInfoFrames = configDEFAULT_MAX_INFO_FRAMES;
+    sysCfg.xHaDiscover = configDEFAULT_HA_DISCOVER;
+    sysCfg.fDefaultNumberMin = configDEFAULT_NUM_MIN;
+    sysCfg.fDefaultNumberMax = configDEFAULT_NUM_MAX;
+    sysCfg.fDefaultNumberStep = configDEFAULT_NUM_STEP;
+    strlcpy(sysCfg.cAdminUser, "admin", 32);
+    strlcpy(sysCfg.cAdminPass, "admin1234", 64);
 
     Preferences prefs;
     if (prefs.begin("system", true)) {
-        if (prefs.isKey("ssid")) prefs.getString("ssid", sysCfg.wifi_ssid, 32);
-        if (prefs.isKey("pass")) prefs.getString("pass", sysCfg.wifi_pass, 64);
-        if (prefs.isKey("static")) sysCfg.static_ip = prefs.getBool("static", false);
-        if (prefs.isKey("ip")) prefs.getString("ip", sysCfg.local_ip, 16);
-        if (prefs.isKey("gw")) prefs.getString("gw", sysCfg.gateway, 16);
-        if (prefs.isKey("sn")) prefs.getString("sn", sysCfg.subnet, 16);
+        if (prefs.isKey("ssid")) prefs.getString("ssid", sysCfg.cWifiSsid, 32);
+        if (prefs.isKey("pass")) prefs.getString("pass", sysCfg.cWifiPass, 64);
+        if (prefs.isKey("static")) sysCfg.xStaticIp = prefs.getBool("static", false);
+        if (prefs.isKey("ip")) prefs.getString("ip", sysCfg.cLocalIp, 16);
+        if (prefs.isKey("gw")) prefs.getString("gw", sysCfg.cGateway, 16);
+        if (prefs.isKey("sn")) prefs.getString("sn", sysCfg.cSubnet, 16);
         
-        if (prefs.isKey("mac")) sysCfg.mac_address = prefs.getUChar("mac", DEFAULT_MAC_ADDRESS);
-        if (prefs.isKey("mm")) sysCfg.max_master = prefs.getUChar("mm", DEFAULT_MAX_MASTER);
-        if (prefs.isKey("did")) sysCfg.device_id = prefs.getUInt("did", DEFAULT_DEVICE_ID);
-        if (prefs.isKey("to")) sysCfg.apdu_timeout = prefs.getUShort("to", DEFAULT_APDU_TIMEOUT);
-        if (prefs.isKey("ret")) sysCfg.max_retries = prefs.getUChar("ret", DEFAULT_MAX_RETRIES);
+        if (prefs.isKey("mac")) sysCfg.ucMacAddress = prefs.getUChar("mac", configDEFAULT_MAC_ADDRESS);
+        if (prefs.isKey("mm")) sysCfg.ucMaxMaster = prefs.getUChar("mm", configDEFAULT_MAX_MASTER);
+        if (prefs.isKey("did")) sysCfg.ulDeviceId = prefs.getUInt("did", configDEFAULT_DEVICE_ID);
+        if (prefs.isKey("to")) sysCfg.usApduTimeout = prefs.getUShort("to", configDEFAULT_APDU_TIMEOUT);
+        if (prefs.isKey("ret")) sysCfg.ucMaxRetries = prefs.getUChar("ret", configDEFAULT_MAX_RETRIES);
         
-        if (prefs.isKey("mqh")) prefs.getString("mqh", sysCfg.mqtt_server, 32);
-        if (prefs.isKey("mprt")) sysCfg.mqtt_port = prefs.getUInt("mprt", 1883);
-        if (prefs.isKey("mqu")) prefs.getString("mqu", sysCfg.mqtt_user, 32);
-        if (prefs.isKey("mqp")) prefs.getString("mqp", sysCfg.mqtt_pass, 32);
-        if (prefs.isKey("mqpr")) prefs.getString("mqpr", sysCfg.mqtt_prefix, 64);
+        if (prefs.isKey("mqh")) prefs.getString("mqh", sysCfg.cMqttServer, 32);
+        if (prefs.isKey("mprt")) sysCfg.usMqttPort = prefs.getUInt("mprt", 1883);
+        if (prefs.isKey("mqu")) prefs.getString("mqu", sysCfg.cMqttUser, 32);
+        if (prefs.isKey("mqp")) prefs.getString("mqp", sysCfg.cMqttPass, 32);
+        if (prefs.isKey("mqpr")) prefs.getString("mqpr", sysCfg.cMqttPrefix, 64);
         
-        if (prefs.isKey("hbeat")) sysCfg.heartbeat_interval = prefs.getUInt("hbeat", DEFAULT_HEARBEAT_INTERVAL);
-        if (prefs.isKey("mpi")) sysCfg.mqtt_poll_interval = prefs.getUShort("mpi", DEFAULT_MQTT_POLL);
-        if (prefs.isKey("bpi")) sysCfg.bacnet_poll_interval = prefs.getUShort("bpi", DEFAULT_BACNET_POLL);
-        if (prefs.isKey("tskip")) sysCfg.token_skip = prefs.getUChar("tskip", DEFAULT_TOKEN_SKIP);
-        if (prefs.isKey("mif")) sysCfg.max_info_frames = prefs.getUChar("mif", DEFAULT_MAX_INFO_FRAMES);
+        if (prefs.isKey("hbeat")) sysCfg.ulHeartbeatInterval = prefs.getUInt("hbeat", configDEFAULT_HEARTBEAT_INTERVAL);
+        if (prefs.isKey("mpi")) sysCfg.usMqttPollInterval = prefs.getUShort("mpi", configDEFAULT_MQTT_POLL);
+        if (prefs.isKey("bpi")) sysCfg.usBacnetPollInterval = prefs.getUShort("bpi", configDEFAULT_BACNET_POLL);
+        if (prefs.isKey("tskip")) sysCfg.ucTokenSkip = prefs.getUChar("tskip", configDEFAULT_TOKEN_SKIP);
+        if (prefs.isKey("mif")) sysCfg.ucMaxInfoFrames = prefs.getUChar("mif", configDEFAULT_MAX_INFO_FRAMES);
         
-        if (prefs.isKey("adu")) prefs.getString("adu", sysCfg.admin_user, 32);
-        if (prefs.isKey("adp")) prefs.getString("adp", sysCfg.admin_pass, 64);
-        if (prefs.isKey("lvl")) sysCfg.log_level = prefs.getUChar("lvl", LOG_INFO);
-        if (prefs.isKey("ha_disc")) sysCfg.ha_discover = prefs.getBool("ha_disc", DEFAULT_HA_DISCOVER);
-        if (prefs.isKey("n_min")) sysCfg.default_number_min = prefs.getFloat("n_min", DEFAULT_NUM_MIN);
-        if (prefs.isKey("n_max")) sysCfg.default_number_max = prefs.getFloat("n_max", DEFAULT_NUM_MAX);
-        if (prefs.isKey("n_stp")) sysCfg.default_number_step = prefs.getFloat("n_stp", DEFAULT_NUM_STEP);
+        if (prefs.isKey("adu")) prefs.getString("adu", sysCfg.cAdminUser, 32);
+        if (prefs.isKey("adp")) prefs.getString("adp", sysCfg.cAdminPass, 64);
+        if (prefs.isKey("lvl")) sysCfg.ucLogLevel = prefs.getUChar("lvl", pdLOG_INFO);
+        if (prefs.isKey("ha_disc")) sysCfg.xHaDiscover = prefs.getBool("ha_disc", configDEFAULT_HA_DISCOVER);
+        if (prefs.isKey("n_min")) sysCfg.fDefaultNumberMin = prefs.getFloat("n_min", configDEFAULT_NUM_MIN);
+        if (prefs.isKey("n_max")) sysCfg.fDefaultNumberMax = prefs.getFloat("n_max", configDEFAULT_NUM_MAX);
+        if (prefs.isKey("n_stp")) sysCfg.fDefaultNumberStep = prefs.getFloat("n_stp", configDEFAULT_NUM_STEP);
         
         prefs.end();
     }
-    z_log(LOG_INFO, "NVS", "[NVS] Configuration Loaded\n");
+    z_log(pdLOG_INFO, "NVS", "[NVS] Configuration Loaded\n");
 
     // Chargement de la liste des devices enregistrés
     Preferences reg;
@@ -189,42 +189,42 @@ void load_configuration() {
 void save_configuration() {
     Preferences prefs;
     if (prefs.begin("system", false)) {
-        prefs.putString("ssid", sysCfg.wifi_ssid);
-        prefs.putString("pass", sysCfg.wifi_pass);
-        prefs.putBool("static", sysCfg.static_ip);
-        prefs.putString("ip", sysCfg.local_ip);
-        prefs.putString("gw", sysCfg.gateway);
-        prefs.putString("sn", sysCfg.subnet);
+        prefs.putString("ssid", sysCfg.cWifiSsid);
+        prefs.putString("pass", sysCfg.cWifiPass);
+        prefs.putBool("static", sysCfg.xStaticIp);
+        prefs.putString("ip", sysCfg.cLocalIp);
+        prefs.putString("gw", sysCfg.cGateway);
+        prefs.putString("sn", sysCfg.cSubnet);
         
-        prefs.putUChar("mac", sysCfg.mac_address);
-        prefs.putUChar("mm", sysCfg.max_master);
-        prefs.putUInt("did", sysCfg.device_id);
-        prefs.putUShort("to", sysCfg.apdu_timeout);
-        prefs.putUChar("ret", sysCfg.max_retries);
+        prefs.putUChar("mac", sysCfg.ucMacAddress);
+        prefs.putUChar("mm", sysCfg.ucMaxMaster);
+        prefs.putUInt("did", sysCfg.ulDeviceId);
+        prefs.putUShort("to", sysCfg.usApduTimeout);
+        prefs.putUChar("ret", sysCfg.ucMaxRetries);
         
-        prefs.putString("mqh", sysCfg.mqtt_server);
-        prefs.putUInt("mprt", sysCfg.mqtt_port);
-        prefs.putString("mqu", sysCfg.mqtt_user);
-        prefs.putString("mqp", sysCfg.mqtt_pass);
-        prefs.putString("mqpr", sysCfg.mqtt_prefix);
+        prefs.putString("mqh", sysCfg.cMqttServer);
+        prefs.putUInt("mprt", sysCfg.usMqttPort);
+        prefs.putString("mqu", sysCfg.cMqttUser);
+        prefs.putString("mqp", sysCfg.cMqttPass);
+        prefs.putString("mqpr", sysCfg.cMqttPrefix);
         
-        prefs.putUInt("hbeat", sysCfg.heartbeat_interval);
-        prefs.putUShort("mpi", sysCfg.mqtt_poll_interval);
-        prefs.putUShort("bpi", sysCfg.bacnet_poll_interval);
-        prefs.putUChar("tskip", sysCfg.token_skip);
-        prefs.putUChar("mif", sysCfg.max_info_frames);
+        prefs.putUInt("hbeat", sysCfg.ulHeartbeatInterval);
+        prefs.putUShort("mpi", sysCfg.usMqttPollInterval);
+        prefs.putUShort("bpi", sysCfg.usBacnetPollInterval);
+        prefs.putUChar("tskip", sysCfg.ucTokenSkip);
+        prefs.putUChar("mif", sysCfg.ucMaxInfoFrames);
         
-        prefs.putString("adu", sysCfg.admin_user);
-        prefs.putString("adp", sysCfg.admin_pass);
-        prefs.putUChar("lvl", sysCfg.log_level);
-        prefs.putBool("ha_disc", sysCfg.ha_discover);
-        prefs.putFloat("n_min", sysCfg.default_number_min);
-        prefs.putFloat("n_max", sysCfg.default_number_max);
-        prefs.putFloat("n_stp", sysCfg.default_number_step);
+        prefs.putString("adu", sysCfg.cAdminUser);
+        prefs.putString("adp", sysCfg.cAdminPass);
+        prefs.putUChar("lvl", sysCfg.ucLogLevel);
+        prefs.putBool("ha_disc", sysCfg.xHaDiscover);
+        prefs.putFloat("n_min", sysCfg.fDefaultNumberMin);
+        prefs.putFloat("n_max", sysCfg.fDefaultNumberMax);
+        prefs.putFloat("n_stp", sysCfg.fDefaultNumberStep);
         
         prefs.end();
     }
-    z_log(LOG_INFO, "NVS", "[NVS] Configuration System Saved\n");
+    z_log(pdLOG_INFO, "NVS", "[NVS] Configuration System Saved\n");
 }
 
 /**
@@ -290,7 +290,7 @@ void save_device_objects_locked(uint32_t device_id) {
                         }
                         reg.end();
                     }
-                    z_log(LOG_INFO, "NVS", "[NVS] SUCCESS: Saved Device %lu\n", (unsigned long)device_id);
+                    z_log(pdLOG_INFO, "NVS", "[NVS] SUCCESS: Saved Device %lu\n", (unsigned long)device_id);
                 }
                 break; 
             }
@@ -329,7 +329,7 @@ void save_object_states(uint32_t device_id, uint16_t type, uint32_t instance, co
     if (prefs.begin(ns, false)) {
         prefs.putString(key, combined);
         prefs.end();
-        z_log(LOG_DEBUG, "NVS", "[NVS] Saved States for %u:%lu (%d labels)\n", type, instance, (int)states.size());
+        z_log(pdLOG_DEBUG, "NVS", "[NVS] Saved States for %u:%lu (%d labels)\n", type, instance, (int)states.size());
     }
 }
 

@@ -9,16 +9,16 @@ extern "C" {
 
 // Global system variables
 Config sysCfg;
-AsyncWebServer webServer(WEB_PORT);
+AsyncWebServer webServer(configWEB_PORT);
 AsyncWebSocket ws("/ws-logs");
 esp_mqtt_client_handle_t mqtt_client = NULL;
-bool is_ap_mode = false;
-bool pending_reboot = false;
-uint32_t reboot_timer = 0;
+BaseType_t xIsApMode = pdFALSE;
+BaseType_t xPendingReboot = pdFALSE;
+uint32_t ulRebootTimer = 0;
 
 // System Task for Core 0 (handles WiFi, MQTT, and OTA updates)
 void system_task(void *pvParameters) {
-    z_log(LOG_INFO, "SYS", "System Task started on Core %d\n", xPortGetCoreID());
+    z_log(pdLOG_INFO, "SYS", "System Task started on Core %d\n", xPortGetCoreID());
     for(;;) {
         handle_network();
         handle_mqtt();
@@ -29,7 +29,7 @@ void system_task(void *pvParameters) {
 void setup() {
     Serial.begin(115200);
     delay(1000);
-    Serial.println("\n\n>>> " + String(VERSION_GLOBAL) + " - DUAL CORE MODE <<<");
+    Serial.println("\n\n>>> " + String(configVERSION_GLOBAL) + " - DUAL CORE MODE <<<");
 
     // --- NVS (Non-Volatile Storage) Self-Healing Routine ---
     esp_err_t err = nvs_flash_init();
@@ -46,7 +46,7 @@ void setup() {
     // Create the System task on Core 0
     xTaskCreatePinnedToCore(system_task, "SystemTask", 8192, NULL, 5, NULL, 0);
 
-    Serial.println("[" + String(VERSION_GLOBAL) + "] System Operational.");
+    Serial.println("[" + String(configVERSION_GLOBAL) + "] System Operational.");
 }
 
 void loop() {
