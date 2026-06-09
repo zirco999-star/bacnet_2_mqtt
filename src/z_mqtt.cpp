@@ -581,7 +581,7 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                                 snprintf(dev_id_str, sizeof(dev_id_str), "bacnet_dev_%lu", (unsigned long)dev.ulDeviceId);
                                 ids.add(String(dev_id_str));
                                 device["name"] = dev.name.length() > 0 ? String(dev.name) : String(dev_id_str);
-                                device["mf"] = dev.cVendor.length() > 0 ? String(dev.cVendor) : "BACnet Manufacturer";
+                                device["mf"] = dev.vendor.length() > 0 ? String(dev.vendor) : "BACnet Manufacturer";
                                 device["sw"] = configVERSION_GLOBAL;
 
                                 serializeJson(doc, final_payload);

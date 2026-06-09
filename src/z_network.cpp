@@ -301,7 +301,7 @@ void setup_network_infrastructure() {
                 for (auto& dev : bacnet_network_cache) {
                     JsonObject c = controllers.add<JsonObject>();
                     c["ulDeviceId"] = dev.ulDeviceId;
-                    c["name"] = dev.name; c["cVendor"] = dev.cVendor; c["xEnabled"] = dev.xEnabled;
+                    c["name"] = dev.name; c["cVendor"] = dev.vendor; c["xEnabled"] = dev.xEnabled;
                     JsonArray objs_arr = c["objects"].to<JsonArray>();
                     for (auto& o : dev.objects) {
                         JsonObject obj = objs_arr.add<JsonObject>();

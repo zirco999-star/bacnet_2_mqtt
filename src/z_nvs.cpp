@@ -34,10 +34,17 @@ void load_device_objects(uint32_t ulDeviceId) {
                     dev.ucMacAddress = head.ucMacAddress;
                     dev.xEnabled = head.xEnabled;
                     dev.name = String(head.cName);
-                    dev.cVendor = String(head.cVendor);
+                    dev.vendor = String(head.cVendor);
                     dev.xDiscoveryDone = head.xDiscoveryDone;
                     dev.ucDiscStep = (DISC_STEP_T)head.ucDiscStep;
                     dev.usDiscObjIdx = head.usDiscObjIdx;
+
+                    // Nouveaux champs (avec fallback si non présents/valides)
+                    dev.usMaxApduLengthAccepted = head.usMaxApduLengthAccepted > 0 ? head.usMaxApduLengthAccepted : 480;
+                    dev.ulApduTimeout = head.ulApduTimeout > 0 ? head.ulApduTimeout : 3000;
+                    dev.ucNumberOfApduRetries = head.ucNumberOfApduRetries;
+                    dev.xSupportsRpm = head.xSupportsRpm;
+
                     dev.last_seen = millis();
 
                     for (int p = 0; p * 20 < head.usCount; p++) {
@@ -252,7 +259,7 @@ void save_device_objects_locked(uint32_t ulDeviceId) {
                     head.ucDiscStep = (uint8_t)dev.ucDiscStep;
                     head.usDiscObjIdx = dev.usDiscObjIdx;
                     strlcpy(head.cName, dev.name.c_str(), 32);
-                    strlcpy(head.cVendor, dev.cVendor.c_str(), 32);
+                    strlcpy(head.cVendor, dev.vendor.c_str(), 32);
                     
                     prefs.putBytes("head", &head, sizeof(head));
 

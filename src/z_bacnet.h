@@ -30,6 +30,11 @@ struct BACnetPersistenceDev {
     bool xDiscoveryDone;
     uint16_t usDiscObjIdx;
     uint8_t ucDiscStep;
+    // Nouveaux champs v6.8.3
+    uint16_t usMaxApduLengthAccepted; // Prop 62
+    uint32_t ulApduTimeout;           // Prop 11
+    uint8_t ucNumberOfApduRetries;    // Prop 73
+    bool xSupportsRpm;                // Fallback flag
 };
 
 // Structure de transport pour les pages (pour respecter la limite 1984 octets)
@@ -161,9 +166,16 @@ struct BACnetDevice {
     uint8_t ucMacAddress = 0;
     uint32_t ulDeviceId = 4194303;
     String name = "";
-    String cVendor = "";
+    String vendor = "";
     String version = "";
     bool xEnabled = true;
+
+    // Nouveaux paramètres réseau dynamiques (v6.8.3)
+    uint16_t usMaxApduLengthAccepted = 480;
+    uint32_t ulApduTimeout = 3000;
+    uint8_t ucNumberOfApduRetries = 3;
+    bool xSupportsRpm = true;
+
     std::vector<BACnetObject> objects;
     uint32_t last_seen = 0;
     bool xDiscoveryDone = false;
