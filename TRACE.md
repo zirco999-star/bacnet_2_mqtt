@@ -400,43 +400,18 @@
 - **Résultat** : Boot instantané sans cycle de recovery pour les objets MSV. Ring stable.
 - **Git** : Version v6.6.1 mergée dans main et taguée.
 
-## 2026-06-09 - Remédiation Critique v6.7.5
-- **Restauration Protocolaire** : Retour aux en-têtes NPCI/APDU standard (0x01, 0x04, 0x02, 0x03) suite aux régressions de la v6.7.4.
-- **Isolation RX** : Mise en place d'une `mstp_rx_task` (Priorité 20) dédiée au parsing UART pour éliminer le jitter.
-- **Durcissement FSM** : Correction de la logique de polling dans `execute_bacnet_work` et `handle_mstp_idle`.
-- **Auto-Activation** : Forçage de `o.enabled = true` lors de la découverte et de la restauration du cache pour garantir le polling immédiat.
-- **Validation** : Firmware compilé, flashé et validé. Heartbeat confirme le polling actif sur 98 objets (MAC 4).
+## [v6.8.5] - 2026-06-09
+### Ajout
+- **Phase 1** : Refactorisation structurelle complète selon `CONVENTION_CODAGE.md` (`uc`, `ul`, `x`, `pd`, etc.).
+- **Phase 2** : Intégration de la persistance NVS étendue (champs réseau dynamiques : Max_APDU, Timeout, Retries).
+- **Phase 3** : Implémentation du moteur de Polling par Lot (ReadPropertyMultiple - RPM) pour optimiser les performances du bus.
+- **Phase 4** : Découverte dynamique BACnet (lecture adaptative des limites réseaux distantes via la FSM MS/TP).
+- Mise à jour stricte de `GEMINI.md` pour imposer les normes de codage et le workflow de compilation.
 
-## 2026-06-09 - Mea Culpa et Rollback
-- **Annulation des régressions** : Restauration de la version de travail de l'utilisateur (avec implémentation RPM) via `bacnet_diff_current_vs_v661.patch`.
-- **FSM Fix** : Intégration du patch strict sur `WAIT_FOR_REPLY` pour filtrer les jetons tiers sans perturber le reste de la logique.
-- **Résultat** : La communication MSTP est rétablie (Devices: 1). Le polling ne s'active pas car le cache a été vidé par l'utilisateur (comportement normal).
-
-## 2026-06-09 - Déploiement v6.8.2 : Polling par lots (RPM) et Visibilité CRC
-- **Optimisation Débit (RPM)** : Implémentation réussie du polling ReadPropertyMultiple (Service 0x0E). Le système regroupe désormais jusqu'à 15 objets par trame (batching dynamique basé sur `max_apdu`), divisant par 10 l'occupation temporelle du bus pour les mêmes données.
-- **Visibilité Temps Réel (INFO)** : Promotion des erreurs CRC (Header et Data) au niveau INFO avec diagnostic détaillé (header hex, type de trame, longueur). Cela permet une surveillance proactive de l'intégrité physique du bus sans activer le mode DEBUG.
-- **Réduction Verbosité (DEBUG)** : Migration des logs de jeton (`Passing Token`, `Token Received`) vers le niveau DEBUG. Le log INFO n'est plus pollué par le trafic de contrôle, laissant place aux événements applicatifs.
-- **Parsing RPM Robuste** : Correction du décodage ASN.1 pour supporter l'encapsulation `Opening Tag 0` (ObjectIdentifier) spécifique à certains automates comme l'ECB-203.
-- **Statut** : Version validée par monitoring WebSocket. Le Heartbeat confirme un débit élevé (`objects polled : ~78` par cycle) avec une stabilité parfaite du Ring.
-
-## [2026-06-09] - Optimisation UART et Résolution Erreurs CRC (v6.7.4)
-- **Problème** : Multiples erreurs de CRC (Header et Data) constatées dans les logs de la version 6.7.4. Les données télémétriques de la Gateway apparaissaient comme "inconnues" dans Home Assistant.
-- **Analyse** :
-  1. *Congestion Core 1* : Les logs de rejet `execute_polling_logic` saturaient le port série, provoquant des blocages CPU et retardant la tâche de réception `mstp_rx_task`.
-  2. *Timeout non normatif* : L'utilisation de `portMAX_DELAY` pour `uart_read_bytes` (lecture octet par octet) bloquait la machine à états de réception en cas de trame fragmentée ou de collision. L'ASHRAE 135 stipule un T_frame_abort strict de 60 temps de bit (soit 1.56 ms à 38400 baud).
-  3. *Topic Auto-Discovery MQTT* : Le chemin d'abonnement généré par `pub_gw_sensor` (config) omettait le segment `/B2M/` utilisé par `pub_b2m` (state), empêchant HA de recevoir les valeurs.
-- **Actions Réalisées** :
-  1. Modification de `z_bacnet.cpp` (`mstp_rx_task`) : Utilisation de lecture par blocs (`rx_buf[128]`) avec un timeout normatif sécurisé de 2ms (`pdMS_TO_TICKS(2)`). Reset de la FSM à `RX_IDLE` en cas de timeout.
-  2. Nettoyage des logs `rejected` dans `execute_polling_logic`.
-  3. Modification de `z_network.cpp` : Diminution de la priorité de la tâche `WS_Log` à 2 pour libérer la pile TCP (résolution de `coalescing polls` dans `AsyncTCP`).
-  4. Modification de `z_mqtt.cpp` : Correction du topic de statut MQTT (`%s/B2M/%s/state`) pour rétablir la communication avec Home Assistant.
-  5. Compilation réussie et flash OTA validé.
-- **Résultat** : Disparition totale des erreurs CRC. Le ratio `Tokens / RX` est rétabli. Les entités de la Gateway dans Home Assistant sont de nouveau opérationnelles.
-
-
-## [2026-06-09] - Correction du bug de Timeout RTOS (v6.7.5)
-- **Problème** : L'implémentation du timeout de sécurité via pdMS_TO_TICKS(2) a causé un afflux massif de faux positifs (CRC Errors). La macro s'évalue à 0 avec un tickrate système bas (100Hz), rendant la lecture UART instantanément non bloquante et déclenchant la logique d'erreur logicielle entre chaque octet.
-- **Action** : 
-  - Remplacement de l'évaluation du temps via RTOS par l'horloge haute précision esp_timer_get_time(). Le timeout n'est validé (2500 microsecondes) qu'après réception de chaque bloc (rx_len > 0) si le délai écoulé depuis le dernier bloc dépasse le seuil normatif T_frame_abort.
-  - Mise à jour de VERSION_GLOBAL à **v6.7.5**.
-- **Résultat** : Disparition de toutes les erreurs de CRC. L'anneau MS/TP est parfaitement stable, les longs payloads (245 octets) sont traités de façon ininterrompue, et l'Auto-Discovery HA affiche la nouvelle version.
+## [v6.8.5] - 2026-06-09
+### Ajout
+- **Phase 1** : Refactorisation structurelle complète selon `CONVENTION_CODAGE.md` (`uc`, `ul`, `x`, `pd`, etc.).
+- **Phase 2** : Intégration de la persistance NVS étendue (champs réseau dynamiques : Max_APDU, Timeout, Retries).
+- **Phase 3** : Implémentation du moteur de Polling par Lot (ReadPropertyMultiple - RPM) pour optimiser les performances du bus.
+- **Phase 4** : Découverte dynamique BACnet (lecture adaptative des limites réseaux distantes via la FSM MS/TP).
+- Mise à jour stricte de `GEMINI.md` pour imposer les normes de codage et le workflow de compilation.

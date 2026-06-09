@@ -1,12 +1,9 @@
+.gemini/
 extract/
 .vscode/
 .theia/
-build/
 .pio/
-*.bin
-*.elf
 *.map
 tmp_*
 index_html.h.gch
-
 tmp/

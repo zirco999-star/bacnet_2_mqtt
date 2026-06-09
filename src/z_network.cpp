@@ -78,7 +78,7 @@ static void websocket_log_task(void *pvParameters) {
 // Safe logging function that adds messages to the queue without blocking the program
 void z_log(int level, const char* tag, const char* format, ...) {
     // 1. Filtrage temps réel : on ignore le log si sa priorité est trop faible
-    if (level > sysCfg.ucLogLevel) return;
+    if (level > sysCfg.log_level) return;
 
     // 2. Détermination de la chaîne de sévérité
     char lvl_str[5] = "INF";
@@ -151,19 +151,19 @@ void setup_network_infrastructure() {
     WiFi.persistent(false); WiFi.disconnect(true);
     vTaskDelay(pdMS_TO_TICKS(100));
 
-    if (strlen(sysCfg.cWifiSsid) == 0) {
-        xIsApMode = true; WiFi.mode(WIFI_AP);
+    if (strlen(sysCfg.wifi_ssid) == 0) {
+        is_ap_mode = true; WiFi.mode(WIFI_AP);
         WiFi.softAP("ZIRCON-GW-CONFIG", "admin1234");
     } else {
-        xIsApMode = false; WiFi.mode(WIFI_STA);
+        is_ap_mode = false; WiFi.mode(WIFI_STA);
         esp_wifi_set_ps(WIFI_PS_NONE);
-        if (sysCfg.xStaticIp) {
+        if (sysCfg.static_ip) {
             IPAddress ip, gw, sn;
-            if (ip.fromString(sysCfg.cLocalIp) && gw.fromString(sysCfg.cGateway) && sn.fromString(sysCfg.cSubnet)) {
+            if (ip.fromString(sysCfg.local_ip) && gw.fromString(sysCfg.gateway) && sn.fromString(sysCfg.subnet)) {
                 WiFi.config(ip, gw, sn);
             }
         }
-            WiFi.begin(sysCfg.cWifiSsid, sysCfg.cWifiPass);
+            WiFi.begin(sysCfg.wifi_ssid, sysCfg.wifi_pass);
         wifi_connect_start = millis();
     }
 
@@ -215,56 +215,56 @@ void setup_network_infrastructure() {
             doc["cur_mask"] = WiFi.subnetMask().toString();
             doc["cur_gw"] = WiFi.gatewayIP().toString();
             
-            doc["ssid"] = sysCfg.cWifiSsid;
-            doc["static"] = sysCfg.xStaticIp;
-            doc["ip"] = sysCfg.cLocalIp;
-            doc["gw"] = sysCfg.cGateway;
-            doc["mask"] = sysCfg.cSubnet;
+            doc["ssid"] = sysCfg.wifi_ssid;
+            doc["static"] = sysCfg.static_ip;
+            doc["ip"] = sysCfg.local_ip;
+            doc["gw"] = sysCfg.gateway;
+            doc["mask"] = sysCfg.subnet;
             
-            doc["mqs"] = sysCfg.cMqttServer;
-            doc["mqu"] = sysCfg.cMqttUser;
-            doc["mqpr"] = sysCfg.cMqttPrefix;
-            doc["ha_disc"] = sysCfg.xHaDiscover;
-            doc["n_min"] = sysCfg.fDefaultNumberMin;
-            doc["n_max"] = sysCfg.fDefaultNumberMax;
-            doc["n_stp"] = sysCfg.fDefaultNumberStep;
+            doc["mqs"] = sysCfg.mqtt_server;
+            doc["mqu"] = sysCfg.mqtt_user;
+            doc["mqpr"] = sysCfg.mqtt_prefix;
+            doc["ha_disc"] = sysCfg.ha_discover;
+            doc["n_min"] = sysCfg.default_number_min;
+            doc["n_max"] = sysCfg.default_number_max;
+            doc["n_stp"] = sysCfg.default_number_step;
             
             doc["mqtt"] = is_mqtt_connected();
             doc["heap"] = ESP.getFreeHeap() / 1024;
             doc["uptime"] = millis() / 1000;
             
             doc["mac"] = sysCfg.ucMacAddress;
-            doc["mm"] = sysCfg.ucMaxMaster;
+            doc["mm"] = sysCfg.max_master;
             doc["did"] = sysCfg.ulDeviceId;
-            doc["to"] = sysCfg.usApduTimeout;
-            doc["ret"] = sysCfg.ucMaxRetries;
-            doc["hbeat"] = sysCfg.ulHeartbeatInterval;
-            doc["tskip"] = sysCfg.ucTokenSkip;
-            doc["mif"] = sysCfg.ucMaxInfoFrames;
-            doc["mpi"] = sysCfg.usMqttPollInterval;
-            doc["bpi"] = sysCfg.usBacnetPollInterval;
-            doc["adu"] = sysCfg.cAdminUser;
-            doc["lvl"] = sysCfg.ucLogLevel;
+            doc["to"] = sysCfg.ulApduTimeout;
+            doc["ret"] = sysCfg.max_retries;
+            doc["hbeat"] = sysCfg.heartbeat_interval;
+            doc["tskip"] = sysCfg.token_skip;
+            doc["mif"] = sysCfg.max_info_frames;
+            doc["mpi"] = sysCfg.mqtt_poll_interval;
+            doc["bpi"] = sysCfg.bacnet_poll_interval;
+            doc["adu"] = sysCfg.admin_user;
+            doc["lvl"] = sysCfg.log_level;
 
-            doc["mstp_t"] = bacnetStats.ring_active;
-            doc["mstp_cnt"] = bacnetStats.tokens_seen;
-            doc["mstp_rx"] = bacnetStats.ms_msgs_rx;
-            doc["mstp_tx"] = bacnetStats.ms_msgs_tx;
-            doc["mstp_err"] = bacnetStats.errors_crc;
+            doc["mstp_t"] = bacnetStats.xRingActive;
+            doc["mstp_cnt"] = bacnetStats.ulTokensSeen;
+            doc["mstp_rx"] = bacnetStats.ulMsMsgsRx;
+            doc["mstp_tx"] = bacnetStats.ulMsMsgsTx;
+            doc["mstp_err"] = bacnetStats.ulErrorsCrc;
 
             JsonArray devices = doc["devices"].to<JsonArray>();
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
                 for (auto& dev : bacnet_network_cache) {
                     JsonObject d = devices.add<JsonObject>();
-                    d["id"] = dev.device_id;
-                    d["step"] = (int)dev.disc_step;
-                    d["idx"] = dev.disc_obj_idx;
+                    d["id"] = dev.ulDeviceId;
+                    d["step"] = (int)dev.ucDiscStep;
+                    d["idx"] = dev.usDiscObjIdx;
                     d["total"] = dev.objects.size();
-                    d["enabled"] = dev.enabled;
-                    d["done"] = dev.discovery_done;
+                    d["xEnabled"] = dev.xEnabled;
+                    d["done"] = dev.xDiscoveryDone;
                     
                     int sel = 0;
-                    for(auto& o : dev.objects) if(o.enabled) sel++;
+                    for(auto& o : dev.objects) if(o.xEnabled) sel++;
                     d["sel"] = sel;
                 }
                 xSemaphoreGive(cache_mutex);
@@ -300,14 +300,14 @@ void setup_network_infrastructure() {
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
                 for (auto& dev : bacnet_network_cache) {
                     JsonObject c = controllers.add<JsonObject>();
-                    c["device_id"] = dev.device_id;
-                    c["name"] = dev.name; c["vendor"] = dev.vendor; c["enabled"] = dev.enabled;
+                    c["ulDeviceId"] = dev.ulDeviceId;
+                    c["name"] = dev.name; c["cVendor"] = dev.vendor; c["xEnabled"] = dev.xEnabled;
                     JsonArray objs_arr = c["objects"].to<JsonArray>();
                     for (auto& o : dev.objects) {
                         JsonObject obj = objs_arr.add<JsonObject>();
-                        obj["type"] = o.type; obj["inst"] = o.instance; obj["name"] = o.name;
-                        obj["val"] = o.present_value; obj["poll"] = o.enabled;
-                        obj["unit"] = o.unit_text;
+                        obj["type"] = o.usType; obj["inst"] = o.ulInstance; obj["name"] = o.cName;
+                        obj["val"] = o.fPresentValue; obj["poll"] = o.xEnabled;
+                        obj["unit"] = o.cUnitText;
                     }
                 }
                 xSemaphoreGive(cache_mutex);
@@ -340,9 +340,9 @@ void setup_network_infrastructure() {
             uint32_t did = request->getParam("id", true)->value().toInt();
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
                 for (auto& dev : bacnet_network_cache) {
-                    if (dev.device_id == did) {
-                        dev.discovery_done = false;
-                        dev.disc_step = DISC_DEV_ID;
+                    if (dev.ulDeviceId == did) {
+                        dev.xDiscoveryDone = false;
+                        dev.ucDiscStep = DISC_DEV_ID;
                         dev.objects.clear();
                         z_log(pdLOG_INFO, "API", "Reloading device %lu\n", (unsigned long)did);
                         break;
@@ -363,13 +363,13 @@ void setup_network_infrastructure() {
             
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
                 for (auto& dev : bacnet_network_cache) {
-                    if (dev.device_id == did) {
+                    if (dev.ulDeviceId == did) {
                         for (size_t i = 0; i < dev.objects.size(); i++) {
-                            if (dev.objects[i].instance == inst && dev.objects[i].type == type) {
-                                dev.reload_single = true;
-                                dev.disc_obj_idx = i;
-                                dev.disc_step = DISC_OBJ_NAME; // On veut rafraîchir toutes les métadonnées (Nom, Unités)
-                                dev.discovery_done = false;
+                            if (dev.objects[i].ulInstance == inst && dev.objects[i].usType == type) {
+                                dev.xReloadSingle = true;
+                                dev.usDiscObjIdx = i;
+                                dev.ucDiscStep = DISC_OBJ_NAME; // On veut rafraîchir toutes les métadonnées (Nom, Unités)
+                                dev.xDiscoveryDone = false;
                                 break;
                             }
                         }
@@ -400,13 +400,13 @@ void setup_network_infrastructure() {
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
                 uint8_t target_mac = 0;
                 for (auto& dev : bacnet_network_cache) {
-                    if (dev.device_id == did) {
-                        target_mac = dev.mac_address;
+                    if (dev.ulDeviceId == did) {
+                        target_mac = dev.ucMacAddress;
                         for (auto& obj : dev.objects) {
-                            if (obj.instance == inst && obj.type == type) {
+                            if (obj.ulInstance == inst && obj.usType == type) {
                                 // Si le nom a changé, on met à jour localement ET sur l'automate
-                                if (name.length() > 0 && strcmp(obj.name, name.c_str()) != 0) {
-                                    strlcpy(obj.name, name.c_str(), sizeof(obj.name));
+                                if (name.length() > 0 && strcmp(obj.cName, name.c_str()) != 0) {
+                                    strlcpy(obj.cName, name.c_str(), sizeof(obj.cName));
                                     BACnetJob job;
                                     job.type = JOB_WRITE_PROP;
                                     job.target_mac = target_mac;
@@ -423,32 +423,32 @@ void setup_network_infrastructure() {
                                 }
                                 
                                 // L'unité est TOUJOURS gérée localement (RAM + NVS) pour permettre l'override utilisateur
-                                if (unit.length() > 0 && strcmp(obj.unit_text, unit.c_str()) != 0) {
-                                    strlcpy(obj.unit_text, unit.c_str(), sizeof(obj.unit_text));
+                                if (unit.length() > 0 && strcmp(obj.cUnitText, unit.c_str()) != 0) {
+                                    strlcpy(obj.cUnitText, unit.c_str(), sizeof(obj.cUnitText));
                                     z_log(pdLOG_INFO, "WEB", "Local Unit Override: Obj T%u I%lu -> %s (NVS only)\n", type, (unsigned long)inst, unit.c_str());
                                     // Pas de WriteProperty pour l'unité, mais publication MQTT pour HA
                                     trigger_ha_discovery(did, inst, type); 
                                 }
 
-                                if (obj.enabled != poll) {
-                                    obj.enabled = poll;
+                                if (obj.xEnabled != poll) {
+                                    obj.xEnabled = poll;
                                     // Si on active/désactive l'objet, on force la synchro HA
                                     trigger_ha_discovery(did, inst, type);
                                     
                                     // Si on l'active, on le force aussi à recharger sa valeur immédiatement
                                     if (poll) {
-                                        dev.reload_single = true;
+                                        dev.xReloadSingle = true;
                                         // On réinitialise l'étape pour forcer la relecture de la prop 87 et 85
                                         // Cela permettra à HA de savoir si c'est un sensor ou un switch
-                                        dev.disc_step = DISC_OBJ_COMMANDABLE; 
+                                        dev.ucDiscStep = DISC_OBJ_COMMANDABLE; 
                                         // On trouve l'index de cet objet
                                         for (size_t i = 0; i < dev.objects.size(); i++) {
-                                            if (dev.objects[i].instance == inst && dev.objects[i].type == type) {
-                                                dev.disc_obj_idx = i;
+                                            if (dev.objects[i].ulInstance == inst && dev.objects[i].usType == type) {
+                                                dev.usDiscObjIdx = i;
                                                 break;
                                             }
                                         }
-                                        dev.discovery_done = false; 
+                                        dev.xDiscoveryDone = false; 
                                     }
                                 }
                                 break; 
@@ -485,13 +485,13 @@ void setup_network_infrastructure() {
             // -------------------------------------------------------------
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
                 for (auto& dev : bacnet_network_cache) {
-                    if (dev.device_id == did) {
-                        dev.enabled = !dev.enabled; // Bascule de l'état
+                    if (dev.ulDeviceId == did) {
+                        dev.xEnabled = !dev.xEnabled; // Bascule de l'état
                         
                         // v6.3.8: Reprise de la Phase 2 si l'automate est activé manuellement
-                        if (dev.enabled && dev.discovery_done && dev.disc_step == DISC_OBJ_OID) {
-                            z_log(pdLOG_INFO, "WEB", "User Activation: Resuming discovery for MAC %d (Phase 2)\n", dev.mac_address);
-                            dev.discovery_done = false;
+                        if (dev.xEnabled && dev.xDiscoveryDone && dev.ucDiscStep == DISC_OBJ_OID) {
+                            z_log(pdLOG_INFO, "WEB", "User Activation: Resuming discovery for MAC %d (Phase 2)\n", dev.ucMacAddress);
+                            dev.xDiscoveryDone = false;
                         }
                         break; 
                     }
@@ -528,18 +528,18 @@ void setup_network_infrastructure() {
         if (request->hasParam("form_type", true)) ft = request->getParam("form_type", true)->value();
 
         if (ft == "wifi") {
-            strlcpy(sysCfg.cWifiSsid, request->getParam("ssid", true)->value().c_str(), 32);
+            strlcpy(sysCfg.wifi_ssid, request->getParam("ssid", true)->value().c_str(), 32);
             String p_val = request->getParam("pass", true)->value();
             if (p_val.length() > 0 && p_val != "******") {
-                strlcpy(sysCfg.cWifiPass, p_val.c_str(), 64);
+                strlcpy(sysCfg.wifi_pass, p_val.c_str(), 64);
             }
             
-            sysCfg.xStaticIp = request->hasParam("static_ip", true);
+            sysCfg.static_ip = request->hasParam("static_ip", true);
             String l_ip = request->getParam("local_ip", true)->value();
             String l_gw = request->getParam("gateway", true)->value();
             String l_sn = request->getParam("subnet", true)->value();
             
-            if (sysCfg.xStaticIp) {
+            if (sysCfg.static_ip) {
                 IPAddress tmp;
                 if (!tmp.fromString(l_ip) || !tmp.fromString(l_gw) || !tmp.fromString(l_sn)) {
                     request->send(400, "text/plain", "Invalid IP/GW/Subnet format.");
@@ -547,55 +547,55 @@ void setup_network_infrastructure() {
                 }
             }
             
-            strlcpy(sysCfg.cLocalIp, l_ip.c_str(), 16);
-            strlcpy(sysCfg.cGateway, l_gw.c_str(), 16);
-            strlcpy(sysCfg.cSubnet, l_sn.c_str(), 16);
+            strlcpy(sysCfg.local_ip, l_ip.c_str(), 16);
+            strlcpy(sysCfg.gateway, l_gw.c_str(), 16);
+            strlcpy(sysCfg.subnet, l_sn.c_str(), 16);
         } else if (ft == "mqtt") {
-            char old_pr[64]; strlcpy(old_pr, sysCfg.cMqttPrefix, 64);
-            strlcpy(sysCfg.cMqttServer, request->getParam("mqh", true)->value().c_str(), 32);
-            strlcpy(sysCfg.cMqttUser, request->getParam("mqu", true)->value().c_str(), 32);
+            char old_pr[64]; strlcpy(old_pr, sysCfg.mqtt_prefix, 64);
+            strlcpy(sysCfg.mqtt_server, request->getParam("mqh", true)->value().c_str(), 32);
+            strlcpy(sysCfg.mqtt_user, request->getParam("mqu", true)->value().c_str(), 32);
             String mqp_val = request->getParam("mqp", true)->value();
             if (mqp_val.length() > 0 && mqp_val != "******") {
-                strlcpy(sysCfg.cMqttPass, mqp_val.c_str(), 32);
+                strlcpy(sysCfg.mqtt_pass, mqp_val.c_str(), 32);
             }
-            strlcpy(sysCfg.cMqttPrefix, request->getParam("mqpr", true)->value().c_str(), 64);
-            bool old_ha_discover = sysCfg.xHaDiscover;
-            sysCfg.xHaDiscover = request->hasParam("ha_disc", true);
+            strlcpy(sysCfg.mqtt_prefix, request->getParam("mqpr", true)->value().c_str(), 64);
+            bool old_ha_discover = sysCfg.ha_discover;
+            sysCfg.ha_discover = request->hasParam("ha_disc", true);
             
-            if (request->hasParam("n_min", true)) sysCfg.fDefaultNumberMin = request->getParam("n_min", true)->value().toFloat();
-            if (request->hasParam("n_max", true)) sysCfg.fDefaultNumberMax = request->getParam("n_max", true)->value().toFloat();
-            if (request->hasParam("n_stp", true)) sysCfg.fDefaultNumberStep = request->getParam("n_stp", true)->value().toFloat();
+            if (request->hasParam("n_min", true)) sysCfg.default_number_min = request->getParam("n_min", true)->value().toFloat();
+            if (request->hasParam("n_max", true)) sysCfg.default_number_max = request->getParam("n_max", true)->value().toFloat();
+            if (request->hasParam("n_stp", true)) sysCfg.default_number_step = request->getParam("n_stp", true)->value().toFloat();
 
             // Si HA Discovery vient d'être désactivé, on supprime tout de HA
-            if (old_ha_discover && !sysCfg.xHaDiscover) {
-                unpublish_ha_discovery(0, 0xFFFFFFFF, 0xFFFF, sysCfg.cMqttPrefix);
+            if (old_ha_discover && !sysCfg.ha_discover) {
+                unpublish_ha_discovery(0, 0xFFFFFFFF, 0xFFFF, sysCfg.mqtt_prefix);
                 z_log(pdLOG_INFO, "MQTT", "HA Discovery desactive. Nettoyage MQTT envoye.\n");
             }
 
             // Si le préfixe change et que HA est TOUJOURS actif, on nettoie d'abord l'ancien prefixe côté HA
-            if (strcmp(old_pr, sysCfg.cMqttPrefix) != 0 && sysCfg.xHaDiscover) {
+            if (strcmp(old_pr, sysCfg.mqtt_prefix) != 0 && sysCfg.ha_discover) {
                 unpublish_ha_discovery(0, 0xFFFFFFFF, 0xFFFF, old_pr);
             }
         } else if (ft == "bac") {
             sysCfg.ucMacAddress = request->getParam("mac", true)->value().toInt();
             sysCfg.ulDeviceId = request->getParam("did", true)->value().toInt();
-            sysCfg.ucMaxMaster = request->getParam("mm", true)->value().toInt();
-            sysCfg.ucMaxRetries = request->getParam("retries", true)->value().toInt();
-            sysCfg.usApduTimeout = request->getParam("timeout", true)->value().toInt();
-            sysCfg.ucTokenSkip = request->getParam("tskip", true)->value().toInt();
-            sysCfg.ucMaxInfoFrames = request->getParam("mif", true)->value().toInt();
-            sysCfg.ulHeartbeatInterval = request->getParam("hbeat", true)->value().toInt();
+            sysCfg.max_master = request->getParam("mm", true)->value().toInt();
+            sysCfg.max_retries = request->getParam("retries", true)->value().toInt();
+            sysCfg.ulApduTimeout = request->getParam("timeout", true)->value().toInt();
+            sysCfg.token_skip = request->getParam("tskip", true)->value().toInt();
+            sysCfg.max_info_frames = request->getParam("mif", true)->value().toInt();
+            sysCfg.heartbeat_interval = request->getParam("hbeat", true)->value().toInt();
         } else if (ft == "poll") {
-            sysCfg.usMqttPollInterval = request->getParam("mpi", true)->value().toInt();
-            sysCfg.usBacnetPollInterval = request->getParam("bpi", true)->value().toInt();
+            sysCfg.mqtt_poll_interval = request->getParam("mpi", true)->value().toInt();
+            sysCfg.bacnet_poll_interval = request->getParam("bpi", true)->value().toInt();
         } else if (ft == "sec") {
-            strlcpy(sysCfg.cAdminUser, request->getParam("admin_u", true)->value().c_str(), 32);
+            strlcpy(sysCfg.admin_user, request->getParam("admin_u", true)->value().c_str(), 32);
             String ad_p = request->getParam("admin_p", true)->value();
             if (ad_p.length() > 0 && ad_p != "******") {
-                strlcpy(sysCfg.cAdminPass, ad_p.c_str(), 64);
+                strlcpy(sysCfg.admin_pass, ad_p.c_str(), 64);
             }
             if (request->hasParam("lvl", true)) {
-                sysCfg.ucLogLevel = request->getParam("lvl", true)->value().toInt();
+                sysCfg.log_level = request->getParam("lvl", true)->value().toInt();
             }
         }
 
@@ -603,7 +603,7 @@ void setup_network_infrastructure() {
         request->send(200, "text/plain", "OK");
         
         if (ft == "wifi") {
-            xPendingReboot = true; ulRebootTimer = millis();
+            pending_reboot = true; reboot_timer = millis();
         } else if (ft == "mqtt") {
             setup_mqtt();
         }
@@ -616,7 +616,7 @@ void setup_network_infrastructure() {
         
         if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(1000))) {
             for (auto& dev : bacnet_network_cache) {
-                char ns[16]; snprintf(ns, sizeof(ns), "dv_%lu", (unsigned long)dev.device_id); // Correction namespace v6.4.1
+                char ns[16]; snprintf(ns, sizeof(ns), "dv_%lu", (unsigned long)dev.ulDeviceId); // Correction namespace v6.4.1
                 Preferences p; p.begin(ns, false); p.clear(); p.end();
             }
             Preferences reg; reg.begin("registry", false); reg.clear(); reg.end();
@@ -624,20 +624,20 @@ void setup_network_infrastructure() {
             xSemaphoreGive(cache_mutex);
         }
         request->send(200, "text/plain", "Cache cleared. Rebooting...");
-        xPendingReboot = true; ulRebootTimer = millis();
+        pending_reboot = true; reboot_timer = millis();
     });
 
     webServer.on("/api/factory_reset", HTTP_ANY, [](AsyncWebServerRequest *request) {
         if (!is_authenticated(request)) return;
         nvs_flash_erase();
         request->send(200, "text/plain", "Factory reset done. Rebooting...");
-        xPendingReboot = true; ulRebootTimer = millis();
+        pending_reboot = true; reboot_timer = millis();
     });
 
     webServer.on("/api/reboot", HTTP_ANY, [](AsyncWebServerRequest *request) {
         if (!is_authenticated(request)) return;
         request->send(200, "text/plain", "Rebooting...");
-        xPendingReboot = true; ulRebootTimer = millis();
+        pending_reboot = true; reboot_timer = millis();
     });
 
     webServer.on("/api/trigger_discovery", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -646,12 +646,12 @@ void setup_network_infrastructure() {
         if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(1000))) {
             z_log(pdLOG_INFO, "WEB", "Manual Discovery Triggered - Clearing Metadata Cache\n");
             for (auto& dev : bacnet_network_cache) {
-                dev.discovery_done = false;
-                dev.disc_step = DISC_DEV_ID;
-                dev.disc_obj_idx = 0;
+                dev.xDiscoveryDone = false;
+                dev.ucDiscStep = DISC_DEV_ID;
+                dev.usDiscObjIdx = 0;
                 for (auto& obj : dev.objects) {
-                    obj.name_published = false;
-                    memset(obj.unit_text, 0, sizeof(obj.unit_text));
+                    obj.xNamePublished = false;
+                    memset(obj.cUnitText, 0, sizeof(obj.cUnitText));
                 }
             }
             xSemaphoreGive(cache_mutex);
@@ -672,9 +672,9 @@ void setup_network_infrastructure() {
 
 void handle_network() {
     ArduinoOTA.handle();
-    if (xPendingReboot && (millis() - ulRebootTimer > 1000)) ESP.restart();
+    if (pending_reboot && (millis() - reboot_timer > 1000)) ESP.restart();
 
-    if (!xIsApMode && WiFi.status() != WL_CONNECTED && (millis() - wifi_connect_start > 30000)) {
+    if (!is_ap_mode && WiFi.status() != WL_CONNECTED && (millis() - wifi_connect_start > 30000)) {
         if (!wifi_fallback_active) {
             z_log(pdLOG_ERROR, "WIFI", "WiFi Connection failed. Fallback to AP Mode.\n");
             WiFi.mode(WIFI_AP);
@@ -685,7 +685,7 @@ void handle_network() {
 }
 
 bool is_authenticated(AsyncWebServerRequest *request) {
-    if (!request->authenticate(sysCfg.cAdminUser, sysCfg.cAdminPass)) {
+    if (!request->authenticate(sysCfg.admin_user, sysCfg.admin_pass)) {
         request->requestAuthentication();
         return false;
     }

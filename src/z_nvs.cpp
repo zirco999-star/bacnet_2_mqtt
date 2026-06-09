@@ -14,10 +14,10 @@ static SemaphoreHandle_t nvs_mutex = NULL;
  * Charge les objets d'un équipement depuis la mémoire flash (NVS).
  * Utilise cache_mutex pour éviter les accès concurrents.
  */
-void load_device_objects(uint32_t device_id) {
+void load_device_objects(uint32_t ulDeviceId) {
     if (nvs_mutex == NULL) nvs_mutex = xSemaphoreCreateMutex();
     char ns[16]; 
-    snprintf(ns, sizeof(ns), "dv_%lu", (unsigned long)device_id); // Namespace standard
+    snprintf(ns, sizeof(ns), "dv_%lu", (unsigned long)ulDeviceId); // Namespace standard
     Preferences prefs;
     
     if (prefs.begin(ns, true)) {
@@ -26,58 +26,65 @@ void load_device_objects(uint32_t device_id) {
             
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(1000))) {
                 bool exists = false;
-                for(auto& d : bacnet_network_cache) if(d.device_id == device_id) exists = true;
+                for(auto& d : bacnet_network_cache) if(d.ulDeviceId == ulDeviceId) exists = true;
                 
                 if (!exists) {
                     BACnetDevice dev;
-                    dev.device_id = head.device_id;
-                    dev.mac_address = head.mac_address;
-                    dev.enabled = head.enabled;
-                    dev.name = String(head.name);
-                    dev.vendor = String(head.vendor);
-                    dev.discovery_done = head.discovery_done;
-                    dev.disc_step = (DISC_STEP_T)head.disc_step;
-                    dev.disc_obj_idx = head.disc_obj_idx;
+                    dev.ulDeviceId = head.ulDeviceId;
+                    dev.ucMacAddress = head.ucMacAddress;
+                    dev.xEnabled = head.xEnabled;
+                    dev.name = String(head.cName);
+                    dev.vendor = String(head.cVendor);
+                    dev.xDiscoveryDone = head.xDiscoveryDone;
+                    dev.ucDiscStep = (DISC_STEP_T)head.ucDiscStep;
+                    dev.usDiscObjIdx = head.usDiscObjIdx;
+
+                    // Nouveaux champs (avec fallback si non présents/valides)
+                    dev.usMaxApduLengthAccepted = head.usMaxApduLengthAccepted > 0 ? head.usMaxApduLengthAccepted : 480;
+                    dev.ulApduTimeout = head.ulApduTimeout > 0 ? head.ulApduTimeout : 3000;
+                    dev.ucNumberOfApduRetries = head.ucNumberOfApduRetries;
+                    dev.xSupportsRpm = head.xSupportsRpm;
+
                     dev.last_seen = millis();
 
-                    for (int p = 0; p * 20 < head.count; p++) {
+                    for (int p = 0; p * 20 < head.usCount; p++) {
                         char key[16]; snprintf(key, 16, "p%d", p);
                         BACnetPersistencePage page;
                         memset(&page, 0, sizeof(page));
                         
                         if (prefs.getBytes(key, &page, sizeof(page)) == sizeof(page)) {
-                            if (page.device_id != device_id) continue;
+                            if (page.ulDeviceId != ulDeviceId) continue;
 
-                            for (int i = 0; i < 20 && (p * 20 + i) < head.count; i++) {
+                            for (int i = 0; i < 20 && (p * 20 + i) < head.usCount; i++) {
                                 BACnetObject obj;
-                                obj.type = page.objects[i].val >> 22;
-                                obj.instance = page.objects[i].val & 0x3FFFFF;
-                                obj.enabled = page.objects[i].poll;
-                                obj.name_published = page.objects[i].name_published;
-                                obj.is_commandable = page.objects[i].is_commandable;
-                                obj.units = page.objects[i].units;
-                                obj.expected_states_count = page.objects[i].states_count;
-                                obj.min_value = page.objects[i].min_value;
-                                obj.max_value = page.objects[i].max_value;
+                                obj.usType = page.objects[i].ulVal >> 22;
+                                obj.ulInstance = page.objects[i].ulVal & 0x3FFFFF;
+                                obj.xEnabled = page.objects[i].xEnabled;
+                                obj.xNamePublished = page.objects[i].xNamePublished;
+                                obj.xIsCommandable = page.objects[i].xIsCommandable;
+                                obj.usUnits = page.objects[i].usUnits;
+                                obj.ucExpectedStatesCount = page.objects[i].ucExpectedStatesCount;
+                                obj.fMinValue = page.objects[i].fMinValue;
+                                obj.fMaxValue = page.objects[i].fMaxValue;
                                 
-                                strlcpy(obj.name, page.objects[i].name, sizeof(obj.name));
-                                strlcpy(obj.unit_text, page.objects[i].unit_text, sizeof(obj.unit_text));
-                                strlcpy(obj.last_mqtt_name, page.objects[i].name, sizeof(obj.last_mqtt_name));
-                                strlcpy(obj.last_ha_component, page.objects[i].last_ha_component, sizeof(obj.last_ha_component));
+                                strlcpy(obj.cName, page.objects[i].cName, sizeof(obj.cName));
+                                strlcpy(obj.cUnitText, page.objects[i].cUnitText, sizeof(obj.cUnitText));
+                                strlcpy(obj.cLastMqttName, page.objects[i].cName, sizeof(obj.cLastMqttName));
+                                strlcpy(obj.cLastHaComponent, page.objects[i].cLastHaComponent, sizeof(obj.cLastHaComponent));
                                 
                                 // v6.6.1: Charger les labels des états MSI/MSO/MSV
-                                if (obj.type == OBJ_MULTI_STATE_INPUT || obj.type == OBJ_MULTI_STATE_OUTPUT || obj.type == OBJ_MULTI_STATE_VALUE) {
-                                    load_object_states(device_id, obj.type, obj.instance, obj.state_texts);
+                                if (obj.usType == OBJ_MULTI_STATE_INPUT || obj.usType == OBJ_MULTI_STATE_OUTPUT || obj.usType == OBJ_MULTI_STATE_VALUE) {
+                                    load_object_states(ulDeviceId, obj.usType, obj.ulInstance, obj.state_texts);
                                 }
 
-                                obj.present_value = 0.0f;
+                                obj.fPresentValue = 0.0f;
                                 dev.objects.push_back(obj);
                             }
                         }
                     }
                     dev.last_seen = millis();   
                     bacnet_network_cache.push_back(dev);
-                    z_log(pdLOG_INFO, "NVS", "[NVS] Restored Device %lu (%d objs)\n", (unsigned long)device_id, (int)dev.objects.size());
+                    z_log(pdLOG_INFO, "NVS", "[NVS] Restored Device %lu (%d objs)\n", (unsigned long)ulDeviceId, (int)dev.objects.size());
                 }
                 xSemaphoreGive(cache_mutex);
             }
@@ -91,69 +98,69 @@ void load_device_objects(uint32_t device_id) {
  */
 void load_configuration() {
     // Initialisation des valeurs par défaut
-    strlcpy(sysCfg.cWifiSsid, configDEFAULT_SSID, 32);
-    strlcpy(sysCfg.cWifiPass, "", 64);
-    sysCfg.xStaticIp = false;
-    strlcpy(sysCfg.cLocalIp, configDEFAULT_STATIC_IP, 16);
-    strlcpy(sysCfg.cGateway, configDEFAULT_GATEWAY, 16);
-    strlcpy(sysCfg.cSubnet, configDEFAULT_SUBNET, 16);
-    sysCfg.ucMacAddress = configDEFAULT_MAC_ADDRESS;
-    sysCfg.ucMaxMaster = configDEFAULT_MAX_MASTER;
-    sysCfg.ulDeviceId = configDEFAULT_DEVICE_ID;
-    sysCfg.usApduTimeout = configDEFAULT_APDU_TIMEOUT;
-    sysCfg.ucMaxRetries = configDEFAULT_MAX_RETRIES;
-    strlcpy(sysCfg.cMqttServer, configDEFAULT_MQTT_SERVER, 32);
-    sysCfg.usMqttPort = 1883;
-    strlcpy(sysCfg.cMqttUser, "", 32);
-    strlcpy(sysCfg.cMqttPass, "", 32);
-    strlcpy(sysCfg.cMqttPrefix, "bacnet", 64);
-    sysCfg.ulHeartbeatInterval = configDEFAULT_HEARTBEAT_INTERVAL;
-    sysCfg.usMqttPollInterval = configDEFAULT_MQTT_POLL;
-    sysCfg.usBacnetPollInterval = configDEFAULT_BACNET_POLL;
-    sysCfg.ucTokenSkip = configDEFAULT_TOKEN_SKIP;
-    sysCfg.ucLogLevel = pdLOG_INFO;
-    sysCfg.ucMaxInfoFrames = configDEFAULT_MAX_INFO_FRAMES;
-    sysCfg.xHaDiscover = configDEFAULT_HA_DISCOVER;
-    sysCfg.fDefaultNumberMin = configDEFAULT_NUM_MIN;
-    sysCfg.fDefaultNumberMax = configDEFAULT_NUM_MAX;
-    sysCfg.fDefaultNumberStep = configDEFAULT_NUM_STEP;
-    strlcpy(sysCfg.cAdminUser, "admin", 32);
-    strlcpy(sysCfg.cAdminPass, "admin1234", 64);
+    strlcpy(sysCfg.wifi_ssid, DEFAULT_SSID, 32);
+    strlcpy(sysCfg.wifi_pass, "", 64);
+    sysCfg.static_ip = false;
+    strlcpy(sysCfg.local_ip, DEFAULT_STATIC_IP, 16);
+    strlcpy(sysCfg.gateway, DEFAULT_GATEWAY, 16);
+    strlcpy(sysCfg.subnet, DEFAULT_SUBNET, 16);
+    sysCfg.ucMacAddress = DEFAULT_MAC_ADDRESS;
+    sysCfg.max_master = DEFAULT_MAX_MASTER;
+    sysCfg.ulDeviceId = DEFAULT_DEVICE_ID;
+    sysCfg.ulApduTimeout = DEFAULT_APDU_TIMEOUT;
+    sysCfg.max_retries = DEFAULT_MAX_RETRIES;
+    strlcpy(sysCfg.mqtt_server, DEFAULT_MQTT_SERVER, 32);
+    sysCfg.mqtt_port = 1883;
+    strlcpy(sysCfg.mqtt_user, "", 32);
+    strlcpy(sysCfg.mqtt_pass, "", 32);
+    strlcpy(sysCfg.mqtt_prefix, "bacnet", 64);
+    sysCfg.heartbeat_interval = DEFAULT_HEARBEAT_INTERVAL;
+    sysCfg.mqtt_poll_interval = DEFAULT_MQTT_POLL;
+    sysCfg.bacnet_poll_interval = DEFAULT_BACNET_POLL;
+    sysCfg.token_skip = DEFAULT_TOKEN_SKIP;
+    sysCfg.log_level = pdLOG_INFO;
+    sysCfg.max_info_frames = DEFAULT_MAX_INFO_FRAMES;
+    sysCfg.ha_discover = DEFAULT_HA_DISCOVER;
+    sysCfg.default_number_min = DEFAULT_NUM_MIN;
+    sysCfg.default_number_max = DEFAULT_NUM_MAX;
+    sysCfg.default_number_step = DEFAULT_NUM_STEP;
+    strlcpy(sysCfg.admin_user, "admin", 32);
+    strlcpy(sysCfg.admin_pass, "admin1234", 64);
 
     Preferences prefs;
     if (prefs.begin("system", true)) {
-        if (prefs.isKey("ssid")) prefs.getString("ssid", sysCfg.cWifiSsid, 32);
-        if (prefs.isKey("pass")) prefs.getString("pass", sysCfg.cWifiPass, 64);
-        if (prefs.isKey("static")) sysCfg.xStaticIp = prefs.getBool("static", false);
-        if (prefs.isKey("ip")) prefs.getString("ip", sysCfg.cLocalIp, 16);
-        if (prefs.isKey("gw")) prefs.getString("gw", sysCfg.cGateway, 16);
-        if (prefs.isKey("sn")) prefs.getString("sn", sysCfg.cSubnet, 16);
+        if (prefs.isKey("ssid")) prefs.getString("ssid", sysCfg.wifi_ssid, 32);
+        if (prefs.isKey("pass")) prefs.getString("pass", sysCfg.wifi_pass, 64);
+        if (prefs.isKey("static")) sysCfg.static_ip = prefs.getBool("static", false);
+        if (prefs.isKey("ip")) prefs.getString("ip", sysCfg.local_ip, 16);
+        if (prefs.isKey("gw")) prefs.getString("gw", sysCfg.gateway, 16);
+        if (prefs.isKey("sn")) prefs.getString("sn", sysCfg.subnet, 16);
         
-        if (prefs.isKey("mac")) sysCfg.ucMacAddress = prefs.getUChar("mac", configDEFAULT_MAC_ADDRESS);
-        if (prefs.isKey("mm")) sysCfg.ucMaxMaster = prefs.getUChar("mm", configDEFAULT_MAX_MASTER);
-        if (prefs.isKey("did")) sysCfg.ulDeviceId = prefs.getUInt("did", configDEFAULT_DEVICE_ID);
-        if (prefs.isKey("to")) sysCfg.usApduTimeout = prefs.getUShort("to", configDEFAULT_APDU_TIMEOUT);
-        if (prefs.isKey("ret")) sysCfg.ucMaxRetries = prefs.getUChar("ret", configDEFAULT_MAX_RETRIES);
+        if (prefs.isKey("mac")) sysCfg.ucMacAddress = prefs.getUChar("mac", DEFAULT_MAC_ADDRESS);
+        if (prefs.isKey("mm")) sysCfg.max_master = prefs.getUChar("mm", DEFAULT_MAX_MASTER);
+        if (prefs.isKey("did")) sysCfg.ulDeviceId = prefs.getUInt("did", DEFAULT_DEVICE_ID);
+        if (prefs.isKey("to")) sysCfg.ulApduTimeout = prefs.getUShort("to", DEFAULT_APDU_TIMEOUT);
+        if (prefs.isKey("ret")) sysCfg.max_retries = prefs.getUChar("ret", DEFAULT_MAX_RETRIES);
         
-        if (prefs.isKey("mqh")) prefs.getString("mqh", sysCfg.cMqttServer, 32);
-        if (prefs.isKey("mprt")) sysCfg.usMqttPort = prefs.getUInt("mprt", 1883);
-        if (prefs.isKey("mqu")) prefs.getString("mqu", sysCfg.cMqttUser, 32);
-        if (prefs.isKey("mqp")) prefs.getString("mqp", sysCfg.cMqttPass, 32);
-        if (prefs.isKey("mqpr")) prefs.getString("mqpr", sysCfg.cMqttPrefix, 64);
+        if (prefs.isKey("mqh")) prefs.getString("mqh", sysCfg.mqtt_server, 32);
+        if (prefs.isKey("mprt")) sysCfg.mqtt_port = prefs.getUInt("mprt", 1883);
+        if (prefs.isKey("mqu")) prefs.getString("mqu", sysCfg.mqtt_user, 32);
+        if (prefs.isKey("mqp")) prefs.getString("mqp", sysCfg.mqtt_pass, 32);
+        if (prefs.isKey("mqpr")) prefs.getString("mqpr", sysCfg.mqtt_prefix, 64);
         
-        if (prefs.isKey("hbeat")) sysCfg.ulHeartbeatInterval = prefs.getUInt("hbeat", configDEFAULT_HEARTBEAT_INTERVAL);
-        if (prefs.isKey("mpi")) sysCfg.usMqttPollInterval = prefs.getUShort("mpi", configDEFAULT_MQTT_POLL);
-        if (prefs.isKey("bpi")) sysCfg.usBacnetPollInterval = prefs.getUShort("bpi", configDEFAULT_BACNET_POLL);
-        if (prefs.isKey("tskip")) sysCfg.ucTokenSkip = prefs.getUChar("tskip", configDEFAULT_TOKEN_SKIP);
-        if (prefs.isKey("mif")) sysCfg.ucMaxInfoFrames = prefs.getUChar("mif", configDEFAULT_MAX_INFO_FRAMES);
+        if (prefs.isKey("hbeat")) sysCfg.heartbeat_interval = prefs.getUInt("hbeat", DEFAULT_HEARBEAT_INTERVAL);
+        if (prefs.isKey("mpi")) sysCfg.mqtt_poll_interval = prefs.getUShort("mpi", DEFAULT_MQTT_POLL);
+        if (prefs.isKey("bpi")) sysCfg.bacnet_poll_interval = prefs.getUShort("bpi", DEFAULT_BACNET_POLL);
+        if (prefs.isKey("tskip")) sysCfg.token_skip = prefs.getUChar("tskip", DEFAULT_TOKEN_SKIP);
+        if (prefs.isKey("mif")) sysCfg.max_info_frames = prefs.getUChar("mif", DEFAULT_MAX_INFO_FRAMES);
         
-        if (prefs.isKey("adu")) prefs.getString("adu", sysCfg.cAdminUser, 32);
-        if (prefs.isKey("adp")) prefs.getString("adp", sysCfg.cAdminPass, 64);
-        if (prefs.isKey("lvl")) sysCfg.ucLogLevel = prefs.getUChar("lvl", pdLOG_INFO);
-        if (prefs.isKey("ha_disc")) sysCfg.xHaDiscover = prefs.getBool("ha_disc", configDEFAULT_HA_DISCOVER);
-        if (prefs.isKey("n_min")) sysCfg.fDefaultNumberMin = prefs.getFloat("n_min", configDEFAULT_NUM_MIN);
-        if (prefs.isKey("n_max")) sysCfg.fDefaultNumberMax = prefs.getFloat("n_max", configDEFAULT_NUM_MAX);
-        if (prefs.isKey("n_stp")) sysCfg.fDefaultNumberStep = prefs.getFloat("n_stp", configDEFAULT_NUM_STEP);
+        if (prefs.isKey("adu")) prefs.getString("adu", sysCfg.admin_user, 32);
+        if (prefs.isKey("adp")) prefs.getString("adp", sysCfg.admin_pass, 64);
+        if (prefs.isKey("lvl")) sysCfg.log_level = prefs.getUChar("lvl", pdLOG_INFO);
+        if (prefs.isKey("ha_disc")) sysCfg.ha_discover = prefs.getBool("ha_disc", DEFAULT_HA_DISCOVER);
+        if (prefs.isKey("n_min")) sysCfg.default_number_min = prefs.getFloat("n_min", DEFAULT_NUM_MIN);
+        if (prefs.isKey("n_max")) sysCfg.default_number_max = prefs.getFloat("n_max", DEFAULT_NUM_MAX);
+        if (prefs.isKey("n_stp")) sysCfg.default_number_step = prefs.getFloat("n_stp", DEFAULT_NUM_STEP);
         
         prefs.end();
     }
@@ -189,38 +196,38 @@ void load_configuration() {
 void save_configuration() {
     Preferences prefs;
     if (prefs.begin("system", false)) {
-        prefs.putString("ssid", sysCfg.cWifiSsid);
-        prefs.putString("pass", sysCfg.cWifiPass);
-        prefs.putBool("static", sysCfg.xStaticIp);
-        prefs.putString("ip", sysCfg.cLocalIp);
-        prefs.putString("gw", sysCfg.cGateway);
-        prefs.putString("sn", sysCfg.cSubnet);
+        prefs.putString("ssid", sysCfg.wifi_ssid);
+        prefs.putString("pass", sysCfg.wifi_pass);
+        prefs.putBool("static", sysCfg.static_ip);
+        prefs.putString("ip", sysCfg.local_ip);
+        prefs.putString("gw", sysCfg.gateway);
+        prefs.putString("sn", sysCfg.subnet);
         
         prefs.putUChar("mac", sysCfg.ucMacAddress);
-        prefs.putUChar("mm", sysCfg.ucMaxMaster);
+        prefs.putUChar("mm", sysCfg.max_master);
         prefs.putUInt("did", sysCfg.ulDeviceId);
-        prefs.putUShort("to", sysCfg.usApduTimeout);
-        prefs.putUChar("ret", sysCfg.ucMaxRetries);
+        prefs.putUShort("to", sysCfg.ulApduTimeout);
+        prefs.putUChar("ret", sysCfg.max_retries);
         
-        prefs.putString("mqh", sysCfg.cMqttServer);
-        prefs.putUInt("mprt", sysCfg.usMqttPort);
-        prefs.putString("mqu", sysCfg.cMqttUser);
-        prefs.putString("mqp", sysCfg.cMqttPass);
-        prefs.putString("mqpr", sysCfg.cMqttPrefix);
+        prefs.putString("mqh", sysCfg.mqtt_server);
+        prefs.putUInt("mprt", sysCfg.mqtt_port);
+        prefs.putString("mqu", sysCfg.mqtt_user);
+        prefs.putString("mqp", sysCfg.mqtt_pass);
+        prefs.putString("mqpr", sysCfg.mqtt_prefix);
         
-        prefs.putUInt("hbeat", sysCfg.ulHeartbeatInterval);
-        prefs.putUShort("mpi", sysCfg.usMqttPollInterval);
-        prefs.putUShort("bpi", sysCfg.usBacnetPollInterval);
-        prefs.putUChar("tskip", sysCfg.ucTokenSkip);
-        prefs.putUChar("mif", sysCfg.ucMaxInfoFrames);
+        prefs.putUInt("hbeat", sysCfg.heartbeat_interval);
+        prefs.putUShort("mpi", sysCfg.mqtt_poll_interval);
+        prefs.putUShort("bpi", sysCfg.bacnet_poll_interval);
+        prefs.putUChar("tskip", sysCfg.token_skip);
+        prefs.putUChar("mif", sysCfg.max_info_frames);
         
-        prefs.putString("adu", sysCfg.cAdminUser);
-        prefs.putString("adp", sysCfg.cAdminPass);
-        prefs.putUChar("lvl", sysCfg.ucLogLevel);
-        prefs.putBool("ha_disc", sysCfg.xHaDiscover);
-        prefs.putFloat("n_min", sysCfg.fDefaultNumberMin);
-        prefs.putFloat("n_max", sysCfg.fDefaultNumberMax);
-        prefs.putFloat("n_stp", sysCfg.fDefaultNumberStep);
+        prefs.putString("adu", sysCfg.admin_user);
+        prefs.putString("adp", sysCfg.admin_pass);
+        prefs.putUChar("lvl", sysCfg.log_level);
+        prefs.putBool("ha_disc", sysCfg.ha_discover);
+        prefs.putFloat("n_min", sysCfg.default_number_min);
+        prefs.putFloat("n_max", sysCfg.default_number_max);
+        prefs.putFloat("n_stp", sysCfg.default_number_step);
         
         prefs.end();
     }
@@ -230,13 +237,13 @@ void save_configuration() {
 /**
  * Sauvegarde interne d'un device (doit être appelé avec cache_mutex déjà verrouillé).
  */
-void save_device_objects_locked(uint32_t device_id) {
+void save_device_objects_locked(uint32_t ulDeviceId) {
     if (nvs_mutex == NULL) nvs_mutex = xSemaphoreCreateMutex();
     if (xSemaphoreTake(nvs_mutex, pdMS_TO_TICKS(1000))) {
         for (auto& dev : bacnet_network_cache) {
-            if (dev.device_id == device_id) {
+            if (dev.ulDeviceId == ulDeviceId) {
                 char ns[16]; 
-                snprintf(ns, sizeof(ns), "dv_%lu", (unsigned long)device_id); // Namespace standard
+                snprintf(ns, sizeof(ns), "dv_%lu", (unsigned long)ulDeviceId); // Namespace standard
                 Preferences prefs;
                 
                 if (prefs.begin(ns, false)) {
@@ -244,37 +251,37 @@ void save_device_objects_locked(uint32_t device_id) {
 
                     BACnetPersistenceDev head;
                     memset(&head, 0, sizeof(head));
-                    head.device_id = dev.device_id;
-                    head.mac_address = dev.mac_address;
-                    head.enabled = dev.enabled;
-                    head.count = (uint16_t)dev.objects.size();
-                    head.discovery_done = dev.discovery_done;
-                    head.disc_step = (uint8_t)dev.disc_step;
-                    head.disc_obj_idx = dev.disc_obj_idx;
-                    strlcpy(head.name, dev.name.c_str(), 32);
-                    strlcpy(head.vendor, dev.vendor.c_str(), 32);
+                    head.ulDeviceId = dev.ulDeviceId;
+                    head.ucMacAddress = dev.ucMacAddress;
+                    head.xEnabled = dev.xEnabled;
+                    head.usCount = (uint16_t)dev.objects.size();
+                    head.xDiscoveryDone = dev.xDiscoveryDone;
+                    head.ucDiscStep = (uint8_t)dev.ucDiscStep;
+                    head.usDiscObjIdx = dev.usDiscObjIdx;
+                    strlcpy(head.cName, dev.name.c_str(), 32);
+                    strlcpy(head.cVendor, dev.vendor.c_str(), 32);
                     
                     prefs.putBytes("head", &head, sizeof(head));
 
                     for (int p = 0; p * 20 < (int)dev.objects.size(); p++) {
                         BACnetPersistencePage page;
                         memset(&page, 0, sizeof(page));
-                        page.device_id = device_id;
+                        page.ulDeviceId = ulDeviceId;
                         page.page_index = p;
 
                         for (int i = 0; i < 20 && (p * 20 + i) < (int)dev.objects.size(); i++) {
                             auto& o = dev.objects[p * 20 + i];
-                            page.objects[i].val = ((uint32_t)o.type << 22) | (o.instance & 0x3FFFFF);
-                            page.objects[i].poll = o.enabled;
-                            page.objects[i].name_published = o.name_published;
-                            page.objects[i].is_commandable = o.is_commandable;
-                            page.objects[i].units = o.units;
-                            page.objects[i].states_count = (uint8_t)std::min((int)o.expected_states_count, 255);
-                            page.objects[i].min_value = o.min_value;
-                            page.objects[i].max_value = o.max_value;
-                            strlcpy(page.objects[i].name, o.name, 32);
-                            strlcpy(page.objects[i].unit_text, o.unit_text, 12);
-                            strlcpy(page.objects[i].last_ha_component, o.last_ha_component, 16);
+                            page.objects[i].ulVal = ((uint32_t)o.usType << 22) | (o.ulInstance & 0x3FFFFF);
+                            page.objects[i].xEnabled = o.xEnabled;
+                            page.objects[i].xNamePublished = o.xNamePublished;
+                            page.objects[i].xIsCommandable = o.xIsCommandable;
+                            page.objects[i].usUnits = o.usUnits;
+                            page.objects[i].ucExpectedStatesCount = (uint8_t)std::min((int)o.ucExpectedStatesCount, 255);
+                            page.objects[i].fMinValue = o.fMinValue;
+                            page.objects[i].fMaxValue = o.fMaxValue;
+                            strlcpy(page.objects[i].cName, o.cName, 32);
+                            strlcpy(page.objects[i].cUnitText, o.cUnitText, 12);
+                            strlcpy(page.objects[i].cLastHaComponent, o.cLastHaComponent, 16);
                         }
                         char key[16]; snprintf(key, 16, "p%d", p);
                         prefs.putBytes(key, &page, sizeof(page));
@@ -284,13 +291,13 @@ void save_device_objects_locked(uint32_t device_id) {
                     Preferences reg;
                     if (reg.begin("registry", false)) {
                         String list = reg.getString("dev_list", "");
-                        if (list.indexOf(String(device_id)) == -1) {
-                            list += (list.length() > 0 ? ";" : "") + String(device_id);
+                        if (list.indexOf(String(ulDeviceId)) == -1) {
+                            list += (list.length() > 0 ? ";" : "") + String(ulDeviceId);
                             reg.putString("dev_list", list);
                         }
                         reg.end();
                     }
-                    z_log(pdLOG_INFO, "NVS", "[NVS] SUCCESS: Saved Device %lu\n", (unsigned long)device_id);
+                    z_log(pdLOG_INFO, "NVS", "[NVS] SUCCESS: Saved Device %lu\n", (unsigned long)ulDeviceId);
                 }
                 break; 
             }
@@ -302,10 +309,10 @@ void save_device_objects_locked(uint32_t device_id) {
 /**
  * Fonction publique de sauvegarde d'un device (gère le verrouillage).
  */
-void save_device_objects(uint32_t device_id) {
+void save_device_objects(uint32_t ulDeviceId) {
     if (cache_mutex == NULL) return;
     if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(1000))) {
-        save_device_objects_locked(device_id);
+        save_device_objects_locked(ulDeviceId);
         xSemaphoreGive(cache_mutex);
     }
 }
@@ -313,11 +320,11 @@ void save_device_objects(uint32_t device_id) {
 /**
  * Sauvegarde les labels des états (MSI/MSO/MSV) dans un namespace dédié.
  */
-void save_object_states(uint32_t device_id, uint16_t type, uint32_t instance, const std::vector<String>& states) {
+void save_object_states(uint32_t ulDeviceId, uint16_t type, uint32_t ulInstance, const std::vector<String>& states) {
     if (states.empty()) return;
     
-    char ns[16]; snprintf(ns, sizeof(ns), "st_%lu", (unsigned long)device_id);
-    char key[16]; snprintf(key, sizeof(key), "o%u_%lu", type, (unsigned long)instance);
+    char ns[16]; snprintf(ns, sizeof(ns), "st_%lu", (unsigned long)ulDeviceId);
+    char key[16]; snprintf(key, sizeof(key), "o%u_%lu", type, (unsigned long)ulInstance);
     
     String combined = "";
     for (size_t i = 0; i < states.size(); i++) {
@@ -329,16 +336,16 @@ void save_object_states(uint32_t device_id, uint16_t type, uint32_t instance, co
     if (prefs.begin(ns, false)) {
         prefs.putString(key, combined);
         prefs.end();
-        z_log(pdLOG_DEBUG, "NVS", "[NVS] Saved States for %u:%lu (%d labels)\n", type, instance, (int)states.size());
+        z_log(pdLOG_DEBUG, "NVS", "[NVS] Saved States for %u:%lu (%d labels)\n", type, ulInstance, (int)states.size());
     }
 }
 
 /**
  * Charge les labels des états depuis le namespace dédié.
  */
-void load_object_states(uint32_t device_id, uint16_t type, uint32_t instance, std::vector<String>& states) {
-    char ns[16]; snprintf(ns, sizeof(ns), "st_%lu", (unsigned long)device_id);
-    char key[16]; snprintf(key, sizeof(key), "o%u_%lu", type, (unsigned long)instance);
+void load_object_states(uint32_t ulDeviceId, uint16_t type, uint32_t ulInstance, std::vector<String>& states) {
+    char ns[16]; snprintf(ns, sizeof(ns), "st_%lu", (unsigned long)ulDeviceId);
+    char key[16]; snprintf(key, sizeof(key), "o%u_%lu", type, (unsigned long)ulInstance);
     
     Preferences prefs;
     if (prefs.begin(ns, true)) {
@@ -355,5 +362,7 @@ void load_object_states(uint32_t device_id, uint16_t type, uint32_t instance, st
             states.push_back(combined.substring(start));
         }
         prefs.end();
-    }
-}
+        }
+        }
+
+

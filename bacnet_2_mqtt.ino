@@ -9,12 +9,12 @@ extern "C" {
 
 // Global system variables
 Config sysCfg;
-AsyncWebServer webServer(configWEB_PORT);
+AsyncWebServer webServer(WEB_PORT);
 AsyncWebSocket ws("/ws-logs");
 esp_mqtt_client_handle_t mqtt_client = NULL;
-BaseType_t xIsApMode = pdFALSE;
-BaseType_t xPendingReboot = pdFALSE;
-uint32_t ulRebootTimer = 0;
+bool is_ap_mode = false;
+bool pending_reboot = false;
+uint32_t reboot_timer = 0;
 
 // System Task for Core 0 (handles WiFi, MQTT, and OTA updates)
 void system_task(void *pvParameters) {
