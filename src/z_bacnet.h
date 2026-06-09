@@ -7,34 +7,34 @@
 // --- STRUCTURE DE PERSISTANCE BINAIRE (v1 Legacy) ---
 #pragma pack(push, 1)
 struct BACnetPersistenceObj {
-    uint32_t val;         // [TYPE:10][INSTANCE:22]
-    char name[32];        // friendly name
-    char unit_text[12];
-    bool poll;
-    bool name_published;
-    bool is_commandable;  
-    uint16_t units;       
-    uint8_t states_count; 
-    float min_value;      // v6.4.3: Prop 69
-    float max_value;      // v6.4.3: Prop 65
-    char last_ha_component[16]; // v6.3.6: For ghost entity cleanup (sensor/select/switch)
+    uint32_t ulVal;         // [TYPE:10][INSTANCE:22]
+    char cName[32];        // friendly name
+    char cUnitText[12];
+    bool xEnabled;
+    bool xNamePublished;
+    bool xIsCommandable;  
+    uint16_t usUnits;       
+    uint8_t ucExpectedStatesCount; 
+    float fMinValue;      // v6.4.3: Prop 69
+    float fMaxValue;      // v6.4.3: Prop 65
+    char cLastHaComponent[16]; // v6.3.6: For ghost entity cleanup (sensor/select/switch)
 }; // Total: 4 + 32 + 12 + 3 + 2 + 1 + 4 + 4 + 16 = 78 bytes
 
 struct BACnetPersistenceDev {
-    uint32_t device_id;
-    uint8_t mac_address;
-    bool enabled;
-    char name[32];
-    char vendor[32];
-    uint16_t count;       // uint16_t for > 255 objects safety
-    bool discovery_done;
-    uint16_t disc_obj_idx;
-    uint8_t disc_step;
+    uint32_t ulDeviceId;
+    uint8_t ucMacAddress;
+    bool xEnabled;
+    char cName[32];
+    char cVendor[32];
+    uint16_t usCount;       // uint16_t for > 255 objects safety
+    bool xDiscoveryDone;
+    uint16_t usDiscObjIdx;
+    uint8_t ucDiscStep;
 };
 
 // Structure de transport pour les pages (pour respecter la limite 1984 octets)
 struct BACnetPersistencePage {
-    uint32_t device_id;
+    uint32_t ulDeviceId;
     uint16_t page_index;
     BACnetPersistenceObj objects[20]; // 20 * 48 = 960 octets ==> OK pour NVS
 };
@@ -124,53 +124,53 @@ enum DISC_STEP_T {
 
 // --- STATISTIQUES MS/TP ---
 struct BACnet_Stats {
-    uint32_t ms_msgs_rx;
-    uint32_t ms_msgs_tx;
-    uint32_t tokens_seen;
-    uint32_t pfm_replies;
-    uint32_t errors_crc;
-    uint8_t current_index; 
-    uint8_t total_objects; 
-    bool ring_active;
+    uint32_t ulMsMsgsRx;
+    uint32_t ulMsMsgsTx;
+    uint32_t ulTokensSeen;
+    uint32_t ulPfmReplies;
+    uint32_t ulErrorsCrc;
+    uint8_t ucCurrentIndex; 
+    uint8_t ucTotalObjects; 
+    bool xRingActive;
 };
 extern BACnet_Stats bacnetStats;
 
 // --- BASE DE DONNÉES EN RAM ---
 struct BACnetObject {
-    uint16_t type = 65535;
-    uint32_t instance = 0;
-    char name[50] = "Unknown";
-    float present_value = 0.0f;
-    bool enabled = false;
-    bool name_published = false;
-    char last_mqtt_name[50] = "";
-    uint32_t last_update = 0;
-    uint16_t expected_states_count = 0;
-    uint16_t units = 95;
-    char unit_text[20] = "";
-    float min_value = NAN;
-    float max_value = NAN;
-    bool discovery_done = false;
-    bool is_commandable = false; // Prop 87
-    char last_ha_component[16] = ""; // Pour nettoyer les doublons si on change sensor -> select
+    uint16_t usType = 65535;
+    uint32_t ulInstance = 0;
+    char cName[50] = "Unknown";
+    float fPresentValue = 0.0f;
+    bool xEnabled = false;
+    bool xNamePublished = false;
+    char cLastMqttName[50] = "";
+    uint32_t ulLastUpdate = 0;
+    uint16_t ucExpectedStatesCount = 0;
+    uint16_t usUnits = 95;
+    char cUnitText[20] = "";
+    float fMinValue = NAN;
+    float fMaxValue = NAN;
+    bool xDiscoveryDone = false;
+    bool xIsCommandable = false; // Prop 87
+    char cLastHaComponent[16] = ""; // Pour nettoyer les doublons si on change sensor -> select
     // state_texts reste dynamique en RAM, mais n'est pas persisté (ou alors avec une logique à part)
     std::vector<String> state_texts; 
 };
 
 struct BACnetDevice {
-    uint8_t mac_address = 0;
-    uint32_t device_id = 4194303;
+    uint8_t ucMacAddress = 0;
+    uint32_t ulDeviceId = 4194303;
     String name = "";
-    String vendor = "";
+    String cVendor = "";
     String version = "";
-    bool enabled = true;
+    bool xEnabled = true;
     std::vector<BACnetObject> objects;
     uint32_t last_seen = 0;
-    bool discovery_done = false;
-    DISC_STEP_T disc_step = DISC_DEV_ID;
-    uint16_t disc_obj_idx = 0;
-    bool reload_single = false;
-    bool recovery_mode = false;
+    bool xDiscoveryDone = false;
+    DISC_STEP_T ucDiscStep = DISC_DEV_ID;
+    uint16_t usDiscObjIdx = 0;
+    bool xReloadSingle = false;
+    bool xRecoveryMode = false;
 
     BACnetDevice() {} 
 };
@@ -248,7 +248,7 @@ void setup_bacnet_engine();
 void bacnet_abort_current_transaction();
 bool enqueue_bacnet_job(BACnetJob job);
 void publish_all_names();
-String get_unit_text(uint16_t units);
+String get_unit_text(uint16_t usUnits);
 
 uint16_t build_read_property_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, uint8_t property_id, int32_t array_index);
 uint16_t build_write_property_name_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, const char* new_name);

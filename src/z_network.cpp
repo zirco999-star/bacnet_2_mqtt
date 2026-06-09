@@ -82,9 +82,9 @@ void z_log(int level, const char* tag, const char* format, ...) {
 
     // 2. Détermination de la chaîne de sévérité
     char lvl_str[5] = "INF";
-    if (level == LOG_ERROR) strcpy(lvl_str, "ERR");
-    else if (level == LOG_WARN) strcpy(lvl_str, "WRN");
-    else if (level == LOG_DEBUG) strcpy(lvl_str, "DBG");
+    if (level == pdLOG_ERROR) strcpy(lvl_str, "ERR");
+    else if (level == pdLOG_WARN) strcpy(lvl_str, "WRN");
+    else if (level == pdLOG_DEBUG) strcpy(lvl_str, "DBG");
 
     // 3. Calcul du temps
     uint32_t now_ms = millis();
@@ -233,10 +233,10 @@ void setup_network_infrastructure() {
             doc["heap"] = ESP.getFreeHeap() / 1024;
             doc["uptime"] = millis() / 1000;
             
-            doc["mac"] = sysCfg.mac_address;
+            doc["mac"] = sysCfg.ucMacAddress;
             doc["mm"] = sysCfg.max_master;
-            doc["did"] = sysCfg.device_id;
-            doc["to"] = sysCfg.apdu_timeout;
+            doc["did"] = sysCfg.ulDeviceId;
+            doc["to"] = sysCfg.ulApduTimeout;
             doc["ret"] = sysCfg.max_retries;
             doc["hbeat"] = sysCfg.heartbeat_interval;
             doc["tskip"] = sysCfg.token_skip;
@@ -246,25 +246,25 @@ void setup_network_infrastructure() {
             doc["adu"] = sysCfg.admin_user;
             doc["lvl"] = sysCfg.log_level;
 
-            doc["mstp_t"] = bacnetStats.ring_active;
-            doc["mstp_cnt"] = bacnetStats.tokens_seen;
-            doc["mstp_rx"] = bacnetStats.ms_msgs_rx;
-            doc["mstp_tx"] = bacnetStats.ms_msgs_tx;
-            doc["mstp_err"] = bacnetStats.errors_crc;
+            doc["mstp_t"] = bacnetStats.xRingActive;
+            doc["mstp_cnt"] = bacnetStats.ulTokensSeen;
+            doc["mstp_rx"] = bacnetStats.ulMsMsgsRx;
+            doc["mstp_tx"] = bacnetStats.ulMsMsgsTx;
+            doc["mstp_err"] = bacnetStats.ulErrorsCrc;
 
             JsonArray devices = doc["devices"].to<JsonArray>();
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
                 for (auto& dev : bacnet_network_cache) {
                     JsonObject d = devices.add<JsonObject>();
-                    d["id"] = dev.device_id;
-                    d["step"] = (int)dev.disc_step;
-                    d["idx"] = dev.disc_obj_idx;
+                    d["id"] = dev.ulDeviceId;
+                    d["step"] = (int)dev.ucDiscStep;
+                    d["idx"] = dev.usDiscObjIdx;
                     d["total"] = dev.objects.size();
-                    d["enabled"] = dev.enabled;
-                    d["done"] = dev.discovery_done;
+                    d["xEnabled"] = dev.xEnabled;
+                    d["done"] = dev.xDiscoveryDone;
                     
                     int sel = 0;
-                    for(auto& o : dev.objects) if(o.enabled) sel++;
+                    for(auto& o : dev.objects) if(o.xEnabled) sel++;
                     d["sel"] = sel;
                 }
                 xSemaphoreGive(cache_mutex);
@@ -300,14 +300,14 @@ void setup_network_infrastructure() {
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
                 for (auto& dev : bacnet_network_cache) {
                     JsonObject c = controllers.add<JsonObject>();
-                    c["device_id"] = dev.device_id;
-                    c["name"] = dev.name; c["vendor"] = dev.vendor; c["enabled"] = dev.enabled;
+                    c["ulDeviceId"] = dev.ulDeviceId;
+                    c["name"] = dev.name; c["cVendor"] = dev.cVendor; c["xEnabled"] = dev.xEnabled;
                     JsonArray objs_arr = c["objects"].to<JsonArray>();
                     for (auto& o : dev.objects) {
                         JsonObject obj = objs_arr.add<JsonObject>();
-                        obj["type"] = o.type; obj["inst"] = o.instance; obj["name"] = o.name;
-                        obj["val"] = o.present_value; obj["poll"] = o.enabled;
-                        obj["unit"] = o.unit_text;
+                        obj["type"] = o.usType; obj["inst"] = o.ulInstance; obj["name"] = o.cName;
+                        obj["val"] = o.fPresentValue; obj["poll"] = o.xEnabled;
+                        obj["unit"] = o.cUnitText;
                     }
                 }
                 xSemaphoreGive(cache_mutex);
@@ -340,11 +340,11 @@ void setup_network_infrastructure() {
             uint32_t did = request->getParam("id", true)->value().toInt();
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
                 for (auto& dev : bacnet_network_cache) {
-                    if (dev.device_id == did) {
-                        dev.discovery_done = false;
-                        dev.disc_step = DISC_DEV_ID;
+                    if (dev.ulDeviceId == did) {
+                        dev.xDiscoveryDone = false;
+                        dev.ucDiscStep = DISC_DEV_ID;
                         dev.objects.clear();
-                        z_log(LOG_INFO, "API", "Reloading device %lu\n", (unsigned long)did);
+                        z_log(pdLOG_INFO, "API", "Reloading device %lu\n", (unsigned long)did);
                         break;
                     }
                 }
@@ -363,13 +363,13 @@ void setup_network_infrastructure() {
             
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
                 for (auto& dev : bacnet_network_cache) {
-                    if (dev.device_id == did) {
+                    if (dev.ulDeviceId == did) {
                         for (size_t i = 0; i < dev.objects.size(); i++) {
-                            if (dev.objects[i].instance == inst && dev.objects[i].type == type) {
-                                dev.reload_single = true;
-                                dev.disc_obj_idx = i;
-                                dev.disc_step = DISC_OBJ_NAME; // On veut rafraîchir toutes les métadonnées (Nom, Unités)
-                                dev.discovery_done = false;
+                            if (dev.objects[i].ulInstance == inst && dev.objects[i].usType == type) {
+                                dev.xReloadSingle = true;
+                                dev.usDiscObjIdx = i;
+                                dev.ucDiscStep = DISC_OBJ_NAME; // On veut rafraîchir toutes les métadonnées (Nom, Unités)
+                                dev.xDiscoveryDone = false;
                                 break;
                             }
                         }
@@ -400,13 +400,13 @@ void setup_network_infrastructure() {
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
                 uint8_t target_mac = 0;
                 for (auto& dev : bacnet_network_cache) {
-                    if (dev.device_id == did) {
-                        target_mac = dev.mac_address;
+                    if (dev.ulDeviceId == did) {
+                        target_mac = dev.ucMacAddress;
                         for (auto& obj : dev.objects) {
-                            if (obj.instance == inst && obj.type == type) {
+                            if (obj.ulInstance == inst && obj.usType == type) {
                                 // Si le nom a changé, on met à jour localement ET sur l'automate
-                                if (name.length() > 0 && strcmp(obj.name, name.c_str()) != 0) {
-                                    strlcpy(obj.name, name.c_str(), sizeof(obj.name));
+                                if (name.length() > 0 && strcmp(obj.cName, name.c_str()) != 0) {
+                                    strlcpy(obj.cName, name.c_str(), sizeof(obj.cName));
                                     BACnetJob job;
                                     job.type = JOB_WRITE_PROP;
                                     job.target_mac = target_mac;
@@ -415,7 +415,7 @@ void setup_network_infrastructure() {
                                     job.prop_id = 77; // Object_Name
                                     strlcpy(job.name, name.c_str(), sizeof(job.name));
                                     enqueue_bacnet_job(job);
-                                    z_log(LOG_INFO, "WEB", "Enqueuing WriteProperty (Name) for Obj T%u I%lu\n", type, (unsigned long)inst);
+                                    z_log(pdLOG_INFO, "WEB", "Enqueuing WriteProperty (Name) for Obj T%u I%lu\n", type, (unsigned long)inst);
                                     // Publication MQTT du topic 'name' (pour historique / scripts custom)
                                     publish_mqtt_topic(did, obj, 77, true);
                                     // REQUIS : Déclencher HA Discovery pour mettre à jour l'entité dans Home Assistant
@@ -423,32 +423,32 @@ void setup_network_infrastructure() {
                                 }
                                 
                                 // L'unité est TOUJOURS gérée localement (RAM + NVS) pour permettre l'override utilisateur
-                                if (unit.length() > 0 && strcmp(obj.unit_text, unit.c_str()) != 0) {
-                                    strlcpy(obj.unit_text, unit.c_str(), sizeof(obj.unit_text));
-                                    z_log(LOG_INFO, "WEB", "Local Unit Override: Obj T%u I%lu -> %s (NVS only)\n", type, (unsigned long)inst, unit.c_str());
+                                if (unit.length() > 0 && strcmp(obj.cUnitText, unit.c_str()) != 0) {
+                                    strlcpy(obj.cUnitText, unit.c_str(), sizeof(obj.cUnitText));
+                                    z_log(pdLOG_INFO, "WEB", "Local Unit Override: Obj T%u I%lu -> %s (NVS only)\n", type, (unsigned long)inst, unit.c_str());
                                     // Pas de WriteProperty pour l'unité, mais publication MQTT pour HA
                                     trigger_ha_discovery(did, inst, type); 
                                 }
 
-                                if (obj.enabled != poll) {
-                                    obj.enabled = poll;
+                                if (obj.xEnabled != poll) {
+                                    obj.xEnabled = poll;
                                     // Si on active/désactive l'objet, on force la synchro HA
                                     trigger_ha_discovery(did, inst, type);
                                     
                                     // Si on l'active, on le force aussi à recharger sa valeur immédiatement
                                     if (poll) {
-                                        dev.reload_single = true;
+                                        dev.xReloadSingle = true;
                                         // On réinitialise l'étape pour forcer la relecture de la prop 87 et 85
                                         // Cela permettra à HA de savoir si c'est un sensor ou un switch
-                                        dev.disc_step = DISC_OBJ_COMMANDABLE; 
+                                        dev.ucDiscStep = DISC_OBJ_COMMANDABLE; 
                                         // On trouve l'index de cet objet
                                         for (size_t i = 0; i < dev.objects.size(); i++) {
-                                            if (dev.objects[i].instance == inst && dev.objects[i].type == type) {
-                                                dev.disc_obj_idx = i;
+                                            if (dev.objects[i].ulInstance == inst && dev.objects[i].usType == type) {
+                                                dev.usDiscObjIdx = i;
                                                 break;
                                             }
                                         }
-                                        dev.discovery_done = false; 
+                                        dev.xDiscoveryDone = false; 
                                     }
                                 }
                                 break; 
@@ -485,13 +485,13 @@ void setup_network_infrastructure() {
             // -------------------------------------------------------------
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
                 for (auto& dev : bacnet_network_cache) {
-                    if (dev.device_id == did) {
-                        dev.enabled = !dev.enabled; // Bascule de l'état
+                    if (dev.ulDeviceId == did) {
+                        dev.xEnabled = !dev.xEnabled; // Bascule de l'état
                         
                         // v6.3.8: Reprise de la Phase 2 si l'automate est activé manuellement
-                        if (dev.enabled && dev.discovery_done && dev.disc_step == DISC_OBJ_OID) {
-                            z_log(LOG_INFO, "WEB", "User Activation: Resuming discovery for MAC %d (Phase 2)\n", dev.mac_address);
-                            dev.discovery_done = false;
+                        if (dev.xEnabled && dev.xDiscoveryDone && dev.ucDiscStep == DISC_OBJ_OID) {
+                            z_log(pdLOG_INFO, "WEB", "User Activation: Resuming discovery for MAC %d (Phase 2)\n", dev.ucMacAddress);
+                            dev.xDiscoveryDone = false;
                         }
                         break; 
                     }
@@ -513,7 +513,7 @@ void setup_network_infrastructure() {
                 trigger_ha_discovery(did);
 
             } else {
-                z_log(LOG_ERROR, "SYS", "Timeout Mutex : Impossible de basculer l'équipement en RAM !");
+                z_log(pdLOG_ERROR, "SYS", "Timeout Mutex : Impossible de basculer l'équipement en RAM !");
             }
 
             request->send(200, "text/plain", "OK");
@@ -569,7 +569,7 @@ void setup_network_infrastructure() {
             // Si HA Discovery vient d'être désactivé, on supprime tout de HA
             if (old_ha_discover && !sysCfg.ha_discover) {
                 unpublish_ha_discovery(0, 0xFFFFFFFF, 0xFFFF, sysCfg.mqtt_prefix);
-                z_log(LOG_INFO, "MQTT", "HA Discovery desactive. Nettoyage MQTT envoye.\n");
+                z_log(pdLOG_INFO, "MQTT", "HA Discovery desactive. Nettoyage MQTT envoye.\n");
             }
 
             // Si le préfixe change et que HA est TOUJOURS actif, on nettoie d'abord l'ancien prefixe côté HA
@@ -577,11 +577,11 @@ void setup_network_infrastructure() {
                 unpublish_ha_discovery(0, 0xFFFFFFFF, 0xFFFF, old_pr);
             }
         } else if (ft == "bac") {
-            sysCfg.mac_address = request->getParam("mac", true)->value().toInt();
-            sysCfg.device_id = request->getParam("did", true)->value().toInt();
+            sysCfg.ucMacAddress = request->getParam("mac", true)->value().toInt();
+            sysCfg.ulDeviceId = request->getParam("did", true)->value().toInt();
             sysCfg.max_master = request->getParam("mm", true)->value().toInt();
             sysCfg.max_retries = request->getParam("retries", true)->value().toInt();
-            sysCfg.apdu_timeout = request->getParam("timeout", true)->value().toInt();
+            sysCfg.ulApduTimeout = request->getParam("timeout", true)->value().toInt();
             sysCfg.token_skip = request->getParam("tskip", true)->value().toInt();
             sysCfg.max_info_frames = request->getParam("mif", true)->value().toInt();
             sysCfg.heartbeat_interval = request->getParam("hbeat", true)->value().toInt();
@@ -616,7 +616,7 @@ void setup_network_infrastructure() {
         
         if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(1000))) {
             for (auto& dev : bacnet_network_cache) {
-                char ns[16]; snprintf(ns, sizeof(ns), "dv_%lu", (unsigned long)dev.device_id); // Correction namespace v6.4.1
+                char ns[16]; snprintf(ns, sizeof(ns), "dv_%lu", (unsigned long)dev.ulDeviceId); // Correction namespace v6.4.1
                 Preferences p; p.begin(ns, false); p.clear(); p.end();
             }
             Preferences reg; reg.begin("registry", false); reg.clear(); reg.end();
@@ -644,14 +644,14 @@ void setup_network_infrastructure() {
         if (!is_authenticated(request)) return;
         
         if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(1000))) {
-            z_log(LOG_INFO, "WEB", "Manual Discovery Triggered - Clearing Metadata Cache\n");
+            z_log(pdLOG_INFO, "WEB", "Manual Discovery Triggered - Clearing Metadata Cache\n");
             for (auto& dev : bacnet_network_cache) {
-                dev.discovery_done = false;
-                dev.disc_step = DISC_DEV_ID;
-                dev.disc_obj_idx = 0;
+                dev.xDiscoveryDone = false;
+                dev.ucDiscStep = DISC_DEV_ID;
+                dev.usDiscObjIdx = 0;
                 for (auto& obj : dev.objects) {
-                    obj.name_published = false;
-                    memset(obj.unit_text, 0, sizeof(obj.unit_text));
+                    obj.xNamePublished = false;
+                    memset(obj.cUnitText, 0, sizeof(obj.cUnitText));
                 }
             }
             xSemaphoreGive(cache_mutex);
@@ -661,13 +661,13 @@ void setup_network_infrastructure() {
         request->send(200, "text/plain", "Discovery triggered & cache cleared");
     });
 
-    ArduinoOTA.onStart([]() { z_log(LOG_INFO, "OTA", "Start\n"); });
-    ArduinoOTA.onEnd([]() { z_log(LOG_INFO, "OTA", "End\n"); });
-    ArduinoOTA.onError([](ota_error_t error) { z_log(LOG_ERROR,"OTA", "Error[%u]\n", error); });
+    ArduinoOTA.onStart([]() { z_log(pdLOG_INFO, "OTA", "Start\n"); });
+    ArduinoOTA.onEnd([]() { z_log(pdLOG_INFO, "OTA", "End\n"); });
+    ArduinoOTA.onError([](ota_error_t error) { z_log(pdLOG_ERROR,"OTA", "Error[%u]\n", error); });
     ArduinoOTA.begin();
 
     webServer.begin();
-    z_log(LOG_INFO, "WEB", "Web Server started\n");
+    z_log(pdLOG_INFO, "WEB", "Web Server started\n");
 }
 
 void handle_network() {
@@ -676,7 +676,7 @@ void handle_network() {
 
     if (!is_ap_mode && WiFi.status() != WL_CONNECTED && (millis() - wifi_connect_start > 30000)) {
         if (!wifi_fallback_active) {
-            z_log(LOG_ERROR, "WIFI", "WiFi Connection failed. Fallback to AP Mode.\n");
+            z_log(pdLOG_ERROR, "WIFI", "WiFi Connection failed. Fallback to AP Mode.\n");
             WiFi.mode(WIFI_AP);
             WiFi.softAP("ZIRCON-GW-FALLBACK", "admin1234");
             wifi_fallback_active = true;

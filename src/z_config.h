@@ -44,10 +44,10 @@
 #define WEB_PORT 80
 
 // LOG LEVELS (Standard Syslog)
-#define LOG_ERROR 1
-#define LOG_WARN  2
-#define LOG_INFO  3
-#define LOG_DEBUG 4
+#define pdLOG_ERROR 1
+#define pdLOG_WARN  2
+#define pdLOG_INFO  3
+#define pdLOG_DEBUG 4
 
 // Main configuration structure to hold all system settings saved in memory
 struct Config {
@@ -57,10 +57,10 @@ struct Config {
     char local_ip[16];              // Fixed IP address
     char gateway[16];               // Router IP address
     char subnet[16];                // Network mask
-    uint8_t mac_address;            // BACnet MS/TP node MAC address
+    uint8_t ucMacAddress;            // BACnet MS/TP node MAC address
     uint8_t max_master;             // Highest MAC address on the MS/TP network
-    uint32_t device_id;             // Unique BACnet device ID
-    uint16_t apdu_timeout;          // Time to wait for a BACnet reply (in milliseconds)
+    uint32_t ulDeviceId;             // Unique BACnet device ID
+    uint16_t ulApduTimeout;          // Time to wait for a BACnet reply (in milliseconds)
     uint8_t max_retries;            // Number of times to retry sending a BACnet message
     uint16_t bacnet_poll_interval;  // Time between BACnet data updates
     char mqtt_server[32];           // IP or domain of the MQTT broker

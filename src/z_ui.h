@@ -307,7 +307,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
     <script>
         const UNITS = {
-            "": "---", 95: "no-units", 62: "°C", 63: "°K", 64: "°F", 98: "%", 29: "%RH", 96: "ppm", 5: "V", 124: "mV", 2: "mA", 3: "A", 4: "Ohm", 8: "VA", 9: "kVA", 19: "kWh", 18: "Wh", 146: "MWh", 48: "kW", 47: "W", 49: "MW", 53: "Pa", 54: "kPa", 55: "bar", 56: "psi", 82: "L", 80: "m³", 87: "L/s", 88: "L/min", 136: "L/h", 85: "m³/s", 135: "m³/h", 159: "ms", 73: "s", 72: "min", 71: "h"
+            "": "---", 95: "no-usUnits", 62: "°C", 63: "°K", 64: "°F", 98: "%", 29: "%RH", 96: "ppm", 5: "V", 124: "mV", 2: "mA", 3: "A", 4: "Ohm", 8: "VA", 9: "kVA", 19: "kWh", 18: "Wh", 146: "MWh", 48: "kW", 47: "W", 49: "MW", 53: "Pa", 54: "kPa", 55: "bar", 56: "psi", 82: "L", 80: "m³", 87: "L/s", 88: "L/min", 136: "L/h", 85: "m³/s", 135: "m³/h", 159: "ms", 73: "s", 72: "min", 71: "h"
         };
         const progHysteresis = {}; 
         const devBoxState = {};
@@ -376,17 +376,17 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 let html = '';
                 if (!Array.isArray(data)) return;
                 data.forEach(dev => {
-                    const isOpen = (dev.enabled && (devBoxState[dev.device_id] !== undefined ? devBoxState[dev.device_id] : true));
-                    html += `<details class="card dev-card" data-did="${dev.device_id}" ${isOpen ? 'open' : ''}>
+                    const isOpen = (dev.xEnabled && (devBoxState[dev.ulDeviceId] !== undefined ? devBoxState[dev.ulDeviceId] : true));
+                    html += `<details class="card dev-card" data-did="${dev.ulDeviceId}" ${isOpen ? 'open' : ''}>
                         <summary class="dev-header">
                             <div>
-                                <span style="color:var(--primary); font-weight:800">ID:${dev.device_id}</span> | 
+                                <span style="color:var(--primary); font-weight:800">ID:${dev.ulDeviceId}</span> | 
                                 <span style="font-size:0.75rem">${dev.name || 'Unnamed Device'}</span>
-                                <div style="font-size:0.55rem; color:var(--muted); margin-top:2px">${dev.vendor || 'Unknown Vendor'}</div>
+                                <div style="font-size:0.55rem; color:var(--muted); margin-top:2px">${dev.cVendor || 'Unknown Vendor'}</div>
                             </div>
                             <div class="dev-actions">
-                                <button class="btn btn-s btn-sm" onclick="event.stopPropagation(); reloadDevice(${dev.device_id})">↻ Reload</button>
-                                <label class="switch" onclick="event.stopPropagation()"><input type="checkbox" ${dev.enabled?'checked':''} onchange="toggleDevice(${dev.device_id})"><span class="slider"></span></label>
+                                <button class="btn btn-s btn-sm" onclick="event.stopPropagation(); reloadDevice(${dev.ulDeviceId})">↻ Reload</button>
+                                <label class="switch" onclick="event.stopPropagation()"><input type="checkbox" ${dev.xEnabled?'checked':''} onchange="toggleDevice(${dev.ulDeviceId})"><span class="slider"></span></label>
                             </div>
                         </summary>
                         <div class="card-b" style="padding:0">
@@ -395,20 +395,20 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                                 <tbody>`;
                     if (Array.isArray(dev.objects)) {
                         dev.objects.forEach((o, idx) => {
-                            if(o.type === 8) return;
-                            let typeStr = ["AI","AO","AV","BI","BO","BV","CAL","CMD","DEV","EVN","FIL","GRP","LP","MSI","MSO","NOT","PRG","SCH","AVG","MSV"][o.type] || "OBJ";
+                            if(o.usType === 8) return;
+                            let typeStr = ["AI","AO","AV","BI","BO","BV","CAL","CMD","DEV","EVN","FIL","GRP","LP","MSI","MSO","NOT","PRG","SCH","AVG","MSV"][o.usType] || "OBJ";
                             let rowClass = o.poll ? '' : 'grisé';
                             let valDisplay = (o.val !== null && !isNaN(o.val)) ? o.val.toFixed(2) : '--';
                             
-                            html += `<tr data-did="${dev.device_id}" data-inst="${o.inst}" data-type="${o.type}" class="${rowClass}">
-                                <td style="text-align:center"><button class="btn btn-s btn-sm" style="padding:2px 4px" onclick="reloadObject(${dev.device_id}, ${o.inst}, ${o.type})" title="Reload Object Properties">↻</button></td>
+                            html += `<tr data-did="${dev.ulDeviceId}" data-inst="${o.inst}" data-type="${o.usType}" class="${rowClass}">
+                                <td style="text-align:center"><button class="btn btn-s btn-sm" style="padding:2px 4px" onclick="reloadObject(${dev.ulDeviceId}, ${o.inst}, ${o.usType})" title="Reload Object Properties">↻</button></td>
                                 <td><span class="obj-badge">${typeStr}:${o.inst}</span></td>
                                 <td>
-                                    <input type="text" class="in-text" value="${o.name || ''}" onchange="saveObj(this)">
+                                    <input type="text" class="in-text" value="${o.cName || ''}" onchange="saveObj(this)">
                                     <select onchange="saveObj(this)" style="margin-top:4px">`;
                             for(let u in UNITS) {
                                 let label = UNITS[u];
-                                let isSelected = (o.unit === label) || (!o.unit && u === "") || (o.unit === "no-units" && label === "no-units");
+                                let isSelected = (o.unit === label) || (!o.unit && u === "") || (o.unit === "no-usUnits" && label === "no-usUnits");
                                 html += `<option value="${u}" ${isSelected?'selected':''}>${label}</option>`;
                             }
                             html += `</select></td>
@@ -497,7 +497,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
                         if(dev.step < 4) { // DISC_DEV_ID to DISC_OBJ_COUNT
                             pct = (dev.step / 4) * 100;
-                        } else if (!dev.enabled) {
+                        } else if (!dev.xEnabled) {
                             status = "DESACTIVATED";
                             sCol = 'var(--muted)';
                             pct = 100; // Information de base récupérée

@@ -22,7 +22,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
     switch ((esp_mqtt_event_id_t)event_id) {
         case MQTT_EVENT_CONNECTED:
-            z_log(LOG_INFO, "MQTT", "Connected to Broker.\n");
+            z_log(pdLOG_INFO, "MQTT", "Connected to Broker.\n");
             mqtt_fail_count = 0; 
             circuit_breaker_active = false;
             mqtt_is_connected = true;
@@ -48,7 +48,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             if (circuit_breaker_active) break;
             
             if (WiFi.status() != WL_CONNECTED) {
-                z_log(LOG_WARN, "MQTT", "Connection dropped due to Wi-Fi loss.\n");
+                z_log(pdLOG_WARN, "MQTT", "Connection dropped due to Wi-Fi loss.\n");
                 break;
             }
             
@@ -56,17 +56,17 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                 if (event->error_handle->error_type == MQTT_ERROR_TYPE_CONNECTION_REFUSED) {
                     if (event->error_handle->connect_return_code == MQTT_CONNECTION_REFUSE_BAD_USERNAME ||
                         event->error_handle->connect_return_code == MQTT_CONNECTION_REFUSE_NOT_AUTHORIZED) {
-                        z_log(LOG_ERROR, "MQTT", "FATAL: Invalid Broker Credentials.\n");
+                        z_log(pdLOG_ERROR, "MQTT", "FATAL: Invalid Broker Credentials.\n");
                         mqtt_fail_count = 3;
                     }
                 }
             }
             
             mqtt_fail_count++;
-            z_log(LOG_WARN, "MQTT", "Disconnected from Broker (%d/3).\n", mqtt_fail_count);
+            z_log(pdLOG_WARN, "MQTT", "Disconnected from Broker (%d/3).\n", mqtt_fail_count);
             
             if (mqtt_fail_count >= 3) {
-                z_log(LOG_ERROR, "MQTT", "CIRCUIT BREAKER: Halting MQTT connection attempts.\n");
+                z_log(pdLOG_ERROR, "MQTT", "CIRCUIT BREAKER: Halting MQTT connection attempts.\n");
                 circuit_breaker_active = true;
             }
             break;
@@ -88,14 +88,14 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                     int p3 = t.indexOf('/', p2 + 1);
                     int p4 = t.indexOf('/', p3 + 1);
                     if (p1 > 0 && p2 > 0 && p3 > 0 && p4 > 0) {
-                        uint32_t device_id = t.substring(p1 + 1, p2).toInt();
+                        uint32_t ulDeviceId = t.substring(p1 + 1, p2).toInt();
                         uint8_t target_mac = 0;
                         bool found = false;
 
                         if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
                             for (auto& d : bacnet_network_cache) {
-                                if (d.device_id == device_id) { 
-                                    target_mac = d.mac_address; 
+                                if (d.ulDeviceId == ulDeviceId) { 
+                                    target_mac = d.ucMacAddress; 
                                     found = true; 
                                     
                                     BACnetJob job;
@@ -115,7 +115,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                                             // Conversion Texte -> Index pour Multi-State
                                             bool text_found = false;
                                             for (auto& o : d.objects) {
-                                                if (o.type == job.obj_type && o.instance == job.obj_instance) {
+                                                if (o.usType == job.obj_type && o.ulInstance == job.obj_instance) {
                                                     for (size_t i = 0; i < o.state_texts.size(); i++) {
                                                         if (o.state_texts[i] == String(payload_buf)) {
                                                             job.write_value = (float)(i + 1);
@@ -146,7 +146,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 }
 
 static void mqtt_gatekeeper_task(void *pv) {
-    z_log(LOG_INFO, "MQTT", "Gatekeeper Task Operational.\n");
+    z_log(pdLOG_INFO, "MQTT", "Gatekeeper Task Operational.\n");
     uint32_t last_status_pub = 0;
     uint32_t last_global_disc = 0;
     uint32_t last_single_disc = 0;
@@ -181,7 +181,7 @@ static void mqtt_gatekeeper_task(void *pv) {
                     // On logue une seule fois pour éviter le flood de logs
                     static uint32_t last_log = 0;
                     if (now - last_log > 5000) {
-                        z_log(LOG_DEBUG, "MQTT", "HA Discovery deferred (throttle active)\n");
+                        z_log(pdLOG_DEBUG, "MQTT", "HA Discovery deferred (throttle active)\n");
                         last_log = now;
                     }
                 }
@@ -204,15 +204,15 @@ static void mqtt_gatekeeper_task(void *pv) {
                     case 19: t_str = "MSV"; break;
                 }
                 const char* subtopic = (pubJob.prop_id == 77) ? "name" : "state";
-                snprintf(topic, sizeof(topic), "%s/%lu/%s/%lu/%s", sysCfg.mqtt_prefix, (unsigned long)pubJob.device_id, t_str, (unsigned long)pubJob.obj_instance, subtopic);
+                snprintf(topic, sizeof(topic), "%s/%lu/%s/%lu/%s", sysCfg.mqtt_prefix, (unsigned long)pubJob.ulDeviceId, t_str, (unsigned long)pubJob.obj_instance, subtopic);
                 
                 if (esp_mqtt_client_publish(mqtt_client, topic, pubJob.value_string, 0, 1, pubJob.retain) < 0) {
-                    z_log(LOG_WARN, "MQTT", "Publish failed. Queue Full or Client error.\n");
+                    z_log(pdLOG_WARN, "MQTT", "Publish failed. Queue Full or Client error.\n");
                     vTaskDelay(pdMS_TO_TICKS(50));
                     break; 
                 } else {
                     period_mqtt_pub_count++;
-                    z_log(LOG_DEBUG, "MQTT", "Published: %s = %s\n", topic, pubJob.value_string);
+                    z_log(pdLOG_DEBUG, "MQTT", "Published: %s = %s\n", topic, pubJob.value_string);
                 }
                 vTaskDelay(pdMS_TO_TICKS(5)); 
             }
@@ -224,7 +224,7 @@ static void mqtt_gatekeeper_task(void *pv) {
                     char t[128]; snprintf(t, sizeof(t), "%s/B2M/%s/state", sysCfg.mqtt_prefix, key);
                     esp_mqtt_client_publish(mqtt_client, t, val.c_str(), 0, 1, 0);
                     period_mqtt_pub_count++;
-                    z_log(LOG_DEBUG, "MQTT", "Published: %s = %s\n", t, val.c_str());
+                    z_log(pdLOG_DEBUG, "MQTT", "Published: %s = %s\n", t, val.c_str());
                 };
                 pub_b2m("ver", configVERSION_GLOBAL);
                 pub_b2m("rssi", String(WiFi.RSSI()));
@@ -244,12 +244,12 @@ static void mqtt_gatekeeper_task(void *pv) {
 
                 // Santé du réseau MS/TP (basé sur le mouvement des jetons)
                 static uint32_t last_token_count = 0;
-                bool mstp_active = (bacnetStats.tokens_seen != last_token_count);
-                last_token_count = bacnetStats.tokens_seen;
+                bool mstp_active = (bacnetStats.ulTokensSeen != last_token_count);
+                last_token_count = bacnetStats.ulTokensSeen;
                 pub_b2m("mstp", mstp_active ? "ON" : "OFF");
                 
-                z_log(LOG_INFO, "MQTT", "Gateway Status published (Uptime: %lu s, Devices: %zu)\n", (unsigned long)(millis() / 1000), n_dev);
-                z_log(LOG_INFO, "MQTT", "Published topics : %s/+, %s/B2M, tele/%s - Total messages : %lu\n", sysCfg.mqtt_prefix, sysCfg.mqtt_prefix, sysCfg.mqtt_prefix, (unsigned long)period_mqtt_pub_count);
+                z_log(pdLOG_INFO, "MQTT", "Gateway Status published (Uptime: %lu s, Devices: %zu)\n", (unsigned long)(millis() / 1000), n_dev);
+                z_log(pdLOG_INFO, "MQTT", "Published topics : %s/+, %s/B2M, tele/%s - Total messages : %lu\n", sysCfg.mqtt_prefix, sysCfg.mqtt_prefix, sysCfg.mqtt_prefix, (unsigned long)period_mqtt_pub_count);
                 
                 period_mqtt_pub_count = 0;
             }
@@ -265,7 +265,7 @@ bool enqueue_mqtt_publish(MQTTPublishJob pubJob) { if (mqtt_publish_queue == NUL
 void init_mqtt_queue() {
     if (mqtt_publish_queue == NULL) {
         mqtt_publish_queue = xQueueCreate(100, sizeof(MQTTPublishJob));
-        z_log(LOG_INFO, "MQTT", "Queue Initialized\n");
+        z_log(pdLOG_INFO, "MQTT", "Queue Initialized\n");
     }
 }
 
@@ -356,7 +356,7 @@ void handle_mqtt() {
         esp_mqtt_client_stop(mqtt_client);
         esp_mqtt_client_destroy(mqtt_client);
         mqtt_client = NULL;
-        z_log(LOG_ERROR, "MQTT", "Circuit Breaker Active. Client destroyed.\n");
+        z_log(pdLOG_ERROR, "MQTT", "Circuit Breaker Active. Client destroyed.\n");
     }
 }
 
@@ -367,7 +367,7 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
     bool is_single_object = (t_did != 0 && t_inst != 0xFFFFFFFF);
     
     if (!is_single_object) {
-        z_log(LOG_INFO, "MQTT", "Starting HA Auto-Discovery%s...\n", (t_did != 0) ? " (Single Device)" : "");
+        z_log(pdLOG_INFO, "MQTT", "Starting HA Auto-Discovery%s...\n", (t_did != 0) ? " (Single Device)" : "");
     }
 
     // Étape 0 : Discovery de la Gateway elle-même (Diagnostics)
@@ -407,7 +407,7 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
             String payload;
             serializeJson(doc, payload);
             esp_mqtt_client_publish(mqtt_client, topic, payload.c_str(), 0, 1, 1);
-            z_log(LOG_DEBUG, "MQTT", "HA Discovery: %s\n", uniq);
+            z_log(pdLOG_DEBUG, "MQTT", "HA Discovery: %s\n", uniq);
         };
 
         pub_gw_sensor("ver", "Gateway Version", NULL, NULL, "mdi:information-outline");
@@ -453,45 +453,45 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
 
                     // Filtrage ciblé (v6.4.2 Param-based)
                     if (t_did != 0) {
-                        bool match_dev = (dev.device_id == t_did);
+                        bool match_dev = (dev.ulDeviceId == t_did);
                         if (!match_dev) { xSemaphoreGive(cache_mutex); continue; }
                         
-                        if (t_inst != 0xFFFFFFFF && obj.instance != t_inst) { xSemaphoreGive(cache_mutex); continue; }
-                        if (t_type != 0xFFFF && obj.type != t_type) { xSemaphoreGive(cache_mutex); continue; }
+                        if (t_inst != 0xFFFFFFFF && obj.ulInstance != t_inst) { xSemaphoreGive(cache_mutex); continue; }
+                        if (t_type != 0xFFFF && obj.usType != t_type) { xSemaphoreGive(cache_mutex); continue; }
                     }
 
                     // Ne pas publier si la découverte du device n'est pas terminée (Metadata manquante)
-                    // Sauf si on est en train de forcer une suppression (obj.enabled == false OU dev.enabled == false)
-                    if (!dev.discovery_done && obj.enabled && dev.enabled) {
+                    // Sauf si on est en train de forcer une suppression (obj.xEnabled == false OU dev.xEnabled == false)
+                    if (!dev.xDiscoveryDone && obj.xEnabled && dev.xEnabled) {
                         xSemaphoreGive(cache_mutex);
                         continue;
                     }
 
-                    if (obj.type != 65535) {
+                    if (obj.usType != 65535) {
                         const char* t_str = "OBJ";
                         const char* ha_component = "sensor";
-                        bool is_command = obj.is_commandable; // Utilisation de la détection Prop 87
+                        bool is_command = obj.xIsCommandable; // Utilisation de la détection Prop 87
                 
-                        switch(obj.type) {
+                        switch(obj.usType) {
                             case OBJ_ANALOG_INPUT: t_str = "AI"; ha_component = "sensor"; break;
                             case OBJ_BINARY_INPUT: t_str = "BI"; ha_component = "binary_sensor"; break;
                             case OBJ_BINARY_OUTPUT: 
                             case OBJ_BINARY_VALUE: 
-                                t_str = (obj.type == OBJ_BINARY_OUTPUT) ? "BO" : "BV"; 
-                                ha_component = (is_command || obj.type == OBJ_BINARY_OUTPUT) ? "switch" : "binary_sensor"; 
+                                t_str = (obj.usType == OBJ_BINARY_OUTPUT) ? "BO" : "BV"; 
+                                ha_component = (is_command || obj.usType == OBJ_BINARY_OUTPUT) ? "switch" : "binary_sensor"; 
                                 break;
                             case OBJ_ANALOG_OUTPUT:
                             case OBJ_ANALOG_VALUE: 
-                                t_str = (obj.type == OBJ_ANALOG_OUTPUT) ? "AO" : "AV"; 
-                                ha_component = (is_command || obj.type == OBJ_ANALOG_OUTPUT) ? "number" : "sensor"; 
+                                t_str = (obj.usType == OBJ_ANALOG_OUTPUT) ? "AO" : "AV"; 
+                                ha_component = (is_command || obj.usType == OBJ_ANALOG_OUTPUT) ? "number" : "sensor"; 
                                 break;
                             case OBJ_MULTI_STATE_INPUT: t_str = "MSI"; ha_component = "sensor"; break;
                             case OBJ_MULTI_STATE_OUTPUT:
                             case OBJ_MULTI_STATE_VALUE: 
-                                t_str = (obj.type == OBJ_MULTI_STATE_OUTPUT) ? "MSO" : "MSV"; 
+                                t_str = (obj.usType == OBJ_MULTI_STATE_OUTPUT) ? "MSO" : "MSV"; 
                                 // Fallback MSV: si on a des textes, on force select. Sinon, number pour rester visible.
                                 if (obj.state_texts.empty()) {
-                                    ha_component = (is_command || obj.type == OBJ_MULTI_STATE_OUTPUT) ? "number" : "sensor";
+                                    ha_component = (is_command || obj.usType == OBJ_MULTI_STATE_OUTPUT) ? "number" : "sensor";
                                 } else {
                                     ha_component = "select";
                                 }
@@ -499,29 +499,29 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                         }
 
                         char uniq_id[64];
-                        snprintf(uniq_id, sizeof(uniq_id), "bacnet_%lu_%s_%lu", (unsigned long)dev.device_id, t_str, (unsigned long)obj.instance);
+                        snprintf(uniq_id, sizeof(uniq_id), "bacnet_%lu_%s_%lu", (unsigned long)dev.ulDeviceId, t_str, (unsigned long)obj.ulInstance);
                         snprintf(final_topic, sizeof(final_topic), "homeassistant/%s/%s/config", ha_component, uniq_id);
 
                         // --- NETTOYAGE DES DOUBLONS (v6.4.0 Optimized) ---
                         // On ne supprime que si on a une trace d'un composant précédent DIFFÉRENT
-                        if (strlen(obj.last_ha_component) > 0 && strcmp(obj.last_ha_component, ha_component) != 0) {
+                        if (strlen(obj.cLastHaComponent) > 0 && strcmp(obj.cLastHaComponent, ha_component) != 0) {
                             char old_topic[128];
-                            snprintf(old_topic, sizeof(old_topic), "homeassistant/%s/%s/config", obj.last_ha_component, uniq_id);
+                            snprintf(old_topic, sizeof(old_topic), "homeassistant/%s/%s/config", obj.cLastHaComponent, uniq_id);
                             esp_mqtt_client_publish(mqtt_client, old_topic, "", 0, 1, 1); 
                             vTaskDelay(pdMS_TO_TICKS(50)); // Petit délai entre unpublish et publish
                         }
-                        strlcpy(obj.last_ha_component, ha_component, sizeof(obj.last_ha_component));
+                        strlcpy(obj.cLastHaComponent, ha_component, sizeof(obj.cLastHaComponent));
 
                         bool is_single_request = (t_did != 0);
 
-                        if (dev.enabled && obj.enabled && strcmp(obj.name, "Unknown") != 0) {
+                        if (dev.xEnabled && obj.xEnabled && strcmp(obj.cName, "Unknown") != 0) {
                             JsonDocument doc; 
                             char base_topic[128];
-                            snprintf(base_topic, sizeof(base_topic), "%s/%lu/%s/%lu", sysCfg.mqtt_prefix, (unsigned long)dev.device_id, t_str, (unsigned long)obj.instance);
+                            snprintf(base_topic, sizeof(base_topic), "%s/%lu/%s/%lu", sysCfg.mqtt_prefix, (unsigned long)dev.ulDeviceId, t_str, (unsigned long)obj.ulInstance);
                             
                             doc["~"] = String(base_topic);
                             doc["uniq_id"] = String(uniq_id);
-                            doc["name"] = String(obj.name); 
+                            doc["name"] = String(obj.cName); 
                             doc["stat_t"] = "~/state";
                             doc["avty_t"] = String(lwt_topic);
                             doc["pl_avail"] = "online";
@@ -531,24 +531,24 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                                 doc["cmd_t"] = "~/set";
                             }
 
-                            if (obj.type == OBJ_BINARY_INPUT || obj.type == OBJ_BINARY_OUTPUT || obj.type == OBJ_BINARY_VALUE) {
+                            if (obj.usType == OBJ_BINARY_INPUT || obj.usType == OBJ_BINARY_OUTPUT || obj.usType == OBJ_BINARY_VALUE) {
                                 doc["pl_on"] = "1.00"; doc["pl_off"] = "0.00";
                             }
 
                             if (strcmp(ha_component, "number") == 0) {
-                                doc["min"] = isnan(obj.min_value) ? sysCfg.default_number_min : obj.min_value;
-                                doc["max"] = isnan(obj.max_value) ? sysCfg.default_number_max : obj.max_value;
+                                doc["min"] = isnan(obj.fMinValue) ? sysCfg.default_number_min : obj.fMinValue;
+                                doc["max"] = isnan(obj.fMaxValue) ? sysCfg.default_number_max : obj.fMaxValue;
                                 doc["step"] = sysCfg.default_number_step;
                             }
 
                             // --- GESTION DES UNITÉS (v6.3.4) ---
-                            if (obj.type == OBJ_ANALOG_INPUT || obj.type == OBJ_ANALOG_VALUE || obj.type == OBJ_ANALOG_OUTPUT) {
-                                String unit = String(obj.unit_text);
+                            if (obj.usType == OBJ_ANALOG_INPUT || obj.usType == OBJ_ANALOG_VALUE || obj.usType == OBJ_ANALOG_OUTPUT) {
+                                String unit = String(obj.cUnitText);
                                 if (unit == "Unknown" || unit.length() == 0 || unit == "none") {
-                                    unit = get_unit_text(obj.units);
+                                    unit = get_unit_text(obj.usUnits);
                                 }
                                 
-                                if (unit != "no-units" && unit.length() > 0) {
+                                if (unit != "no-usUnits" && unit.length() > 0) {
                                     doc["unit_of_meas"] = unit;
                                     if (unit == "°C" || unit == "°F" || unit == "°K") doc["dev_cla"] = "temperature";
                                     else if (unit == "%" || unit == "%RH") doc["dev_cla"] = "humidity";
@@ -561,7 +561,7 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                             }
 
                             bool can_publish = true;
-                            if (obj.type == OBJ_MULTI_STATE_INPUT || obj.type == OBJ_MULTI_STATE_OUTPUT || obj.type == OBJ_MULTI_STATE_VALUE) {
+                            if (obj.usType == OBJ_MULTI_STATE_INPUT || obj.usType == OBJ_MULTI_STATE_OUTPUT || obj.usType == OBJ_MULTI_STATE_VALUE) {
                                 if (!obj.state_texts.empty()) {
                                     JsonArray opts = doc["options"].to<JsonArray>();
                                     for (size_t i = 0; i < obj.state_texts.size(); i++) {
@@ -578,16 +578,16 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                                 JsonObject device = doc["dev"].to<JsonObject>();
                                 JsonArray ids = device["ids"].to<JsonArray>();
                                 char dev_id_str[32]; 
-                                snprintf(dev_id_str, sizeof(dev_id_str), "bacnet_dev_%lu", (unsigned long)dev.device_id);
+                                snprintf(dev_id_str, sizeof(dev_id_str), "bacnet_dev_%lu", (unsigned long)dev.ulDeviceId);
                                 ids.add(String(dev_id_str));
                                 device["name"] = dev.name.length() > 0 ? String(dev.name) : String(dev_id_str);
-                                device["mf"] = dev.vendor.length() > 0 ? String(dev.vendor) : "BACnet Manufacturer";
+                                device["mf"] = dev.cVendor.length() > 0 ? String(dev.cVendor) : "BACnet Manufacturer";
                                 device["sw"] = configVERSION_GLOBAL;
 
                                 serializeJson(doc, final_payload);
                                 should_publish = true;
                             }
-                        } else if (is_single_request || !dev.enabled || !obj.enabled) {
+                        } else if (is_single_request || !dev.xEnabled || !obj.xEnabled) {
                             // On efface l'entité de HA si l'appareil ou l'objet est désactivé
                             final_payload = ""; 
                             should_publish = true;
@@ -611,31 +611,31 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
     }
     
     // Le log de fin est placé tout à la fin de la fonction
-    z_log(LOG_INFO, "MQTT", "HA Auto-Discovery payload sent.\n");
+    z_log(pdLOG_INFO, "MQTT", "HA Auto-Discovery payload sent.\n");
 }
 
-void publish_mqtt_topic(uint32_t device_id, BACnetObject& obj, uint8_t prop_id, bool retain) {
-    if (!obj.enabled) return;
+void publish_mqtt_topic(uint32_t ulDeviceId, BACnetObject& obj, uint8_t prop_id, bool retain) {
+    if (!obj.xEnabled) return;
     MQTTPublishJob pub;
-    pub.device_id = device_id;
-    pub.obj_type = obj.type;
-    pub.obj_instance = obj.instance;
+    pub.ulDeviceId = ulDeviceId;
+    pub.obj_type = obj.usType;
+    pub.obj_instance = obj.ulInstance;
     pub.prop_id = prop_id;
     pub.retain = retain;
 
     if (prop_id == 77) {
-        if (strlen(obj.name) == 0) return;
-        strlcpy(pub.value_string, obj.name, sizeof(pub.value_string));
+        if (strlen(obj.cName) == 0) return;
+        strlcpy(pub.value_string, obj.cName, sizeof(pub.value_string));
     } else if (prop_id == 85) {
-        if ((obj.type == OBJ_MULTI_STATE_INPUT || obj.type == OBJ_MULTI_STATE_OUTPUT || obj.type == OBJ_MULTI_STATE_VALUE) && !obj.state_texts.empty()) {
-            int idx = (int)obj.present_value - 1;
+        if ((obj.usType == OBJ_MULTI_STATE_INPUT || obj.usType == OBJ_MULTI_STATE_OUTPUT || obj.usType == OBJ_MULTI_STATE_VALUE) && !obj.state_texts.empty()) {
+            int idx = (int)obj.fPresentValue - 1;
             if (idx >= 0 && idx < (int)obj.state_texts.size()) {
                 strlcpy(pub.value_string, obj.state_texts[idx].c_str(), sizeof(pub.value_string));
             } else {
-                snprintf(pub.value_string, sizeof(pub.value_string), "%.0f", obj.present_value);
+                snprintf(pub.value_string, sizeof(pub.value_string), "%.0f", obj.fPresentValue);
             }
         } else {
-            snprintf(pub.value_string, sizeof(pub.value_string), "%.2f", obj.present_value);
+            snprintf(pub.value_string, sizeof(pub.value_string), "%.2f", obj.fPresentValue);
         }
     } else return;
 
@@ -645,7 +645,7 @@ void publish_mqtt_topic(uint32_t device_id, BACnetObject& obj, uint8_t prop_id, 
 void unpublish_ha_discovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type, const char* old_prefix) {
     if (!mqtt_is_connected || circuit_breaker_active) return;
     const char* prefix = old_prefix ? old_prefix : sysCfg.mqtt_prefix;
-    z_log(LOG_INFO, "MQTT", "Cleaning up HA Discovery (Prefix: %s)...\n", prefix);
+    z_log(pdLOG_INFO, "MQTT", "Cleaning up HA Discovery (Prefix: %s)...\n", prefix);
 
     // 1. Diagnostics Gateway
     auto unpub_gw = [&](const char* key, bool is_binary = false) {
@@ -662,13 +662,13 @@ void unpublish_ha_discovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type, co
     // 2. Objets BACnet
     if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
         for (auto& dev : bacnet_network_cache) {
-            if (t_did != 0 && dev.device_id != t_did) continue;
+            if (t_did != 0 && dev.ulDeviceId != t_did) continue;
             for (auto& obj : dev.objects) {
-                if (t_inst != 0xFFFFFFFF && obj.instance != t_inst) continue;
-                if (t_type != 0xFFFF && obj.type != t_type) continue;
+                if (t_inst != 0xFFFFFFFF && obj.ulInstance != t_inst) continue;
+                if (t_type != 0xFFFF && obj.usType != t_type) continue;
 
                 const char* t_str = "OBJ";
-                switch(obj.type) {
+                switch(obj.usType) {
                     case 0: t_str="AI"; break;
                     case 1: t_str="AO"; break;
                     case 2: t_str="AV"; break;
@@ -680,7 +680,7 @@ void unpublish_ha_discovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type, co
                     case 19: t_str="MSV"; break;
                 }
                 char uniq_id[64];
-                snprintf(uniq_id, sizeof(uniq_id), "bacnet_%lu_%s_%lu", (unsigned long)dev.device_id, t_str, (unsigned long)obj.instance);
+                snprintf(uniq_id, sizeof(uniq_id), "bacnet_%lu_%s_%lu", (unsigned long)dev.ulDeviceId, t_str, (unsigned long)obj.ulInstance);
                 
                 // Balayage de TOUS les composants possibles pour cet ID unique (v6.4.1 Hardened)
                 const char* components[] = {"sensor", "binary_sensor", "switch", "number", "select"};
