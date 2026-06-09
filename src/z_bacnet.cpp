@@ -207,6 +207,31 @@ static void send_mstp_frame(uint8_t target, uint8_t type, const uint8_t* apdu, u
     if (type == 0x05 || type == 0x06) bacnetStats.ulMsMsgsTx++;
 }
 
+uint16_t build_read_property_multiple_apdu(uint8_t* buffer, uint8_t invoke_id, std::vector<BACnetObject*>& objects, uint8_t property_id) {
+    uint16_t len = 0;
+    buffer[len++] = 0x01; // Confirmed-REQ
+    buffer[len++] = 0x04; // Max Seg / Max Resp
+    buffer[len++] = invoke_id;
+    buffer[len++] = 0x0E; // Service Choice 14 (ReadPropertyMultiple)
+    
+    for (auto* obj : objects) {
+        // [0] ObjectIdentifier
+        buffer[len++] = 0x0C;
+        uint32_t oid = ((uint32_t)obj->usType << 22) | (obj->ulInstance & 0x3FFFFF);
+        buffer[len++] = (oid >> 24) & 0xFF;
+        buffer[len++] = (oid >> 16) & 0xFF;
+        buffer[len++] = (oid >> 8) & 0xFF;
+        buffer[len++] = oid & 0xFF;
+        
+        // [1] List of Property References
+        buffer[len++] = 0x1E; // Open Tag 1
+        buffer[len++] = 0x09; // Context 0, Length 1 (PropertyIdentifier)
+        buffer[len++] = property_id;
+        buffer[len++] = 0x1F; // Close Tag 1
+    }
+    return len;
+}
+
 uint16_t build_read_property_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, uint8_t property_id, int32_t array_index) {
     uint16_t len = 0;
     buffer[len++] = 0x01; buffer[len++] = 0x04; buffer[len++] = 0x02; buffer[len++] = 0x73;
@@ -403,10 +428,49 @@ void execute_discovery_logic(BACnetDevice &dev) {
 }
 
 void execute_polling_logic(BACnetDevice &dev) {
-    uint8_t a[64]; uint16_t al = 0; size_t c = dev.objects.size();
-    if (c > 0) { size_t s = 0; while (s < c) { current_poll_idx = (current_poll_idx + 1) % c; auto& o = dev.objects[current_poll_idx]; if (o.xEnabled && o.usType != 8 && o.usType != 65535 && (o.ulLastUpdate == 0 || (millis()-o.ulLastUpdate)>(sysCfg.bacnet_poll_interval*1000))) { al = build_read_property_apdu(a, next_invoke_id++, o.usType, o.ulInstance, 85, -1); period_poll_count++; break; } s++; } }
-    if (al > 0) { retry_count = 0; waiting_for_reply = true; send_mstp_frame(dev.ucMacAddress, 0x05, a, al); frame_count++; mstp_state = MSTP_WAIT_FOR_REPLY; }
-    else { current_dev_idx = (current_dev_idx + 1) % bacnet_network_cache.size(); mstp_state = MSTP_DONE_WITH_TOKEN; }
+    uint8_t a[512]; uint16_t al = 0; size_t c = dev.objects.size();
+    std::vector<BACnetObject*> batch;
+    
+    if (c > 0 && dev.xSupportsRpm) {
+        size_t s = 0;
+        // Collect up to max APDU limit objects for this device
+        while (s < c && batch.size() < 21) { 
+            current_poll_idx = (current_poll_idx + 1) % c; 
+            auto& o = dev.objects[current_poll_idx]; 
+            if (o.xEnabled && o.usType != 8 && o.usType != 65535 && (o.ulLastUpdate == 0 || (millis()-o.ulLastUpdate)>(sysCfg.bacnet_poll_interval*1000))) { 
+                batch.push_back(&o);
+            } 
+            s++; 
+        }
+        if (!batch.empty()) {
+            al = build_read_property_multiple_apdu(a, next_invoke_id++, batch, 85);
+            period_poll_count += batch.size();
+        }
+    } else if (c > 0) {
+        // Fallback to single read
+        size_t s = 0; 
+        while (s < c) { 
+            current_poll_idx = (current_poll_idx + 1) % c; 
+            auto& o = dev.objects[current_poll_idx]; 
+            if (o.xEnabled && o.usType != 8 && o.usType != 65535 && (o.ulLastUpdate == 0 || (millis()-o.ulLastUpdate)>(sysCfg.bacnet_poll_interval*1000))) { 
+                al = build_read_property_apdu(a, next_invoke_id++, o.usType, o.ulInstance, 85, -1); 
+                period_poll_count++; 
+                break; 
+            } 
+            s++; 
+        }
+    }
+    
+    if (al > 0) { 
+        retry_count = 0; 
+        waiting_for_reply = true; 
+        send_mstp_frame(dev.ucMacAddress, 0x05, a, al); 
+        frame_count++; 
+        mstp_state = MSTP_WAIT_FOR_REPLY; 
+    } else { 
+        current_dev_idx = (current_dev_idx + 1) % bacnet_network_cache.size(); 
+        mstp_state = MSTP_DONE_WITH_TOKEN; 
+    }
 }
 
 void process_incoming_frame(MSTP_Frame &frame) {
@@ -557,8 +621,48 @@ void process_incoming_frame(MSTP_Frame &frame) {
                                     }
                                 }
                             } else {
-                                if(vt.number==4){ float v; uint32_t tm; memcpy(&tm,&apdu[ap],4); tm=__builtin_bswap32(tm); memcpy(&v,&tm,4); if(current_poll_idx<dev.objects.size()){ auto& o=dev.objects[current_poll_idx]; o.fPresentValue=v; o.ulLastUpdate=millis(); if(o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false); } }
-                                else if(vt.number==2||vt.number==9){ uint32_t v=0; for(int i=0;i<vt.len;i++) v=(v<<8)|apdu[ap+i]; if(current_poll_idx<dev.objects.size()){ auto& o=dev.objects[current_poll_idx]; o.fPresentValue=v; o.ulLastUpdate=millis(); if(o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false); } }
+                                if (apdu[2] == 0x0E) {
+                                    // Parse ReadPropertyMultiple ACK
+                                    uint32_t current_oid = 0;
+                                    while (ap < al) {
+                                        BACnetTag t_rpm;
+                                        if (!decode_next_tag(apdu, &ap, al, &t_rpm)) break;
+                                        if (t_rpm.isOpening || t_rpm.isClosing) continue;
+                                        
+                                        if (t_rpm.number == 0 && t_rpm.len >= 4) { // ObjectIdentifier
+                                            current_oid = (apdu[ap]<<24) | (apdu[ap+1]<<16) | (apdu[ap+2]<<8) | apdu[ap+3];
+                                        } 
+                                        else if (t_rpm.number == 4 || t_rpm.number == 2 || t_rpm.number == 9) { // Value inside Context 4
+                                            float v = 0.0f;
+                                            if (t_rpm.number == 4 && t_rpm.len == 4) {
+                                                uint32_t tm; memcpy(&tm, &apdu[ap], 4); tm = __builtin_bswap32(tm); memcpy(&v, &tm, 4);
+                                            } else {
+                                                uint32_t iv = 0; for(int i=0; i<t_rpm.len; i++) iv = (iv<<8) | apdu[ap+i];
+                                                v = (float)iv;
+                                            }
+                                            if (current_oid > 0) {
+                                                uint16_t t_type = current_oid >> 22;
+                                                uint32_t t_inst = current_oid & 0x3FFFFF;
+                                                for (auto& o : dev.objects) {
+                                                    if (o.usType == t_type && o.ulInstance == t_inst) {
+                                                        o.fPresentValue = v;
+                                                        o.ulLastUpdate = millis();
+                                                        if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
+                                                        break;
+                                                    }
+                                                }
+                                                current_oid = 0; // Reset for next
+                                            }
+                                        }
+                                        ap += t_rpm.len;
+                                    }
+                                } else {
+                                    // Parse single ReadProperty ACK
+                                    if(vt.number==4){ float v; uint32_t tm; memcpy(&tm,&apdu[ap],4); tm=__builtin_bswap32(tm); memcpy(&v,&tm,4); if(current_poll_idx<dev.objects.size()){ auto& o=dev.objects[current_poll_idx]; o.fPresentValue=v; o.ulLastUpdate=millis(); if(o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false); } }
+                                    else if(vt.number==2||vt.number==9){ uint32_t v=0; for(int i=0;i<vt.len;i++) v=(v<<8)|apdu[ap+i]; if(current_poll_idx<dev.objects.size()){ auto& o=dev.objects[current_poll_idx]; o.fPresentValue=v; o.ulLastUpdate=millis(); if(o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false); } }
+                                    ap += vt.len;
+                                }
+                                continue;
                             } ap += vt.len;
                         }
                     } xSemaphoreGive(cache_mutex);
