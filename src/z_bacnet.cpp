@@ -410,6 +410,9 @@ void execute_discovery_logic(BACnetDevice &dev) {
         if (dev.ucDiscStep == DISC_DEV_ID) al = build_read_property_apdu(a, next_invoke_id++, 8, 4194303, 75, -1);
         else if (dev.ucDiscStep == DISC_DEV_NAME) al = build_read_property_apdu(a, next_invoke_id++, 8, dev.ulDeviceId, 77, -1);
         else if (dev.ucDiscStep == DISC_DEV_VENDOR) al = build_read_property_apdu(a, next_invoke_id++, 8, dev.ulDeviceId, 121, -1);
+        else if (dev.ucDiscStep == DISC_DEV_MAX_APDU) al = build_read_property_apdu(a, next_invoke_id++, 8, dev.ulDeviceId, 62, -1);
+        else if (dev.ucDiscStep == DISC_DEV_TIMEOUT) al = build_read_property_apdu(a, next_invoke_id++, 8, dev.ulDeviceId, 11, -1);
+        else if (dev.ucDiscStep == DISC_DEV_RETRIES) al = build_read_property_apdu(a, next_invoke_id++, 8, dev.ulDeviceId, 73, -1);
         else if (dev.ucDiscStep == DISC_OBJ_COUNT) al = build_read_property_apdu(a, next_invoke_id++, 8, dev.ulDeviceId, 76, 0);
         else if (dev.usDiscObjIdx < dev.objects.size()) {
             auto& o = dev.objects[dev.usDiscObjIdx];
@@ -528,7 +531,10 @@ void process_incoming_frame(MSTP_Frame &frame) {
                             if (!dev.xDiscoveryDone) {
                                 if (dev.ucDiscStep == DISC_DEV_ID) { dev.ulDeviceId = (((apdu[ap]<<24)|(apdu[ap+1]<<16)|(apdu[ap+2]<<8)|apdu[ap+3]) & 0x3FFFFF); z_log(pdLOG_INFO, "BACNET", "Device ID: %lu\n", (unsigned long)dev.ulDeviceId); dev.ucDiscStep = DISC_DEV_NAME; }
                                 else if (dev.ucDiscStep == DISC_DEV_NAME) { char n[33]; uint8_t enc = apdu[ap]; int sl=0; if(enc==0){sl=std::min((int)vt.len-1,32); memcpy(n,&apdu[ap+1],sl);} else {for(int i=2;i<vt.len&&sl<32;i+=2) n[sl++]=apdu[ap+i];} n[sl]=0; dev.name=String(n); z_log(pdLOG_INFO, "BACNET", "Device Name: %s\n", n); dev.ucDiscStep=DISC_DEV_VENDOR; }
-                                else if (dev.ucDiscStep == DISC_DEV_VENDOR) { char n[33]; uint8_t enc = apdu[ap]; int sl=0; if(enc==0){sl=std::min((int)vt.len-1,32); memcpy(n,&apdu[ap+1],sl);} else {for(int i=2;i<vt.len&&sl<32;i+=2) n[sl++]=apdu[ap+i];} n[sl]=0; dev.vendor=String(n); z_log(pdLOG_INFO, "BACNET", "Device Vendor: %s\n", n); dev.ucDiscStep=DISC_OBJ_COUNT; }
+                                else if (dev.ucDiscStep == DISC_DEV_VENDOR) { char n[33]; uint8_t enc = apdu[ap]; int sl=0; if(enc==0){sl=std::min((int)vt.len-1,32); memcpy(n,&apdu[ap+1],sl);} else {for(int i=2;i<vt.len&&sl<32;i+=2) n[sl++]=apdu[ap+i];} n[sl]=0; dev.vendor=String(n); z_log(pdLOG_INFO, "BACNET", "Device Vendor: %s\n", n); dev.ucDiscStep=DISC_DEV_MAX_APDU; }
+                                else if (dev.ucDiscStep == DISC_DEV_MAX_APDU) { uint32_t v=0; for(int i=0;i<vt.len;i++) v=(v<<8)|apdu[ap+i]; dev.usMaxApduLengthAccepted = v; z_log(pdLOG_INFO, "BACNET", "Device Max APDU: %u\n", dev.usMaxApduLengthAccepted); dev.ucDiscStep=DISC_DEV_TIMEOUT; }
+                                else if (dev.ucDiscStep == DISC_DEV_TIMEOUT) { uint32_t v=0; for(int i=0;i<vt.len;i++) v=(v<<8)|apdu[ap+i]; dev.ulApduTimeout = v; z_log(pdLOG_INFO, "BACNET", "Device APDU Timeout: %lu\n", (unsigned long)dev.ulApduTimeout); dev.ucDiscStep=DISC_DEV_RETRIES; }
+                                else if (dev.ucDiscStep == DISC_DEV_RETRIES) { uint32_t v=0; for(int i=0;i<vt.len;i++) v=(v<<8)|apdu[ap+i]; dev.ucNumberOfApduRetries = v; z_log(pdLOG_INFO, "BACNET", "Device APDU Retries: %u\n", dev.ucNumberOfApduRetries); dev.ucDiscStep=DISC_OBJ_COUNT; }
                                 else if (dev.ucDiscStep == DISC_OBJ_COUNT) { 
                                     uint32_t c=0; for(int i=0;i<vt.len;i++) c=(c<<8)|apdu[ap+i]; 
                                     z_log(pdLOG_INFO, "BACNET", "Device Object Count: %lu\n", (unsigned long)c); 
