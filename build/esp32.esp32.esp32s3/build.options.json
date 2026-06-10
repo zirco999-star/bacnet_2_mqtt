@@ -1,9 +1,0 @@
-{
-  "additionalFiles": "../../../..,../../../..,../../../..,../../../..,../../../..,../../../..,../../../..,../../../..,../../../..,../../../..,../../../..,../../../..,../../../..,../../../..,../../../..,../../../..,../../../..,../../..,../../../../..,../../../../../../../..,../../..,../../..,../../..,../../..,../..,../..,../..,../..,../..,../../..,../../..,../../..,../../..,../../..,../../..,../../..,../../..,../../..,../../..,../../..,../../..,../../..,../../..,../../..,../../..,../../..,../../..,../../..,../../..,../../..,../../..,../../..,../../..,../../../..,../../../..,../../../..,../../../..,../../../..,../../../..,../../../..,../../../..,../../../../..,../../../../..,../../../../..,../../../../..,../../../../..,../../../../..,../../../../..,../../../../..,../../../../..,../../../../..",
-  "compiler.optimization_flags": "-Os",
-  "customBuildProperties": "build.extra_flags=-mfix-esp32-psram-cache-issue -DESP32 -DCORE_DEBUG_LEVEL=4,board_build.partitions=partitions.csv",
-  "fqbn": "esp32:esp32:esp32s3:UploadSpeed=921600,USBMode=hwcdc,CDCOnBoot=cdc,MSCOnBoot=default,DFUOnBoot=default,UploadMode=default,CPUFreq=240,FlashMode=qio,FlashSize=16M,PartitionScheme=custom,DebugLevel=debug,PSRAM=opi,LoopCore=1,EventsCore=1,EraseFlash=all,JTAGAdapter=builtin,ZigbeeMode=default",
-  "hardwareFolders": "/root/.arduino15/packages/esp32/hardware/esp32/3.3.8,/root/.arduino15/packages/esp32/hardware/esp32/3.3.8",
-  "otherLibrariesFolders": "/root/Arduino/libraries",
-  "sketchLocation": "/mnt/save/bacnet_2_mqtt"
-}
