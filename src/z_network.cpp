@@ -678,7 +678,7 @@ void handle_network() {
         if (!wifi_fallback_active) {
             z_log(pdLOG_ERROR, "WIFI", "WiFi Connection failed. Fallback to AP Mode.\n");
             WiFi.mode(WIFI_AP);
-            WiFi.softAP("ZIRCON-GW-FALLBACK", "admin1234");
+            WiFi.softAP("ZIRCON-GW-CONFIG", "admin1234");
             wifi_fallback_active = true;
         }
     }

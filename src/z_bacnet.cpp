@@ -171,7 +171,14 @@ static bool validate_rx_data_crc(const uint8_t *data, size_t len) {
     return (crc == 0xF0B8);
 }
 
-struct BACnetTag { uint32_t number; bool isContext; uint32_t len; bool isOpening; bool isClosing; };
+struct BACnetTag { 
+    uint32_t number; 
+    bool isContext; 
+    uint32_t len; 
+    bool isOpening; 
+    bool isClosing; 
+};
+
 static bool decode_next_tag(const uint8_t *data, uint16_t *pos, uint16_t max, BACnetTag *tag) {
     if (*pos >= max) return false;
     uint8_t b = data[(*pos)++];
@@ -392,15 +399,42 @@ bool has_bacnet_work() {
 }
 
 void execute_bacnet_work() {
+    BACnetJob j;
+    bool job_executed = false;
+
     if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(15))) {
-        BACnetJob j; if (xQueueReceive(bacnet_job_queue, &j, 0)) {
-            if (j.type == JOB_WHO_IS) { uint8_t b[16]; uint16_t l=0; b[l++]=0x01; b[l++]=0x20; b[l++]=0xFF; b[l++]=0xFF; b[l++]=0x00; b[l++]=0xFF; b[l++]=0x10; b[l++]=0x08; send_mstp_frame(0xFF, 0x06, b, l); }
-            else if (j.type == JOB_WRITE_PROP) { uint8_t b[256]; uint16_t al=0; if (j.prop_id == 77) al = build_write_property_name_apdu(b, next_invoke_id++, j.obj_type, j.obj_instance, j.name); else al = build_write_property_value_apdu(b, next_invoke_id++, j.obj_type, j.obj_instance, j.prop_id, j.write_value); pending_write_job = j; waiting_for_reply = true; retry_count = 0; send_mstp_frame(j.target_mac, 0x05, b, al); mstp_state = MSTP_WAIT_FOR_REPLY; }
+        if (xQueueReceive(bacnet_job_queue, &j, 0)) {
+            if (j.type == JOB_WHO_IS) { 
+                uint8_t b[16]; uint16_t l=0; 
+                b[l++]=0x01; b[l++]=0x20; b[l++]=0xFF; b[l++]=0xFF; b[l++]=0x00; b[l++]=0xFF; b[l++]=0x10; b[l++]=0x08; 
+                send_mstp_frame(0xFF, 0x06, b, l); 
+            }
+            else if (j.type == JOB_WRITE_PROP) { 
+                uint8_t b[256]; uint16_t al=0; 
+                if (j.prop_id == 77) al = build_write_property_name_apdu(b, next_invoke_id++, j.obj_type, j.obj_instance, j.name); 
+                else al = build_write_property_value_apdu(b, next_invoke_id++, j.obj_type, j.obj_instance, j.prop_id, j.write_value); 
+                pending_write_job = j; waiting_for_reply = true; retry_count = 0; 
+                send_mstp_frame(j.target_mac, 0x05, b, al); 
+                mstp_state = MSTP_WAIT_FOR_REPLY; 
+            }
             frame_count++;
+            job_executed = true;
         } else if (!bacnet_network_cache.empty()) {
             if (current_dev_idx >= bacnet_network_cache.size()) current_dev_idx = 0;
             execute_discovery_logic(bacnet_network_cache[current_dev_idx]);
-        } xSemaphoreGive(cache_mutex);
+        } 
+        xSemaphoreGive(cache_mutex);
+    }
+
+    if (job_executed) {
+        if (j.type == JOB_WHO_IS) {
+            z_log(pdLOG_INFO, "BACNET", "WHO-IS send\n");
+        } else if (j.type == JOB_WRITE_PROP) {
+            if (j.prop_id == 77)
+                z_log(pdLOG_INFO, "BACNET", "WRITE obj: %u:%lu (Name) - value : %s\n", j.obj_type, (unsigned long)j.obj_instance, j.name);
+            else
+                z_log(pdLOG_INFO, "BACNET", "WRITE obj: %u:%lu - value : %.2f\n", j.obj_type, (unsigned long)j.obj_instance, j.write_value);
+        }
     }
 }
 
