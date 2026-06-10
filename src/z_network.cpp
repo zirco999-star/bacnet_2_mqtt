@@ -174,7 +174,6 @@ void setup_network_infrastructure() {
         request->send_P(200, "text/html", INDEX_HTML);
     });
 
-    /* v6.5.2: Désactivation temporaire pour isoler la cause du crash parallel sockets
     webServer.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request) {
         AsyncWebServerResponse *response = request->beginResponse_P(200, "image/x-icon", favicon_ico, favicon_ico_len);
         if (response) {
@@ -190,7 +189,6 @@ void setup_network_infrastructure() {
             request->send(response);
         }
     });
-    */
 
     webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!is_authenticated(request)) return;
@@ -332,6 +330,7 @@ void setup_network_infrastructure() {
         BACnetJob job; job.type = JOB_I_AM;
         enqueue_bacnet_job(job);
         request->send(200, "text/plain", "I-AM ENQUEUED");
+        z_log(pdLOG_INFO, "API", "I-AM ENQUEUED\n");
     });
 
     webServer.on("/api/reload_device", HTTP_POST, [](AsyncWebServerRequest *request) {

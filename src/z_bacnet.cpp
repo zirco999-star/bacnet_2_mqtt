@@ -291,6 +291,22 @@ uint16_t build_write_property_value_apdu(uint8_t* buffer, uint8_t invoke_id, uin
     return len;
 }
 
+uint16_t build_i_am_apdu(uint8_t* buffer, uint32_t device_instance, uint16_t max_apdu, uint16_t vendor_id) {
+    uint16_t len = 0;
+    buffer[len++] = 0x10; // PDU Type: Unconfirmed-Request
+    buffer[len++] = 0x00; // Service Choice: I-Am
+    buffer[len++] = 0xC4; // Tag 12, Len 4 (ObjectIdentifier)
+    uint32_t oid = (8 << 22) | (device_instance & 0x3FFFFF);
+    buffer[len++] = (oid >> 24) & 0xFF; buffer[len++] = (oid >> 16) & 0xFF;
+    buffer[len++] = (oid >> 8) & 0xFF;  buffer[len++] = oid & 0xFF;
+    if (max_apdu <= 255) { buffer[len++] = 0x21; buffer[len++] = (uint8_t)max_apdu; }
+    else { buffer[len++] = 0x22; buffer[len++] = (max_apdu >> 8) & 0xFF; buffer[len++] = max_apdu & 0xFF; }
+    buffer[len++] = 0x91; buffer[len++] = 0x03; // Tag 9 (Enumerated), Value 3 (segmented-none)
+    if (vendor_id <= 255) { buffer[len++] = 0x21; buffer[len++] = (uint8_t)vendor_id; }
+    else { buffer[len++] = 0x22; buffer[len++] = (vendor_id >> 8) & 0xFF; buffer[len++] = vendor_id & 0xFF; }
+    return len;
+}
+
 String get_unit_text(uint16_t usUnits) {
     switch(usUnits) {
         case 62: return "°C"; case 63: return "°K"; case 64: return "°F";
@@ -409,6 +425,12 @@ void execute_bacnet_work() {
                 b[l++]=0x01; b[l++]=0x20; b[l++]=0xFF; b[l++]=0xFF; b[l++]=0x00; b[l++]=0xFF; b[l++]=0x10; b[l++]=0x08; 
                 send_mstp_frame(0xFF, 0x06, b, l); 
             }
+            else if (j.type == JOB_I_AM) {
+                uint8_t b[32]; uint16_t l = 0;
+                b[l++]=0x01; b[l++]=0x20; b[l++]=0xFF; b[l++]=0xFF; b[l++]=0x00; b[l++]=0xFF;
+                l += build_i_am_apdu(&b[l], sysCfg.ulDeviceId, 480, 0);
+                send_mstp_frame(0xFF, 0x06, b, l);
+            }
             else if (j.type == JOB_WRITE_PROP) { 
                 uint8_t b[256]; uint16_t al=0; 
                 if (j.prop_id == 77) al = build_write_property_name_apdu(b, next_invoke_id++, j.obj_type, j.obj_instance, j.name); 
@@ -429,6 +451,8 @@ void execute_bacnet_work() {
     if (job_executed) {
         if (j.type == JOB_WHO_IS) {
             z_log(pdLOG_INFO, "BACNET", "WHO-IS send\n");
+        } else if (j.type == JOB_I_AM) {
+            z_log(pdLOG_INFO, "BACNET", "I-AM send (Device %lu)\n", (unsigned long)sysCfg.ulDeviceId);
         } else if (j.type == JOB_WRITE_PROP) {
             if (j.prop_id == 77)
                 z_log(pdLOG_INFO, "BACNET", "WRITE obj: %u:%lu (Name) - value : %s\n", j.obj_type, (unsigned long)j.obj_instance, j.name);
