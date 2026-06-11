@@ -7,6 +7,8 @@
 #include "z_network.h"
 
 uint32_t period_mqtt_pub_count = 0;
+uint32_t period_mqtt_obj_count = 0;
+uint32_t period_mqtt_b2m_count = 0;
 
 static int mqtt_fail_count = 0;
 static std::atomic<bool> circuit_breaker_active{false};
@@ -209,21 +211,23 @@ static void mqtt_gatekeeper_task(void *pv) {
                 if (esp_mqtt_client_publish(mqtt_client, topic, pubJob.value_string, 0, 1, pubJob.retain) < 0) {
                     z_log(pdLOG_WARN, "MQTT", "Publish failed. Queue Full or Client error.\n");
                     vTaskDelay(pdMS_TO_TICKS(50));
-                    break; 
+                    break;
                 } else {
                     period_mqtt_pub_count++;
+                    period_mqtt_obj_count++;
                     z_log(pdLOG_DEBUG, "MQTT", "Published: %s = %s\n", topic, pubJob.value_string);
                 }
-                vTaskDelay(pdMS_TO_TICKS(5)); 
-            }
+                vTaskDelay(pdMS_TO_TICKS(5));
+                }
 
-            // 3. Status Gateway périodique
-            if (millis() - last_status_pub > (sysCfg.mqtt_poll_interval * 1000)) {
+                // 3. Status Gateway périodique
+                if (millis() - last_status_pub > (sysCfg.mqtt_poll_interval * 1000)) {
                 last_status_pub = millis();
                 auto pub_b2m = [&](const char* key, String val) {
                     char t[128]; snprintf(t, sizeof(t), "%s/B2M/%s/state", sysCfg.mqtt_prefix, key);
                     esp_mqtt_client_publish(mqtt_client, t, val.c_str(), 0, 1, 0);
                     period_mqtt_pub_count++;
+                    period_mqtt_b2m_count++;
                     z_log(pdLOG_DEBUG, "MQTT", "Published: %s = %s\n", t, val.c_str());
                 };
                 pub_b2m("ver", configVERSION_GLOBAL);
@@ -231,14 +235,14 @@ static void mqtt_gatekeeper_task(void *pv) {
                 pub_b2m("heap", String(ESP.getFreeHeap() / 1024));
                 pub_b2m("min_heap", String(ESP.getMinFreeHeap() / 1024));
                 pub_b2m("uptime", String(millis() / 1000));
-                
+
                 size_t n_dev = 0;
                 if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
                     n_dev = bacnet_network_cache.size();
                     xSemaphoreGive(cache_mutex);
                 }
                 pub_b2m("nb_dev", String(n_dev));
-                
+
                 // Température interne ESP32-S3
                 pub_b2m("temp", String(temperatureRead(), 1));
 
@@ -247,12 +251,16 @@ static void mqtt_gatekeeper_task(void *pv) {
                 bool mstp_active = (bacnetStats.ulTokensSeen != last_token_count);
                 last_token_count = bacnetStats.ulTokensSeen;
                 pub_b2m("mstp", mstp_active ? "ON" : "OFF");
-                
+
                 z_log(pdLOG_INFO, "MQTT", "Gateway Status published (Uptime: %lu s, Devices: %zu)\n", (unsigned long)(millis() / 1000), n_dev);
-                z_log(pdLOG_INFO, "MQTT", "Published topics : %s/+, %s/B2M, tele/%s - Total messages : %lu\n", sysCfg.mqtt_prefix, sysCfg.mqtt_prefix, sysCfg.mqtt_prefix, (unsigned long)period_mqtt_pub_count);
-                
+                z_log(pdLOG_INFO, "MQTT", "Published topics : %s/+ : %lu msg, %s/B2M : %lu msg\n", 
+                      sysCfg.mqtt_prefix, (unsigned long)period_mqtt_obj_count, 
+                      sysCfg.mqtt_prefix, (unsigned long)period_mqtt_b2m_count);
+
                 period_mqtt_pub_count = 0;
-            }
+                period_mqtt_obj_count = 0;
+                period_mqtt_b2m_count = 0;
+                }
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
