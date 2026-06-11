@@ -465,8 +465,9 @@ void setup_web_routes() {
 
         if (ft == "wifi") {
             strlcpy(sysCfg.wifi_ssid, request->getParam("ssid", true)->value().c_str(), 32);
-            if (request->getParam("pass", true)->value() != "******")
-                strlcpy(sysCfg.wifi_pass, request->getParam("pass", true)->value().c_str(), 64);
+            String p = request->getParam("pass", true)->value();
+            if (p.length() > 0 && p != "******") strlcpy(sysCfg.wifi_pass, p.c_str(), 64);
+            
             sysCfg.static_ip = request->hasParam("static_ip", true);
             strlcpy(sysCfg.local_ip, request->getParam("local_ip", true)->value().c_str(), 16);
             strlcpy(sysCfg.gateway, request->getParam("gateway", true)->value().c_str(), 16);
@@ -474,8 +475,9 @@ void setup_web_routes() {
         } else if (ft == "mqtt") {
             strlcpy(sysCfg.mqtt_server, request->getParam("mqh", true)->value().c_str(), 32);
             strlcpy(sysCfg.mqtt_user, request->getParam("mqu", true)->value().c_str(), 32);
-            if (request->getParam("mqp", true)->value() != "******")
-                strlcpy(sysCfg.mqtt_pass, request->getParam("mqp", true)->value().c_str(), 32);
+            String p = request->getParam("mqp", true)->value();
+            if (p.length() > 0 && p != "******") strlcpy(sysCfg.mqtt_pass, p.c_str(), 32);
+            
             strlcpy(sysCfg.mqtt_prefix, request->getParam("mqpr", true)->value().c_str(), 64);
             sysCfg.ha_discover = request->hasParam("ha_disc", true);
         } else if (ft == "bac") {
@@ -492,8 +494,9 @@ void setup_web_routes() {
             sysCfg.bacnet_poll_interval = (uint16_t)request->getParam("bpi", true)->value().toInt();
         } else if (ft == "sec") {
             strlcpy(sysCfg.admin_user, request->getParam("admin_u", true)->value().c_str(), 32);
-            if (request->getParam("admin_p", true)->value() != "******")
-                strlcpy(sysCfg.admin_pass, request->getParam("admin_p", true)->value().c_str(), 64);
+            String p = request->getParam("admin_p", true)->value();
+            if (p.length() > 0 && p != "******") strlcpy(sysCfg.admin_pass, p.c_str(), 64);
+            
             if (request->hasParam("lvl", true)) sysCfg.log_level = (uint8_t)request->getParam("lvl", true)->value().toInt();
         }
 
