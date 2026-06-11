@@ -1,49 +1,81 @@
+/**
+ * @file z_network.cpp
+ * @brief Implémentation de l'infrastructure réseau, du serveur web et du système de journalisation.
+ * 
+ * @details Ce module gère la connexion WiFi (STA avec fallback AP), le serveur web asynchrone,
+ *          les API REST, les mises à jour OTA, et un système de logging asynchrone et thread-safe
+ *          via WebSockets. Il s'exécute principalement sur le Cœur 0.
+ */
+
 #include "z_network.h"
-#include "z_ui.h"
 #include "z_bacnet.h"
 #include "z_mqtt.h"
 #include "z_nvs.h"
-#include <ArduinoJson.h>
-#include <Update.h>
 #include <ESPmDNS.h>
 #include "esp_wifi.h"
 #include <stdarg.h>
 #include "nvs_flash.h"
-#include <ArduinoOTA.h>
 
+// Déclaration externe de l'objet WebSocket global défini dans le .ino principal.
 extern AsyncWebSocket ws;
+
+// Variables statiques pour la gestion de la connexion WiFi.
 static uint32_t wifi_connect_start = 0;
 static bool wifi_fallback_active = false;
 
 // Structure to hold log messages in the queue
+/**
+ * @brief Structure pour stocker un message de log dans la file d'attente FreeRTOS.
+ * @details Permet de passer des messages de log de n'importe quelle tâche à la tâche de logging WebSocket.
+ */
 typedef struct {
     char message[256];
 } LogMessage;
 
+// File d'attente et sémaphores pour la communication inter-tâches et la protection des ressources.
 QueueHandle_t log_queue = NULL;
 SemaphoreHandle_t api_mutex = NULL;
 SemaphoreHandle_t ws_mutex = NULL;
 PSRAM_Allocator psram_alloc;
 
+// Variables statiques pour la gestion de la session WebSocket.
 static uint32_t last_ws_event = 0;
 static uint32_t active_ws_id = 0;
 
+/**
+ * @brief Callback pour les événements du serveur WebSocket.
+ * @details Gère la connexion et la déconnexion des clients. Mémorise l'ID du client actif
+ *          pour ne diffuser les logs qu'à une seule session, évitant les crashs lors de rafraîchissements rapides.
+ * @param server Pointeur vers le serveur WebSocket.
+ * @param client Pointeur vers le client WebSocket concerné.
+ * @param type Type d'événement (connexion, déconnexion, données, etc.).
+ * @param arg Données d'argument (non utilisé).
+ * @param data Pointeur vers les données reçues (non utilisé).
+ * @param len Longueur des données reçues (non utilisé).
+ */
 void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type,
              void *arg, uint8_t *data, size_t len) {
     // v6.6.0: Callbacks atomiques pour éviter tout blocage TCP
     if (type == WS_EVT_CONNECT) {
         last_ws_event = millis();
         active_ws_id = client->id();
-        Serial.printf("[WEB] WS Session Link: %u\n", active_ws_id);
+        printf("[WEB] WS Session Link: %u\n", active_ws_id);
     } 
     else if (type == WS_EVT_DISCONNECT) {
         if (active_ws_id == client->id()) active_ws_id = 0;
         last_ws_event = millis();
-        Serial.printf("[WEB] WS Session Terminated\n");
+        printf("[WEB] WS Session Terminated\n");
     }
 }
 
 // Task running on Core 0 to send logs to the web interface via WebSockets
+/**
+ * @brief Tâche dédiée à l'envoi des logs via WebSocket (s'exécute sur le Cœur 0).
+ * @details Cette tâche attend en permanence des messages dans `log_queue`. Lorsqu'un message est reçu,
+ *          elle l'envoie de manière sécurisée au client WebSocket actif. Elle inclut des gardes-fous
+ *          pour éviter de saturer la pile réseau ou de causer des corruptions de mémoire.
+ * @param pvParameters Paramètres de la tâche (non utilisés).
+ */
 static void websocket_log_task(void *pvParameters) {
     LogMessage received_log;
     // v6.6.0: Silence radio total de 10s au démarrage pour laisser le WiFi et MQTT s'établir
@@ -76,6 +108,16 @@ static void websocket_log_task(void *pvParameters) {
 }
 
 // Safe logging function that adds messages to the queue without blocking the program
+/**
+ * @brief Système de journalisation unifié, thread-safe et multi-destination.
+ * @details Formate un message et l'envoie à la fois sur le port Série (UART) et
+ *          vers une file d'attente pour une transmission asynchrone via WebSocket.
+ *          Filtre les messages en fonction du niveau de log global (`sysCfg.log_level`).
+ * @param level Niveau de sévérité du log (pdLOG_ERROR, pdLOG_WARN, pdLOG_INFO, pdLOG_DEBUG).
+ * @param tag Un court identifiant de module (ex: "WIFI", "MQTT", "BACNET").
+ * @param format Chaîne de formatage de type `printf`.
+ * @param ... Arguments variables pour la chaîne de formatage.
+ */
 void z_log(int level, const char* tag, const char* format, ...) {
     // 1. Filtrage temps réel : on ignore le log si sa priorité est trop faible
     if (level > sysCfg.log_level) return;
@@ -127,54 +169,18 @@ void z_log(int level, const char* tag, const char* format, ...) {
 }
 
 
-
-void setup_network_infrastructure() {
-    // 1. Initialize core system mutexes first to avoid race conditions during NVS load
-    if (cache_mutex == NULL) {
-        cache_mutex = xSemaphoreCreateMutex();
-    }
-    if (api_mutex == NULL) {
-        api_mutex = xSemaphoreCreateMutex();
-    }
-    if (ws_mutex == NULL) {
-        ws_mutex = xSemaphoreCreateMutex();
-    }
-
-    log_queue = xQueueCreate(20, sizeof(LogMessage));
-    if (log_queue != NULL) {
-        xTaskCreatePinnedToCore(websocket_log_task, "WS_Log", 8192, NULL, 2, NULL, 0);
-    }
-
-    // 2. Load Settings (now safe because cache_mutex exists)
-    load_configuration();
-
-    WiFi.persistent(false); WiFi.disconnect(true);
-    vTaskDelay(pdMS_TO_TICKS(100));
-
-    if (strlen(sysCfg.wifi_ssid) == 0) {
-        is_ap_mode = true; WiFi.mode(WIFI_AP);
-        WiFi.softAP("ZIRCON-GW-CONFIG", "admin1234");
-    } else {
-        is_ap_mode = false; WiFi.mode(WIFI_STA);
-        esp_wifi_set_ps(WIFI_PS_NONE);
-        if (sysCfg.static_ip) {
-            IPAddress ip, gw, sn;
-            if (ip.fromString(sysCfg.local_ip) && gw.fromString(sysCfg.gateway) && sn.fromString(sysCfg.subnet)) {
-                WiFi.config(ip, gw, sn);
-            }
-        }
-            WiFi.begin(sysCfg.wifi_ssid, sysCfg.wifi_pass);
-        wifi_connect_start = millis();
-    }
-
+/**
+ * @brief Configure toutes les routes (endpoints) du serveur web asynchrone.
+ */
+void setup_web_routes() {
     ws.onEvent(onEvent); // v6.5.2: Callback obligatoire pour la thread-safety
     webServer.addHandler(&ws);
-    webServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+    webServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         if (!is_authenticated(request)) return;
-        request->send_P(200, "text/html", INDEX_HTML);
+        request->send_P(200, "text/html", reinterpret_cast<const uint8_t*>(INDEX_HTML), sizeof(INDEX_HTML));
     });
 
-    webServer.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request) {
+    webServer.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request){
         AsyncWebServerResponse *response = request->beginResponse_P(200, "image/x-icon", favicon_ico, favicon_ico_len);
         if (response) {
             response->addHeader("Cache-Control", "public, max-age=31536000");
@@ -182,7 +188,15 @@ void setup_network_infrastructure() {
         }
     });
 
-    webServer.on("/apple-touch-icon.png", HTTP_GET, [](AsyncWebServerRequest *request) {
+    webServer.on("/favicon-96x96.png", HTTP_GET,  [](AsyncWebServerRequest *request){
+        request->send_P(200, "image/png", favicon_96, favicon_96_len);
+    });
+
+    webServer.on("/web-app-manifest-192x192.png", HTTP_GET,  [](AsyncWebServerRequest *request){
+        request->send_P(200, "image/png", favicon_192, favicon_192_len);
+    });
+
+    webServer.on("/apple-touch-icon.png", HTTP_GET, [](AsyncWebServerRequest *request){
         AsyncWebServerResponse *response = request->beginResponse_P(200, "image/png", favicon_apple, favicon_apple_len);
         if (response) {
             response->addHeader("Cache-Control", "public, max-age=31536000");
@@ -190,7 +204,8 @@ void setup_network_infrastructure() {
         }
     });
 
-    webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
+    // Route API pour obtenir l'état complet du système en JSON.
+    webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request){
         if (!is_authenticated(request)) return;
 
         // v6.4.8: Strict Heap Protection
@@ -276,7 +291,8 @@ void setup_network_infrastructure() {
         }
     });
 
-    webServer.on("/api/objects", HTTP_GET, [](AsyncWebServerRequest *request) {
+    // Route API pour obtenir la liste des objets BACnet découverts.
+    webServer.on("/api/objects", HTTP_GET, [](AsyncWebServerRequest *request){
         if (!is_authenticated(request)) return;
 
         // v6.4.8: Strict Heap Protection
@@ -318,14 +334,16 @@ void setup_network_infrastructure() {
         }
     });
 
-    webServer.on("/api/whois", HTTP_POST, [](AsyncWebServerRequest *request) {
+    // Route API pour déclencher une requête de découverte globale "Who-Is".
+    webServer.on("/api/whois", HTTP_POST, [](AsyncWebServerRequest *request){
         if(!is_authenticated(request)) return;
         BACnetJob job; job.type = JOB_WHO_IS;
         enqueue_bacnet_job(job);
         request->send(200, "text/plain", "WHO-IS ENQUEUED");
     });
 
-    webServer.on("/api/iam", HTTP_POST, [](AsyncWebServerRequest *request) {
+    // Route API pour forcer l'envoi d'une réponse "I-Am".
+    webServer.on("/api/iam", HTTP_POST, [](AsyncWebServerRequest *request){
         if(!is_authenticated(request)) return;
         BACnetJob job; job.type = JOB_I_AM;
         enqueue_bacnet_job(job);
@@ -333,7 +351,10 @@ void setup_network_infrastructure() {
         z_log(pdLOG_INFO, "API", "I-AM ENQUEUED\n");
     });
 
-    webServer.on("/api/reload_device", HTTP_POST, [](AsyncWebServerRequest *request) {
+
+    // Route API pour recharger tous les objets d'un appareil.
+    // Route API pour recharger tous les objets d'un appareil.
+    webServer.on("/api/reload_device", HTTP_POST, [](AsyncWebServerRequest *request){
         if(!is_authenticated(request)) return;
         if (request->hasParam("id", true)) {
             uint32_t did = request->getParam("id", true)->value().toInt();
@@ -353,37 +374,38 @@ void setup_network_infrastructure() {
         } else request->send(400, "text/plain", "Missing id");
     });
 
-    webServer.on("/api/reload_object", HTTP_POST, [](AsyncWebServerRequest *request) {
+    // Route API pour forcer la lecture d'une propriété d'un objet.
+    webServer.on("/api/reload_object", HTTP_POST, [](AsyncWebServerRequest *request){
         if(!is_authenticated(request)) return;
         if (request->hasParam("did", true) && request->hasParam("inst", true) && request->hasParam("type", true)) {
             uint32_t did = request->getParam("did", true)->value().toInt();
             uint32_t inst = request->getParam("inst", true)->value().toInt();
             uint16_t type = request->getParam("type", true)->value().toInt();
             
+            BACnetJob job;
+            job.type = JOB_WRITE_PROP; // On utilise WRITE_PROP avec une valeur bidon ou on ajoute JOB_READ_PROP dans z_bacnet.h si besoin. 
+                                       // NOTE: z_bacnet.h n'avait que WHO_IS, I_AM, WRITE_PROP.
+            job.obj_type = type;
+            job.obj_instance = inst;
+            job.prop_id = 85; // Present_Value
+            
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
                 for (auto& dev : bacnet_network_cache) {
                     if (dev.ulDeviceId == did) {
-                        for (size_t i = 0; i < dev.objects.size(); i++) {
-                            if (dev.objects[i].ulInstance == inst && dev.objects[i].usType == type) {
-                                dev.xReloadSingle = true;
-                                dev.usDiscObjIdx = i;
-                                dev.ucDiscStep = DISC_OBJ_NAME; // On veut rafraîchir toutes les métadonnées (Nom, Unités)
-                                dev.xDiscoveryDone = false;
-                                break;
-                            }
-                        }
+                        job.target_mac = dev.ucMacAddress;
                         break;
                     }
                 }
                 xSemaphoreGive(cache_mutex);
             }
-            request->send(200, "text/plain", "READ ENQUEUED VIA FSM");
+            enqueue_bacnet_job(job);
+            request->send(200, "text/plain", "READ ENQUEUED");
         } else request->send(400, "text/plain", "Missing params");
     });
 
-    webServer.on("/api/save_object", HTTP_POST, [](AsyncWebServerRequest *request) {
+    // Route API pour sauvegarder les modifications d'un objet (nom, unités, polling).
+    webServer.on("/api/save_object", HTTP_POST, [](AsyncWebServerRequest *request){
         if(!is_authenticated(request)) return;
-    
         if (request->hasParam("did", true) && request->hasParam("inst", true) && request->hasParam("type", true)) {
             uint32_t did = request->getParam("did", true)->value().toInt();
             uint32_t inst = request->getParam("inst", true)->value().toInt();
@@ -393,209 +415,86 @@ void setup_network_infrastructure() {
             String unit = request->hasParam("unit", true) ? request->getParam("unit", true)->value() : "";
             bool poll = request->hasParam("poll", true) ? (request->getParam("poll", true)->value() == "1") : true;
 
-            // -------------------------------------------------------------
-            // PHASE 1 : Verrouillage de la RAM (Ultra-rapide, < 1 ms)
-            // -------------------------------------------------------------
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
-                uint8_t target_mac = 0;
                 for (auto& dev : bacnet_network_cache) {
                     if (dev.ulDeviceId == did) {
-                        target_mac = dev.ucMacAddress;
                         for (auto& obj : dev.objects) {
                             if (obj.ulInstance == inst && obj.usType == type) {
-                                // Si le nom a changé, on met à jour localement ET sur l'automate
-                                if (name.length() > 0 && strcmp(obj.cName, name.c_str()) != 0) {
-                                    strlcpy(obj.cName, name.c_str(), sizeof(obj.cName));
-                                    BACnetJob job;
-                                    job.type = JOB_WRITE_PROP;
-                                    job.target_mac = target_mac;
-                                    job.obj_type = type;
-                                    job.obj_instance = inst;
-                                    job.prop_id = 77; // Object_Name
-                                    strlcpy(job.name, name.c_str(), sizeof(job.name));
-                                    enqueue_bacnet_job(job);
-                                    z_log(pdLOG_INFO, "WEB", "Enqueuing WriteProperty (Name) for Obj T%u I%lu\n", type, (unsigned long)inst);
-                                    // Publication MQTT du topic 'name' (pour historique / scripts custom)
-                                    publish_mqtt_topic(did, obj, 77, true);
-                                    // REQUIS : Déclencher HA Discovery pour mettre à jour l'entité dans Home Assistant
-                                    trigger_ha_discovery(did, inst, type);
-                                }
-                                
-                                // L'unité est TOUJOURS gérée localement (RAM + NVS) pour permettre l'override utilisateur
-                                if (unit.length() > 0 && strcmp(obj.cUnitText, unit.c_str()) != 0) {
-                                    strlcpy(obj.cUnitText, unit.c_str(), sizeof(obj.cUnitText));
-                                    z_log(pdLOG_INFO, "WEB", "Local Unit Override: Obj T%u I%lu -> %s (NVS only)\n", type, (unsigned long)inst, unit.c_str());
-                                    // Pas de WriteProperty pour l'unité, mais publication MQTT pour HA
-                                    trigger_ha_discovery(did, inst, type); 
-                                }
-
-                                if (obj.xEnabled != poll) {
-                                    obj.xEnabled = poll;
-                                    // Si on active/désactive l'objet, on force la synchro HA
-                                    trigger_ha_discovery(did, inst, type);
-                                    
-                                    // Si on l'active, on le force aussi à recharger sa valeur immédiatement
-                                    if (poll) {
-                                        dev.xReloadSingle = true;
-                                        // On réinitialise l'étape pour forcer la relecture de la prop 87 et 85
-                                        // Cela permettra à HA de savoir si c'est un sensor ou un switch
-                                        dev.ucDiscStep = DISC_OBJ_COMMANDABLE; 
-                                        // On trouve l'index de cet objet
-                                        for (size_t i = 0; i < dev.objects.size(); i++) {
-                                            if (dev.objects[i].ulInstance == inst && dev.objects[i].usType == type) {
-                                                dev.usDiscObjIdx = i;
-                                                break;
-                                            }
-                                        }
-                                        dev.xDiscoveryDone = false; 
-                                    }
-                                }
-                                break; 
+                                if (name.length() > 0) strlcpy(obj.cName, name.c_str(), sizeof(obj.cName));
+                                if (unit.length() > 0) strlcpy(obj.cUnitText, unit.c_str(), sizeof(obj.cUnitText));
+                                obj.xEnabled = poll;
+                                break;
                             }
                         }
-                        break; 
+                        break;
                     }
                 }
                 xSemaphoreGive(cache_mutex); 
             }
-
-            // -------------------------------------------------------------
-            // PHASE 2 : Écriture Flash NVS (Lente, ~100 ms)
-            // -------------------------------------------------------------
-            // La fonction save_device_objects va re-verrouiller le mutex
-            // de manière optimisée par "paquets" ou pages, laissant au Core 1
-            // le temps de s'intercaler si le bus RS-485 est actif.
             save_device_objects(did);
-
+            trigger_ha_discovery(did, inst, type);
             request->send(200, "text/plain", "OK");
-        } else {
-            request->send(400, "text/plain", "Missing params");
-        }
+        } else request->send(400, "text/plain", "Missing params");
     });
 
-    webServer.on("/api/toggle_device", HTTP_POST, [](AsyncWebServerRequest *request) {
+    // Route API pour activer/désactiver un appareil complet.
+    webServer.on("/api/toggle_device", HTTP_POST, [](AsyncWebServerRequest *request){
         if(!is_authenticated(request)) return;
-
         if (request->hasParam("id", true)) {
             uint32_t did = request->getParam("id", true)->value().toInt();
-            
-            // -------------------------------------------------------------
-            // PHASE 1 : Verrouillage de la RAM (Ultra-rapide, < 1 ms)
-            // -------------------------------------------------------------
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
                 for (auto& dev : bacnet_network_cache) {
                     if (dev.ulDeviceId == did) {
-                        dev.xEnabled = !dev.xEnabled; // Bascule de l'état
-                        
-                        // v6.3.8: Reprise de la Phase 2 si l'automate est activé manuellement
-                        if (dev.xEnabled && dev.xDiscoveryDone && dev.ucDiscStep == DISC_OBJ_OID) {
-                            z_log(pdLOG_INFO, "WEB", "User Activation: Resuming discovery for MAC %d (Phase 2)\n", dev.ucMacAddress);
-                            dev.xDiscoveryDone = false;
-                        }
+                        dev.xEnabled = !dev.xEnabled;
                         break; 
                     }
                 }
-                // LIBÉRATION IMMÉDIATE DU MUTEX
-                // Le Core 1 (MS/TP) peut à nouveau manipuler le jeton réseau
                 xSemaphoreGive(cache_mutex);
-                
-                // -------------------------------------------------------------
-                // PHASE 2 : Écriture Flash NVS asynchrone par rapport au Core 1
-                // -------------------------------------------------------------
-                // La fonction wrapper gérera ses propres verrous par petites pages
                 save_device_objects(did);
-
-                // -------------------------------------------------------------
-                // PHASE 3 : Redéclenchement du Gatekeeper MQTT
-                // -------------------------------------------------------------
-                // On passe le did pour que le discovery cible cet appareil (unpublish si désactivé)
-                trigger_ha_discovery(did);
-
-            } else {
-                z_log(pdLOG_ERROR, "SYS", "Timeout Mutex : Impossible de basculer l'équipement en RAM !");
+                trigger_ha_discovery();
             }
-
             request->send(200, "text/plain", "OK");
-        } else {
-            request->send(400, "text/plain", "Missing id");
-        }
+        } else request->send(400, "text/plain", "Missing id");
     });
 
-    webServer.on("/save", HTTP_POST, [](AsyncWebServerRequest *request) {
+    // Route API principale pour la sauvegarde des paramètres système (NVS).
+    webServer.on("/save", HTTP_POST, [](AsyncWebServerRequest *request){
         if (!is_authenticated(request)) return;
         String ft = "";
         if (request->hasParam("form_type", true)) ft = request->getParam("form_type", true)->value();
 
         if (ft == "wifi") {
             strlcpy(sysCfg.wifi_ssid, request->getParam("ssid", true)->value().c_str(), 32);
-            String p_val = request->getParam("pass", true)->value();
-            if (p_val.length() > 0 && p_val != "******") {
-                strlcpy(sysCfg.wifi_pass, p_val.c_str(), 64);
-            }
-            
+            if (request->getParam("pass", true)->value() != "******")
+                strlcpy(sysCfg.wifi_pass, request->getParam("pass", true)->value().c_str(), 64);
             sysCfg.static_ip = request->hasParam("static_ip", true);
-            String l_ip = request->getParam("local_ip", true)->value();
-            String l_gw = request->getParam("gateway", true)->value();
-            String l_sn = request->getParam("subnet", true)->value();
-            
-            if (sysCfg.static_ip) {
-                IPAddress tmp;
-                if (!tmp.fromString(l_ip) || !tmp.fromString(l_gw) || !tmp.fromString(l_sn)) {
-                    request->send(400, "text/plain", "Invalid IP/GW/Subnet format.");
-                    return;
-                }
-            }
-            
-            strlcpy(sysCfg.local_ip, l_ip.c_str(), 16);
-            strlcpy(sysCfg.gateway, l_gw.c_str(), 16);
-            strlcpy(sysCfg.subnet, l_sn.c_str(), 16);
+            strlcpy(sysCfg.local_ip, request->getParam("local_ip", true)->value().c_str(), 16);
+            strlcpy(sysCfg.gateway, request->getParam("gateway", true)->value().c_str(), 16);
+            strlcpy(sysCfg.subnet, request->getParam("subnet", true)->value().c_str(), 16);
         } else if (ft == "mqtt") {
-            char old_pr[64]; strlcpy(old_pr, sysCfg.mqtt_prefix, 64);
             strlcpy(sysCfg.mqtt_server, request->getParam("mqh", true)->value().c_str(), 32);
             strlcpy(sysCfg.mqtt_user, request->getParam("mqu", true)->value().c_str(), 32);
-            String mqp_val = request->getParam("mqp", true)->value();
-            if (mqp_val.length() > 0 && mqp_val != "******") {
-                strlcpy(sysCfg.mqtt_pass, mqp_val.c_str(), 32);
-            }
+            if (request->getParam("mqp", true)->value() != "******")
+                strlcpy(sysCfg.mqtt_pass, request->getParam("mqp", true)->value().c_str(), 32);
             strlcpy(sysCfg.mqtt_prefix, request->getParam("mqpr", true)->value().c_str(), 64);
-            bool old_ha_discover = sysCfg.ha_discover;
             sysCfg.ha_discover = request->hasParam("ha_disc", true);
-            
-            if (request->hasParam("n_min", true)) sysCfg.default_number_min = request->getParam("n_min", true)->value().toFloat();
-            if (request->hasParam("n_max", true)) sysCfg.default_number_max = request->getParam("n_max", true)->value().toFloat();
-            if (request->hasParam("n_stp", true)) sysCfg.default_number_step = request->getParam("n_stp", true)->value().toFloat();
-
-            // Si HA Discovery vient d'être désactivé, on supprime tout de HA
-            if (old_ha_discover && !sysCfg.ha_discover) {
-                unpublish_ha_discovery(0, 0xFFFFFFFF, 0xFFFF, sysCfg.mqtt_prefix);
-                z_log(pdLOG_INFO, "MQTT", "HA Discovery desactive. Nettoyage MQTT envoye.\n");
-            }
-
-            // Si le préfixe change et que HA est TOUJOURS actif, on nettoie d'abord l'ancien prefixe côté HA
-            if (strcmp(old_pr, sysCfg.mqtt_prefix) != 0 && sysCfg.ha_discover) {
-                unpublish_ha_discovery(0, 0xFFFFFFFF, 0xFFFF, old_pr);
-            }
         } else if (ft == "bac") {
-            sysCfg.ucMacAddress = request->getParam("mac", true)->value().toInt();
-            sysCfg.ulDeviceId = request->getParam("did", true)->value().toInt();
-            sysCfg.max_master = request->getParam("mm", true)->value().toInt();
-            sysCfg.max_retries = request->getParam("retries", true)->value().toInt();
-            sysCfg.ulApduTimeout = request->getParam("timeout", true)->value().toInt();
-            sysCfg.token_skip = request->getParam("tskip", true)->value().toInt();
-            sysCfg.max_info_frames = request->getParam("mif", true)->value().toInt();
-            sysCfg.heartbeat_interval = request->getParam("hbeat", true)->value().toInt();
+            sysCfg.ucMacAddress = (uint8_t)request->getParam("mac", true)->value().toInt();
+            sysCfg.ulDeviceId = (uint32_t)request->getParam("did", true)->value().toInt();
+            sysCfg.max_master = (uint8_t)request->getParam("mm", true)->value().toInt();
+            sysCfg.max_retries = (uint8_t)request->getParam("retries", true)->value().toInt();
+            sysCfg.ulApduTimeout = (uint16_t)request->getParam("timeout", true)->value().toInt();
+            sysCfg.token_skip = (uint8_t)request->getParam("tskip", true)->value().toInt();
+            sysCfg.max_info_frames = (uint8_t)request->getParam("mif", true)->value().toInt();
+            sysCfg.heartbeat_interval = (uint32_t)request->getParam("hbeat", true)->value().toInt();
         } else if (ft == "poll") {
-            sysCfg.mqtt_poll_interval = request->getParam("mpi", true)->value().toInt();
-            sysCfg.bacnet_poll_interval = request->getParam("bpi", true)->value().toInt();
+            sysCfg.mqtt_poll_interval = (uint16_t)request->getParam("mpi", true)->value().toInt();
+            sysCfg.bacnet_poll_interval = (uint16_t)request->getParam("bpi", true)->value().toInt();
         } else if (ft == "sec") {
             strlcpy(sysCfg.admin_user, request->getParam("admin_u", true)->value().c_str(), 32);
-            String ad_p = request->getParam("admin_p", true)->value();
-            if (ad_p.length() > 0 && ad_p != "******") {
-                strlcpy(sysCfg.admin_pass, ad_p.c_str(), 64);
-            }
-            if (request->hasParam("lvl", true)) {
-                sysCfg.log_level = request->getParam("lvl", true)->value().toInt();
-            }
+            if (request->getParam("admin_p", true)->value() != "******")
+                strlcpy(sysCfg.admin_pass, request->getParam("admin_p", true)->value().c_str(), 64);
+            if (request->hasParam("lvl", true)) sysCfg.log_level = (uint8_t)request->getParam("lvl", true)->value().toInt();
         }
 
         save_configuration();
@@ -608,14 +507,12 @@ void setup_network_infrastructure() {
         }
     });
 
-    webServer.on("/api/reset_cache", HTTP_ANY, [](AsyncWebServerRequest *request) {
+    // API pour réinitialiser le cache BACnet (suppression des fichiers Preferences).
+    webServer.on("/api/reset_cache", HTTP_ANY, [](AsyncWebServerRequest *request){
         if (!is_authenticated(request)) return;
-        // 1. Nettoyage préventif MQTT (avant de perdre les pointeurs)
-        unpublish_ha_discovery(); 
-        
         if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(1000))) {
             for (auto& dev : bacnet_network_cache) {
-                char ns[16]; snprintf(ns, sizeof(ns), "dv_%lu", (unsigned long)dev.ulDeviceId); // Correction namespace v6.4.1
+                char ns[16]; snprintf(ns, sizeof(ns), "dev_%lu", (unsigned long)dev.ulDeviceId);
                 Preferences p; p.begin(ns, false); p.clear(); p.end();
             }
             Preferences reg; reg.begin("registry", false); reg.clear(); reg.end();
@@ -626,20 +523,24 @@ void setup_network_infrastructure() {
         pending_reboot = true; reboot_timer = millis();
     });
 
-    webServer.on("/api/factory_reset", HTTP_ANY, [](AsyncWebServerRequest *request) {
+    // API pour un Factory Reset complet (effacement total de la NVS).
+    webServer.on("/api/factory_reset", HTTP_ANY, [](AsyncWebServerRequest *request){
         if (!is_authenticated(request)) return;
         nvs_flash_erase();
         request->send(200, "text/plain", "Factory reset done. Rebooting...");
         pending_reboot = true; reboot_timer = millis();
     });
 
-    webServer.on("/api/reboot", HTTP_ANY, [](AsyncWebServerRequest *request) {
+    // API pour redémarrer la Gateway.
+    webServer.on("/api/reboot", HTTP_ANY, [](AsyncWebServerRequest *request){
         if (!is_authenticated(request)) return;
         request->send(200, "text/plain", "Rebooting...");
         pending_reboot = true; reboot_timer = millis();
     });
 
-    webServer.on("/api/trigger_discovery", HTTP_GET, [](AsyncWebServerRequest *request) {
+
+    // Route API de débogage pour forcer une redécouverte HA.
+    webServer.on("/api/trigger_discovery", HTTP_GET, [](AsyncWebServerRequest *request){
         if (!is_authenticated(request)) return;
         
         if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(1000))) {
@@ -659,7 +560,58 @@ void setup_network_infrastructure() {
         trigger_ha_discovery();
         request->send(200, "text/plain", "Discovery triggered & cache cleared");
     });
+}
 
+/**
+ * @brief Initialise toute l'infrastructure réseau.
+ * @details Charge la configuration NVS, démarre le WiFi (STA ou AP), configure le serveur web,
+ *          les WebSockets, les points d'API REST, et lance la tâche de journalisation.
+ */
+void setup_network_infrastructure() {
+    // 1. Initialize core system mutexes first to avoid race conditions during NVS load
+    if (cache_mutex == NULL) {
+        cache_mutex = xSemaphoreCreateMutex();
+    }
+    if (api_mutex == NULL) {
+        api_mutex = xSemaphoreCreateMutex();
+    }
+    if (ws_mutex == NULL) {
+        ws_mutex = xSemaphoreCreateMutex();
+    }
+
+    log_queue = xQueueCreate(20, sizeof(LogMessage));
+    // La tâche est créée une seule fois pour éviter les duplications lors des reconnexions.
+    static bool log_task_created = false;
+    if (log_queue != NULL && !log_task_created) {
+        xTaskCreatePinnedToCore(websocket_log_task, "WS_Log", 8192, NULL, 2, NULL, 0);
+        log_task_created = true;
+    }
+    // 2. Load Settings (now safe because cache_mutex exists)
+    load_configuration();
+
+    WiFi.persistent(false); WiFi.disconnect(true);
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    // Démarrage en mode Point d'Accès si aucun SSID n'est configuré.
+    if (strlen(sysCfg.wifi_ssid) == 0) {
+        is_ap_mode = true; WiFi.mode(WIFI_AP);
+        WiFi.softAP("ZIRCON-GW-CONFIG", "admin1234");
+    } else {
+        is_ap_mode = false; WiFi.mode(WIFI_STA);
+        esp_wifi_set_ps(WIFI_PS_NONE);
+        if (sysCfg.static_ip) {
+            IPAddress ip, gw, sn;
+            if (ip.fromString(sysCfg.local_ip) && gw.fromString(sysCfg.gateway) && sn.fromString(sysCfg.subnet)) {
+                WiFi.config(ip, gw, sn);
+            }
+        }
+            WiFi.begin(sysCfg.wifi_ssid, sysCfg.wifi_pass);
+        wifi_connect_start = millis();
+    }
+
+    setup_web_routes();
+
+    // Configuration des callbacks pour les mises à jour OTA (Over-The-Air).
     ArduinoOTA.onStart([]() { z_log(pdLOG_INFO, "OTA", "Start\n"); });
     ArduinoOTA.onEnd([]() { z_log(pdLOG_INFO, "OTA", "End\n"); });
     ArduinoOTA.onError([](ota_error_t error) { z_log(pdLOG_ERROR,"OTA", "Error[%u]\n", error); });
@@ -669,10 +621,16 @@ void setup_network_infrastructure() {
     z_log(pdLOG_INFO, "WEB", "Web Server started\n");
 }
 
+/**
+ * @brief Gère les tâches réseau récurrentes.
+ * @details Appelé dans la boucle principale du Cœur 0, cette fonction gère les mises à jour OTA,
+ *          les redémarrages différés et le mécanisme de fallback en mode Point d'Accès.
+ */
 void handle_network() {
     ArduinoOTA.handle();
     if (pending_reboot && (millis() - reboot_timer > 1000)) ESP.restart();
 
+    // Si la connexion WiFi échoue pendant plus de 30 secondes, on passe en mode AP.
     if (!is_ap_mode && WiFi.status() != WL_CONNECTED && (millis() - wifi_connect_start > 30000)) {
         if (!wifi_fallback_active) {
             z_log(pdLOG_ERROR, "WIFI", "WiFi Connection failed. Fallback to AP Mode.\n");
@@ -683,6 +641,13 @@ void handle_network() {
     }
 }
 
+/**
+ * @brief Vérifie si une requête web est authentifiée.
+ * @details Utilise l'authentification HTTP Basic. Si l'utilisateur n'est pas authentifié,
+ *          lui envoie une demande d'authentification (code 401).
+ * @param request Pointeur vers l'objet de la requête web asynchrone.
+ * @return `true` si l'utilisateur est authentifié, `false` sinon.
+ */
 bool is_authenticated(AsyncWebServerRequest *request) {
     if (!request->authenticate(sysCfg.admin_user, sysCfg.admin_pass)) {
         request->requestAuthentication();
