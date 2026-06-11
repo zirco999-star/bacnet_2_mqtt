@@ -1,5 +1,15 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 11 Juin 2026 (Refactorisation Industrielle & Data-Driven - v6.8.7) - COMPILÉ
+- **Version** : v6.8.7
+- **Architecture Data-Driven** : La FSM de découverte est désormais pilotée par une table de vérité `DISCOVERY_STEPS`. L'ajout de nouvelles propriétés BACnet à découvrir ne nécessite plus de modification du code logique, seulement de la configuration de la table.
+- **Optimisation ASN.1** : Centralisation du décodage BACnet (Helpers `decode_bacnet_xxx`) pour les types REAL, Unsigned, String et ObjectIdentifier. Suppression de plus de 50 lignes de manipulation brute de tampons (`memcpy`, `bswap`) et sécurisation des offsets de parsing.
+- **Modularisation du Parsing** : Division de la fonction monolithique `process_incoming_frame` en sous-fonctions spécialisées (`handle_i_am_response`, `handle_simple_ack`, `handle_complex_ack_discovery`, `handle_complex_ack_polling`, `handle_error_pdu`). Clarté du flux de contrôle via `switch/case` unifié.
+- **Sécurisation Temps-Réel (Axe 4)** : Suppression de l'usage du Mutex dans la tâche RX (Priorité 20). Utilisation d'une file asynchrone `mac_discovery_queue` pour transmettre les nouvelles MAC à la tâche Master. Élimine tout risque d'inversion de priorité ou de blocage réseau lors des accès concurrents au cache ou au stockage NVS.
+- **Gestion des Tâches** : Refactorisation de `execute_bacnet_work` avec une structure `switch/case` plus robuste et une gestion localisée des buffers de transmission.
+- **Gain Mémoire** : Réduction de l'empreinte Flash de ~1.2 Ko malgré l'ajout de fonctionnalités, grâce à la mutualisation du code et à l'architecture déclarative.
+- **Validation** : Compilation réussie (1 433 971 octets Flash, 53 648 octets RAM). Architecture prête pour l'extension massive du dictionnaire d'objets.
+
 ## État au 4 Juin 2026 (Refactorisation FSM & Découplage RX - v6.3.0) - COMPILÉ
 - **Version** : v6.3.0
 - **Refactorisation Modulaire** : Division de la fonction monolithique `bacnet_task` en sous-fonctions spécialisées (`handle_mstp_*`, `execute_bacnet_work`, `process_incoming_frame`). Code plus lisible et maintenable.
