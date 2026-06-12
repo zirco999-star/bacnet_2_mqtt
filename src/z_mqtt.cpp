@@ -9,6 +9,7 @@
 uint32_t period_mqtt_pub_count = 0;
 uint32_t period_mqtt_obj_count = 0;
 uint32_t period_mqtt_b2m_count = 0;
+uint32_t period_mqtt_tele_count = 0;
 
 static int mqtt_fail_count = 0;
 static std::atomic<bool> circuit_breaker_active{false};
@@ -18,13 +19,18 @@ static std::atomic<uint32_t> target_inst{0};
 static std::atomic<uint16_t> target_type{0xFFFF};
 static bool mqtt_is_connected = false;
 static bool force_full_discovery = false; 
+static std::atomic<bool> mqtt_pending_connected_log{false};
+static std::atomic<bool> mqtt_pending_disconnected_log{false};
+static std::atomic<bool> mqtt_pending_auth_error_log{false};
+static std::atomic<bool> mqtt_pending_breaker_log{false};
+static std::atomic<bool> mqtt_pending_wifi_loss_log{false};
 static char lwt_topic[128] = {0};
 
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
     esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
     switch ((esp_mqtt_event_id_t)event_id) {
         case MQTT_EVENT_CONNECTED:
-            z_log(pdLOG_INFO, "MQTT", "Connected to Broker.\n");
+            mqtt_pending_connected_log = true;
             mqtt_fail_count = 0; 
             circuit_breaker_active = false;
             mqtt_is_connected = true;
@@ -40,6 +46,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                 // Publication du statut Online
                 if (lwt_topic[0] != 0) {
                     esp_mqtt_client_publish(mqtt_client, lwt_topic, "online", 0, 1, 1);
+                    period_mqtt_tele_count++;
                 }
             }
             break;
@@ -48,27 +55,27 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         case MQTT_EVENT_DISCONNECTED:
             mqtt_is_connected = false;
             if (circuit_breaker_active) break;
-            
+
             if (WiFi.status() != WL_CONNECTED) {
-                z_log(pdLOG_WARN, "MQTT", "Connection dropped due to Wi-Fi loss.\n");
+                mqtt_pending_wifi_loss_log = true;
                 break;
             }
-            
+
             if (event->error_handle != NULL) {
                 if (event->error_handle->error_type == MQTT_ERROR_TYPE_CONNECTION_REFUSED) {
                     if (event->error_handle->connect_return_code == MQTT_CONNECTION_REFUSE_BAD_USERNAME ||
                         event->error_handle->connect_return_code == MQTT_CONNECTION_REFUSE_NOT_AUTHORIZED) {
-                        z_log(pdLOG_ERROR, "MQTT", "FATAL: Invalid Broker Credentials.\n");
+                        mqtt_pending_auth_error_log = true;
                         mqtt_fail_count = 3;
                     }
                 }
             }
-            
+
             mqtt_fail_count++;
-            z_log(pdLOG_WARN, "MQTT", "Disconnected from Broker (%d/3).\n", mqtt_fail_count);
-            
+            mqtt_pending_disconnected_log = true;
+
             if (mqtt_fail_count >= 3) {
-                z_log(pdLOG_ERROR, "MQTT", "CIRCUIT BREAKER: Halting MQTT connection attempts.\n");
+                mqtt_pending_breaker_log = true;
                 circuit_breaker_active = true;
             }
             break;
@@ -154,6 +161,23 @@ static void mqtt_gatekeeper_task(void *pv) {
     uint32_t last_single_disc = 0;
 
     while (1) {
+        // Logs d'événements déportés sur Core 0
+        if (mqtt_pending_connected_log.exchange(false)) {
+            z_log(pdLOG_INFO, "MQTT", "Connected to Broker.\n");
+        }
+        if (mqtt_pending_disconnected_log.exchange(false)) {
+            z_log(pdLOG_WARN, "MQTT", "Disconnected from Broker (%d/3).\n", mqtt_fail_count);
+        }
+        if (mqtt_pending_auth_error_log.exchange(false)) {
+            z_log(pdLOG_ERROR, "MQTT", "FATAL: Invalid Broker Credentials.\n");
+        }
+        if (mqtt_pending_wifi_loss_log.exchange(false)) {
+            z_log(pdLOG_WARN, "MQTT", "Connection dropped due to Wi-Fi loss.\n");
+        }
+        if (mqtt_pending_breaker_log.exchange(false)) {
+            z_log(pdLOG_ERROR, "MQTT", "CIRCUIT BREAKER: Halting MQTT connection attempts.\n");
+        }
+
         if (mqtt_is_connected && !circuit_breaker_active) {
             // 1. Traitement de l'Auto-Discovery (Atomique pour éviter les loops de triggers)
             if (pending_discovery.load(std::memory_order_acquire)) {
@@ -252,14 +276,16 @@ static void mqtt_gatekeeper_task(void *pv) {
                 last_token_count = bacnetStats.ulTokensSeen;
                 pub_b2m("mstp", mstp_active ? "ON" : "OFF");
 
-                z_log(pdLOG_INFO, "MQTT", "Gateway Status published (Uptime: %lu s, Devices: %zu)\n", (unsigned long)(millis() / 1000), n_dev);
-                z_log(pdLOG_INFO, "MQTT", "Published topics : %s/+ : %lu msg, %s/B2M : %lu msg\n", 
+                z_log(pdLOG_INFO, "MQTT", "Gateway Status published (Messages: %lu, Devices: %zu)\n", (unsigned long)period_mqtt_pub_count, n_dev);
+                z_log(pdLOG_INFO, "MQTT", "Published topics : %s/+ : %lu msg, %s/B2M : %lu msg, tele/%s : %lu msg\n", 
                       sysCfg.mqtt_prefix, (unsigned long)period_mqtt_obj_count, 
-                      sysCfg.mqtt_prefix, (unsigned long)period_mqtt_b2m_count);
+                      sysCfg.mqtt_prefix, (unsigned long)period_mqtt_b2m_count,
+                      sysCfg.mqtt_prefix, (unsigned long)period_mqtt_tele_count);
 
                 period_mqtt_pub_count = 0;
                 period_mqtt_obj_count = 0;
                 period_mqtt_b2m_count = 0;
+                period_mqtt_tele_count = 0;
                 }
         }
         vTaskDelay(pdMS_TO_TICKS(10));
