@@ -415,32 +415,27 @@ static void handle_complex_ack_discovery(BACnetDevice &dev, const uint8_t *apdu,
 
         case STORE_DEV_UINT: {
             uint32_t val = decode_bacnet_unsigned(&apdu[ap], vt.len);
-            if (dev.ucDiscStep == DISC_DEV_MAX_APDU) { dev.usMaxApduLengthAccepted = (uint16_t)val; dev.ucDiscStep = DISC_DEV_TIMEOUT; }
-            else if (dev.ucDiscStep == DISC_DEV_TIMEOUT) { dev.ulApduTimeout = val; dev.ucDiscStep = DISC_DEV_RETRIES; }
-            else if (dev.ucDiscStep == DISC_DEV_RETRIES) { dev.ucNumberOfApduRetries = (uint8_t)val; dev.ucDiscStep = DISC_OBJ_COUNT; }
-            else if (dev.ucDiscStep == DISC_OBJ_COUNT) {
+            if (dev.ucDiscStep == DISC_OBJ_COUNT) {
                 if (val > 2000) {
-                    z_log(pdLOG_ERROR, "BACNET", "INVALID OBJECT COUNT: %lu (Safety cap 2000 triggered)\n", (unsigned long)val);
+                    z_log(pdLOG_ERROR, "BACNET", "INVALID OBJECT COUNT: %lu (Hex: 0x%08X)\n", (unsigned long)val, (unsigned int)val);
                     val = 0;
                 }
                 z_log(pdLOG_INFO, "BACNET", "Device Object Count: %lu\n", (unsigned long)val);
                 dev.objects.clear();
                 if (val > 0) {
-                    try {
-                        dev.objects.resize(val);
-                    } catch (...) {
-                        z_log(pdLOG_ERROR, "BACNET", "Memory allocation failed for %lu objects\n", (unsigned long)val);
-                        val = 0;
-                    }
+                    try { dev.objects.resize(val); } 
+                    catch (...) { z_log(pdLOG_ERROR, "BACNET", "Alloc Fail\n"); val = 0; }
                 }
-                dev.usDiscObjIdx = 0; dev.ucDiscStep = DISC_OBJ_OID;
-                if (!dev.xEnabled) { 
-                    dev.xDiscoveryDone = true; 
-                    save_device_objects_locked(dev.ulDeviceId); 
-                } else if (val == 0) {
-                    // Si activé mais 0 objets (erreur sécu), on ne termine pas, on laisse en suspens
-                    z_log(pdLOG_WARN, "BACNET", "Discovery suspended for Device %lu (waiting for valid object list)\n", (unsigned long)dev.ulDeviceId);
+                dev.usDiscObjIdx = 0;
+                dev.ucDiscStep = DISC_OBJ_OID;
+                if (val == 0) {
+                    dev.xDiscoveryDone = true;
+                    save_device_objects_locked(dev.ulDeviceId);
                 }
+            } else {
+                if (dev.ucDiscStep == DISC_DEV_MAX_APDU) { dev.usMaxApduLengthAccepted = (uint16_t)val; dev.ucDiscStep = DISC_DEV_TIMEOUT; }
+                else if (dev.ucDiscStep == DISC_DEV_TIMEOUT) { dev.ulApduTimeout = val; dev.ucDiscStep = DISC_DEV_RETRIES; }
+                else if (dev.ucDiscStep == DISC_DEV_RETRIES) { dev.ucNumberOfApduRetries = (uint8_t)val; dev.ucDiscStep = DISC_OBJ_COUNT; }
             }
             break;
         }
@@ -1063,9 +1058,15 @@ void process_incoming_frame(MSTP_Frame &frame) {
                         if (current_dev_idx < bacnet_network_cache.size()) {
                             auto& dev = bacnet_network_cache[current_dev_idx];
                             BACnetTag vt;
+                            
                             while (ap < al && decode_next_tag(apdu, &ap, al, &vt)) {
                                 if (vt.isClosing && vt.number == 3) break;
-                                if (!dev.xDiscoveryDone) handle_complex_ack_discovery(dev, apdu, al, ap, vt);
+                                if (!dev.xDiscoveryDone) {
+                                    handle_complex_ack_discovery(dev, apdu, al, ap, vt);
+                                    // Une fois qu'une propriété est traitée dans la découverte, 
+                                    // on DOIT sortir de cette trame pour attendre la suite (ReadProperty).
+                                    break; 
+                                }
                                 else handle_complex_ack_polling(dev, apdu, al, ap, vt);
                             }
                         }
