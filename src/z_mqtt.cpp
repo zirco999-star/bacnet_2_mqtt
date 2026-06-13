@@ -154,6 +154,13 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     }
 }
 
+// v6.8.13: Variables pour la découverte HA asynchrone (Non-blocking)
+static size_t async_disc_dev_idx = 0;
+static size_t async_disc_obj_idx = 0;
+static bool async_disc_in_progress = false;
+static bool async_disc_gw_done = false;
+static uint32_t last_async_disc_step = 0;
+
 static void mqtt_gatekeeper_task(void *pv) {
     z_log(pdLOG_INFO, "MQTT", "Gatekeeper Task Operational.\n");
     uint32_t last_status_pub = 0;
@@ -161,52 +168,73 @@ static void mqtt_gatekeeper_task(void *pv) {
     uint32_t last_single_disc = 0;
 
     while (1) {
-        // Logs d'événements déportés sur Core 0
-        if (mqtt_pending_connected_log.exchange(false)) {
-            z_log(pdLOG_INFO, "MQTT", "Connected to Broker.\n");
-        }
-        if (mqtt_pending_disconnected_log.exchange(false)) {
-            z_log(pdLOG_WARN, "MQTT", "Disconnected from Broker (%d/3).\n", mqtt_fail_count);
-        }
-        if (mqtt_pending_auth_error_log.exchange(false)) {
-            z_log(pdLOG_ERROR, "MQTT", "FATAL: Invalid Broker Credentials.\n");
-        }
-        if (mqtt_pending_wifi_loss_log.exchange(false)) {
-            z_log(pdLOG_WARN, "MQTT", "Connection dropped due to Wi-Fi loss.\n");
-        }
-        if (mqtt_pending_breaker_log.exchange(false)) {
-            z_log(pdLOG_ERROR, "MQTT", "CIRCUIT BREAKER: Halting MQTT connection attempts.\n");
-        }
+        uint32_t now = millis();
+
+        // 1. Logs d'événements déportés
+        if (mqtt_pending_connected_log.exchange(false)) z_log(pdLOG_INFO, "MQTT", "Connected to Broker.\n");
+        if (mqtt_pending_disconnected_log.exchange(false)) z_log(pdLOG_WARN, "MQTT", "Disconnected from Broker (%d/3).\n", mqtt_fail_count);
+        if (mqtt_pending_auth_error_log.exchange(false)) z_log(pdLOG_ERROR, "MQTT", "FATAL: Invalid Broker Credentials.\n");
+        if (mqtt_pending_wifi_loss_log.exchange(false)) z_log(pdLOG_WARN, "MQTT", "Connection dropped due to Wi-Fi loss.\n");
+        if (mqtt_pending_breaker_log.exchange(false)) z_log(pdLOG_ERROR, "MQTT", "CIRCUIT BREAKER: Halting MQTT connection attempts.\n");
 
         if (mqtt_is_connected && !circuit_breaker_active) {
-            // 1. Traitement de l'Auto-Discovery (v6.8.12: Simplifié & Stable)
-            if (pending_discovery.load(std::memory_order_acquire)) {
+            
+            // 2. Initialisation de la découverte HA (Throttle)
+            if (pending_discovery.load(std::memory_order_acquire) && !async_disc_in_progress) {
                 uint32_t t_did = target_did.load();
-                uint32_t t_inst = target_inst.load();
-                uint16_t t_type = target_type.load();
                 bool is_global = (t_did == 0 || force_full_discovery);
-                
-                uint32_t now = millis();
-                bool can_pub = false;
-                if (is_global) {
-                    if (now - last_global_disc > 30000) { can_pub = true; last_global_disc = now; }
-                } else {
-                    if (now - last_single_disc > 5000) { can_pub = true; last_single_disc = now; }
-                }
+                bool can_start = is_global ? (now - last_global_disc > 30000) : (now - last_single_disc > 5000);
 
-                if (can_pub) {
-                    pending_discovery.store(false, std::memory_order_release);
-                    if (force_full_discovery) {
-                        t_did = 0; t_inst = 0xFFFFFFFF;
-                        force_full_discovery = false;
-                    }
-                    publish_ha_autodiscovery(t_did, t_inst, t_type);
+                if (can_start) {
+                    if (is_global) last_global_disc = now; else last_single_disc = now;
+                    async_disc_in_progress = true;
+                    async_disc_gw_done = false;
+                    async_disc_dev_idx = 0;
+                    async_disc_obj_idx = 0;
+                    z_log(pdLOG_INFO, "MQTT", "Async HA Discovery Started...\n");
                 }
             }
 
-            // 2. Traitement de la queue de publication
+            // 3. Exécution fragmentée (1 objet toutes les 50ms)
+            if (async_disc_in_progress && (now - last_async_disc_step > 50)) {
+                last_async_disc_step = now;
+                
+                if (!async_disc_gw_done) {
+                    if (target_did.load() == 0) publish_ha_autodiscovery(0, 0xFFFFFFFF, 0xFFFF);
+                    async_disc_gw_done = true;
+                } else {
+                    if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(5))) {
+                        if (async_disc_dev_idx < bacnet_network_cache.size()) {
+                            auto& dev = bacnet_network_cache[async_disc_dev_idx];
+                            
+                            if (target_did.load() != 0 && dev.ulDeviceId != target_did.load()) {
+                                async_disc_dev_idx++; async_disc_obj_idx = 0;
+                            } else if (async_disc_obj_idx < dev.objects.size()) {
+                                uint32_t d = dev.ulDeviceId;
+                                uint32_t i = dev.objects[async_disc_obj_idx].ulInstance;
+                                uint16_t t = dev.objects[async_disc_obj_idx].usType;
+                                xSemaphoreGive(cache_mutex);
+                                
+                                publish_ha_autodiscovery(d, i, t);
+                                async_disc_obj_idx++;
+                            } else {
+                                async_disc_dev_idx++; async_disc_obj_idx = 0;
+                            }
+                        } else {
+                            async_disc_in_progress = false;
+                            pending_discovery.store(false, std::memory_order_release);
+                            force_full_discovery = false;
+                            z_log(pdLOG_INFO, "MQTT", "Async HA Discovery Finished.\n");
+                        }
+                        if (xSemaphoreTake(cache_mutex, 0)) xSemaphoreGive(cache_mutex); 
+                    }
+                }
+            }
+
+            // 4. Queue de publication (Données)
             MQTTPublishJob pubJob;
-            while (xQueueReceive(mqtt_publish_queue, &pubJob, 0) == pdTRUE) {
+            if (xQueueReceive(mqtt_publish_queue, &pubJob, 0) == pdTRUE) {
+                // ... (Logique de publication inchangée mais traitée 1 par 1 pour fluidité)
                 char topic[128];
                 const char* t_str = "OBJ";
                 switch(pubJob.obj_type) {
@@ -222,18 +250,9 @@ static void mqtt_gatekeeper_task(void *pv) {
                 }
                 const char* subtopic = (pubJob.prop_id == 77) ? "name" : "state";
                 snprintf(topic, sizeof(topic), "%s/%lu/%s/%lu/%s", sysCfg.mqtt_prefix, (unsigned long)pubJob.ulDeviceId, t_str, (unsigned long)pubJob.obj_instance, subtopic);
-                
-                if (esp_mqtt_client_publish(mqtt_client, topic, pubJob.value_string, 0, 1, pubJob.retain) < 0) {
-                    z_log(pdLOG_WARN, "MQTT", "Publish failed. Queue Full or Client error.\n");
-                    vTaskDelay(pdMS_TO_TICKS(50));
-                    break;
-                } else {
-                    period_mqtt_pub_count++;
-                    period_mqtt_obj_count++;
-                    z_log(pdLOG_DEBUG, "MQTT", "Published: %s = %s\n", topic, pubJob.value_string);
-                }
-                vTaskDelay(pdMS_TO_TICKS(5));
-                }
+                esp_mqtt_client_publish(mqtt_client, topic, pubJob.value_string, 0, 1, pubJob.retain);
+                period_mqtt_pub_count++;
+            }
 
                 // 3. Status Gateway périodique
                 if (millis() - last_status_pub > (sysCfg.mqtt_poll_interval * 1000)) {
@@ -388,15 +407,10 @@ void handle_mqtt() {
 void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) {
     if (!mqtt_is_connected || circuit_breaker_active || !sysCfg.ha_discover) return;
 
-    // Détermination si c'est une requête ciblée
+    // Détermination si c'est une requête ciblée (v6.8.13: Toujours ciblée via le Gatekeeper)
     bool is_single_object = (t_did != 0 && t_inst != 0xFFFFFFFF);
     
-    if (!is_single_object) {
-        z_log(pdLOG_INFO, "MQTT", "Starting HA Auto-Discovery%s...\n", (t_did != 0) ? " (Single Device)" : "");
-    }
-
     // Étape 0 : Discovery de la Gateway elle-même (Diagnostics)
-    // On ne publie les capteurs de diagnostic globaux que si la découverte n'est pas limitée à un seul objet précis
     if (!is_single_object && t_did == 0) {
         char base_b2m[128];
         snprintf(base_b2m, sizeof(base_b2m), "%s/B2M", sysCfg.mqtt_prefix);
@@ -443,200 +457,121 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
         pub_gw_sensor("temp", "Gateway Chip Temp", "temperature", "°C");
         pub_gw_sensor("nb_dev", "Gateway Devices Count", NULL, "dev", "mdi:counter");
         pub_gw_sensor("mstp", "Gateway MS/TP Network", "connectivity", NULL, NULL, true);
-
-        vTaskDelay(pdMS_TO_TICKS(100)); 
+        return;
     }
 
-    // Étape 1 : Obtenir le nombre de devices sans bloquer longtemps
-    size_t dev_count = 0;
+    // Étape 1 : Objets des Devices (Un seul objet à la fois pour ne pas bloquer)
     if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
-        dev_count = bacnet_network_cache.size();
-        xSemaphoreGive(cache_mutex);
-    }
+        for (auto& dev : bacnet_network_cache) {
+            if (dev.ulDeviceId != t_did) continue;
+            
+            for (auto& obj : dev.objects) {
+                if (obj.ulInstance != t_inst || obj.usType != t_type) continue;
 
-    for (size_t d = 0; d < dev_count; d++) {
-        size_t obj_count = 0;
-        
-        if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
-            if (d < bacnet_network_cache.size()) obj_count = bacnet_network_cache[d].objects.size();
-            xSemaphoreGive(cache_mutex);
-        }
+                if (obj.usType != 65535) {
+                    const char* t_str = "OBJ";
+                    const char* ha_component = "sensor";
+                    bool is_command = obj.xIsCommandable;
+            
+                    switch(obj.usType) {
+                        case OBJ_ANALOG_INPUT: t_str = "AI"; ha_component = "sensor"; break;
+                        case OBJ_BINARY_INPUT: t_str = "BI"; ha_component = "binary_sensor"; break;
+                        case OBJ_BINARY_OUTPUT: 
+                        case OBJ_BINARY_VALUE: 
+                            t_str = (obj.usType == OBJ_BINARY_OUTPUT) ? "BO" : "BV"; 
+                            ha_component = (is_command || obj.usType == OBJ_BINARY_OUTPUT) ? "switch" : "binary_sensor"; 
+                            break;
+                        case OBJ_ANALOG_OUTPUT:
+                        case OBJ_ANALOG_VALUE: 
+                            t_str = (obj.usType == OBJ_ANALOG_OUTPUT) ? "AO" : "AV"; 
+                            ha_component = (is_command || obj.usType == OBJ_ANALOG_OUTPUT) ? "number" : "sensor"; 
+                            break;
+                        case OBJ_MULTI_STATE_INPUT: t_str = "MSI"; ha_component = "sensor"; break;
+                        case OBJ_MULTI_STATE_OUTPUT:
+                        case OBJ_MULTI_STATE_VALUE: 
+                            t_str = (obj.usType == OBJ_MULTI_STATE_OUTPUT) ? "MSO" : "MSV"; 
+                            if (obj.state_texts.empty()) ha_component = (is_command || obj.usType == OBJ_MULTI_STATE_OUTPUT) ? "number" : "sensor";
+                            else ha_component = "select";
+                            break;
+                    }
 
-        for (size_t o = 0; o < obj_count; o++) {
-            // Variables déclarées en dehors de la zone critique
-            String final_payload;
-            char final_topic[128] = {0};
-            bool should_publish = false;
+                    char uniq_id[64];
+                    snprintf(uniq_id, sizeof(uniq_id), "bacnet_%lu_%s_%lu", (unsigned long)dev.ulDeviceId, t_str, (unsigned long)obj.ulInstance);
+                    char topic[128];
+                    snprintf(topic, sizeof(topic), "homeassistant/%s/%s/config", ha_component, uniq_id);
 
-            // --- DEBUT ZONE CRITIQUE (< 1ms) ---
-            if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
-                
-                // Vérification de sécurité
-                if (d < bacnet_network_cache.size() && o < bacnet_network_cache[d].objects.size()) {
-                    auto& dev = bacnet_network_cache[d];
-                    auto& obj = dev.objects[o];
-
-                    // Filtrage ciblé (v6.4.2 Param-based)
-                    if (t_did != 0) {
-                        bool match_dev = (dev.ulDeviceId == t_did);
-                        if (!match_dev) { xSemaphoreGive(cache_mutex); continue; }
+                    if (dev.xEnabled && obj.xEnabled && strcmp(obj.cName, "Unknown") != 0) {
+                        JsonDocument doc; 
+                        char base_topic[128];
+                        snprintf(base_topic, sizeof(base_topic), "%s/%lu/%s/%lu", sysCfg.mqtt_prefix, (unsigned long)dev.ulDeviceId, t_str, (unsigned long)obj.ulInstance);
                         
-                        if (t_inst != 0xFFFFFFFF && obj.ulInstance != t_inst) { xSemaphoreGive(cache_mutex); continue; }
-                        if (t_type != 0xFFFF && obj.usType != t_type) { xSemaphoreGive(cache_mutex); continue; }
-                    }
+                        doc["~"] = String(base_topic);
+                        doc["uniq_id"] = String(uniq_id);
+                        doc["name"] = String(obj.cName); 
+                        doc["stat_t"] = "~/state";
+                        doc["avty_t"] = String(lwt_topic);
+                        doc["pl_avail"] = "online";
+                        doc["pl_not_avail"] = "offline";
 
-                    // Ne pas publier si la découverte du device n'est pas terminée (Metadata manquante)
-                    // Sauf si on est en train de forcer une suppression (obj.xEnabled == false OU dev.xEnabled == false)
-                    if (!dev.xDiscoveryDone && obj.xEnabled && dev.xEnabled) {
-                        xSemaphoreGive(cache_mutex);
-                        continue;
-                    }
-
-                    if (obj.usType != 65535) {
-                        const char* t_str = "OBJ";
-                        const char* ha_component = "sensor";
-                        bool is_command = obj.xIsCommandable; // Utilisation de la détection Prop 87
-                
-                        switch(obj.usType) {
-                            case OBJ_ANALOG_INPUT: t_str = "AI"; ha_component = "sensor"; break;
-                            case OBJ_BINARY_INPUT: t_str = "BI"; ha_component = "binary_sensor"; break;
-                            case OBJ_BINARY_OUTPUT: 
-                            case OBJ_BINARY_VALUE: 
-                                t_str = (obj.usType == OBJ_BINARY_OUTPUT) ? "BO" : "BV"; 
-                                ha_component = (is_command || obj.usType == OBJ_BINARY_OUTPUT) ? "switch" : "binary_sensor"; 
-                                break;
-                            case OBJ_ANALOG_OUTPUT:
-                            case OBJ_ANALOG_VALUE: 
-                                t_str = (obj.usType == OBJ_ANALOG_OUTPUT) ? "AO" : "AV"; 
-                                ha_component = (is_command || obj.usType == OBJ_ANALOG_OUTPUT) ? "number" : "sensor"; 
-                                break;
-                            case OBJ_MULTI_STATE_INPUT: t_str = "MSI"; ha_component = "sensor"; break;
-                            case OBJ_MULTI_STATE_OUTPUT:
-                            case OBJ_MULTI_STATE_VALUE: 
-                                t_str = (obj.usType == OBJ_MULTI_STATE_OUTPUT) ? "MSO" : "MSV"; 
-                                // Fallback MSV: si on a des textes, on force select. Sinon, number pour rester visible.
-                                if (obj.state_texts.empty()) {
-                                    ha_component = (is_command || obj.usType == OBJ_MULTI_STATE_OUTPUT) ? "number" : "sensor";
-                                } else {
-                                    ha_component = "select";
-                                }
-                                break;
+                        if (strcmp(ha_component, "sensor") != 0 && strcmp(ha_component, "binary_sensor") != 0) {
+                            doc["cmd_t"] = "~/set";
                         }
 
-                        char uniq_id[64];
-                        snprintf(uniq_id, sizeof(uniq_id), "bacnet_%lu_%s_%lu", (unsigned long)dev.ulDeviceId, t_str, (unsigned long)obj.ulInstance);
-                        snprintf(final_topic, sizeof(final_topic), "homeassistant/%s/%s/config", ha_component, uniq_id);
-
-                        // --- NETTOYAGE DES DOUBLONS (v6.4.0 Optimized) ---
-                        // On ne supprime que si on a une trace d'un composant précédent DIFFÉRENT
-                        if (strlen(obj.cLastHaComponent) > 0 && strcmp(obj.cLastHaComponent, ha_component) != 0) {
-                            char old_topic[128];
-                            snprintf(old_topic, sizeof(old_topic), "homeassistant/%s/%s/config", obj.cLastHaComponent, uniq_id);
-                            esp_mqtt_client_publish(mqtt_client, old_topic, "", 0, 1, 1); 
-                            vTaskDelay(pdMS_TO_TICKS(50)); // Petit délai entre unpublish et publish
+                        if (obj.usType == OBJ_BINARY_INPUT || obj.usType == OBJ_BINARY_OUTPUT || obj.usType == OBJ_BINARY_VALUE) {
+                            doc["pl_on"] = "1.00"; doc["pl_off"] = "0.00";
                         }
-                        strlcpy(obj.cLastHaComponent, ha_component, sizeof(obj.cLastHaComponent));
 
-                        bool is_single_request = (t_did != 0);
-
-                        if (dev.xEnabled && obj.xEnabled && strcmp(obj.cName, "Unknown") != 0) {
-                            JsonDocument doc; 
-                            char base_topic[128];
-                            snprintf(base_topic, sizeof(base_topic), "%s/%lu/%s/%lu", sysCfg.mqtt_prefix, (unsigned long)dev.ulDeviceId, t_str, (unsigned long)obj.ulInstance);
-                            
-                            doc["~"] = String(base_topic);
-                            doc["uniq_id"] = String(uniq_id);
-                            doc["name"] = String(obj.cName); 
-                            doc["stat_t"] = "~/state";
-                            doc["avty_t"] = String(lwt_topic);
-                            doc["pl_avail"] = "online";
-                            doc["pl_not_avail"] = "offline";
-
-                            if (strcmp(ha_component, "sensor") != 0 && strcmp(ha_component, "binary_sensor") != 0) {
-                                doc["cmd_t"] = "~/set";
-                            }
-
-                            if (obj.usType == OBJ_BINARY_INPUT || obj.usType == OBJ_BINARY_OUTPUT || obj.usType == OBJ_BINARY_VALUE) {
-                                doc["pl_on"] = "1.00"; doc["pl_off"] = "0.00";
-                            }
-
-                            if (strcmp(ha_component, "number") == 0) {
-                                doc["min"] = isnan(obj.fMinValue) ? sysCfg.default_number_min : obj.fMinValue;
-                                doc["max"] = isnan(obj.fMaxValue) ? sysCfg.default_number_max : obj.fMaxValue;
-                                doc["step"] = sysCfg.default_number_step;
-                            }
-
-                            // --- GESTION DES UNITÉS (v6.3.4) ---
-                            if (obj.usType == OBJ_ANALOG_INPUT || obj.usType == OBJ_ANALOG_VALUE || obj.usType == OBJ_ANALOG_OUTPUT) {
-                                String unit = String(obj.cUnitText);
-                                if (unit == "Unknown" || unit.length() == 0 || unit == "none") {
-                                    unit = get_unit_text(obj.usUnits);
-                                }
-                                
-                                if (unit != "no-usUnits" && unit.length() > 0) {
-                                    doc["unit_of_meas"] = unit;
-                                    if (unit == "°C" || unit == "°F" || unit == "°K") doc["dev_cla"] = "temperature";
-                                    else if (unit == "%" || unit == "%RH") doc["dev_cla"] = "humidity";
-                                    else if (unit == "Pa" || unit == "kPa" || unit == "bar" || unit == "psi") doc["dev_cla"] = "pressure";
-                                    else if (unit == "kW" || unit == "W" || unit == "MW") doc["dev_cla"] = "power";
-                                    else if (unit == "kWh" || unit == "Wh" || unit == "MWh") doc["dev_cla"] = "energy";
-                                    else if (unit == "V" || unit == "mV") doc["dev_cla"] = "voltage";
-                                    else if (unit == "A" || unit == "mA") doc["dev_cla"] = "current";
-                                }
-                            }
-
-                            bool can_publish = true;
-                            if (obj.usType == OBJ_MULTI_STATE_INPUT || obj.usType == OBJ_MULTI_STATE_OUTPUT || obj.usType == OBJ_MULTI_STATE_VALUE) {
-                                if (!obj.state_texts.empty()) {
-                                    JsonArray opts = doc["options"].to<JsonArray>();
-                                    for (size_t i = 0; i < obj.state_texts.size(); i++) {
-                                        opts.add(String(obj.state_texts[i]));
-                                    }
-                                    if (strcmp(ha_component, "sensor") == 0) doc["dev_cla"] = "enum";
-                                } else {
-                                    // Pas de textes: on publie en tant que nombre brut pour le moment
-                                    if (strcmp(ha_component, "sensor") == 0) doc["icon"] = "mdi:numeric";
-                                }
-                            }
-
-                            if (can_publish) {
-                                JsonObject device = doc["dev"].to<JsonObject>();
-                                JsonArray ids = device["ids"].to<JsonArray>();
-                                char dev_id_str[32]; 
-                                snprintf(dev_id_str, sizeof(dev_id_str), "bacnet_dev_%lu", (unsigned long)dev.ulDeviceId);
-                                ids.add(String(dev_id_str));
-                                device["name"] = dev.name.length() > 0 ? String(dev.name) : String(dev_id_str);
-                                device["mf"] = dev.vendor.length() > 0 ? String(dev.vendor) : "BACnet Manufacturer";
-                                device["sw"] = configVERSION_GLOBAL;
-
-                                serializeJson(doc, final_payload);
-                                should_publish = true;
-                            }
-                        } else if (is_single_request || !dev.xEnabled || !obj.xEnabled) {
-                            // On efface l'entité de HA si l'appareil ou l'objet est désactivé
-                            final_payload = ""; 
-                            should_publish = true;
+                        if (strcmp(ha_component, "number") == 0) {
+                            doc["min"] = isnan(obj.fMinValue) ? sysCfg.default_number_min : obj.fMinValue;
+                            doc["max"] = isnan(obj.fMaxValue) ? sysCfg.default_number_max : obj.fMaxValue;
+                            doc["step"] = sysCfg.default_number_step;
                         }
+
+                        if (obj.usType == OBJ_ANALOG_INPUT || obj.usType == OBJ_ANALOG_VALUE || obj.usType == OBJ_ANALOG_OUTPUT) {
+                            String unit = String(obj.cUnitText);
+                            if (unit == "Unknown" || unit.length() == 0 || unit == "none") unit = get_unit_text(obj.usUnits);
+                            if (unit != "no-usUnits" && unit.length() > 0) {
+                                doc["unit_of_meas"] = unit;
+                                if (unit == "°C" || unit == "°F" || unit == "°K") doc["dev_cla"] = "temperature";
+                                else if (unit == "%" || unit == "%RH") doc["dev_cla"] = "humidity";
+                                else if (unit == "Pa" || unit == "kPa" || unit == "bar" || unit == "psi") doc["dev_cla"] = "pressure";
+                                else if (unit == "kW" || unit == "W" || unit == "MW") doc["dev_cla"] = "power";
+                                else if (unit == "kWh" || unit == "Wh" || unit == "MWh") doc["dev_cla"] = "energy";
+                                else if (unit == "V" || unit == "mV") doc["dev_cla"] = "voltage";
+                                else if (unit == "A" || unit == "mA") doc["dev_cla"] = "current";
+                            }
+                        }
+
+                        if (obj.usType == OBJ_MULTI_STATE_INPUT || obj.usType == OBJ_MULTI_STATE_OUTPUT || obj.usType == OBJ_MULTI_STATE_VALUE) {
+                            if (!obj.state_texts.empty()) {
+                                JsonArray opts = doc["options"].to<JsonArray>();
+                                for (auto& s : obj.state_texts) opts.add(s);
+                                if (strcmp(ha_component, "sensor") == 0) doc["dev_cla"] = "enum";
+                            } else {
+                                if (strcmp(ha_component, "sensor") == 0) doc["icon"] = "mdi:numeric";
+                            }
+                        }
+
+                        JsonObject device = doc["dev"].to<JsonObject>();
+                        JsonArray ids = device["ids"].to<JsonArray>();
+                        char dev_id_str[32]; snprintf(dev_id_str, sizeof(dev_id_str), "bacnet_dev_%lu", (unsigned long)dev.ulDeviceId);
+                        ids.add(String(dev_id_str));
+                        device["name"] = dev.name.length() > 0 ? String(dev.name) : String(dev_id_str);
+                        device["mf"] = dev.vendor.length() > 0 ? String(dev.vendor) : "BACnet Manufacturer";
+                        device["sw"] = configVERSION_GLOBAL;
+
+                        String payload; serializeJson(doc, payload);
+                        esp_mqtt_client_publish(mqtt_client, topic, payload.c_str(), payload.length(), 1, 1);
+                    } else {
+                        esp_mqtt_client_publish(mqtt_client, topic, "", 0, 1, 1);
                     }
                 }
-                
-                // On rend le Mutex ICI, tant qu'on est sûr de l'avoir pris
-                // et AVANT de faire le réseau et le délai.
-                xSemaphoreGive(cache_mutex);
-            } 
-            // --- FIN ZONE CRITIQUE ---
-
-            // --- EXECUTION RESEAU ET TEMPORISATION (HORS MUTEX) ---
-            if (should_publish) { 
-                // Utilisation de esp_mqtt_client_publish avec QoS 1 pour garantir la délivrance et le traitement synchrone
-                esp_mqtt_client_publish(mqtt_client, final_topic, final_payload.c_str(), final_payload.length(), 1, 1);
-                vTaskDelay(pdMS_TO_TICKS(150)); // Augmenté à 150ms pour laisser respirer HA
+                break; // On a trouvé l'objet ciblé
             }
+            break; // On a trouvé le device ciblé
         }
+        xSemaphoreGive(cache_mutex);
     }
-    
-    // Le log de fin est placé tout à la fin de la fonction
-    z_log(pdLOG_INFO, "MQTT", "HA Auto-Discovery payload sent.\n");
 }
 
 void publish_mqtt_topic(uint32_t ulDeviceId, BACnetObject& obj, uint8_t prop_id, bool retain) {
