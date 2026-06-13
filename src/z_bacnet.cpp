@@ -896,9 +896,15 @@ void execute_discovery_logic(BACnetDevice &dev) {
         return;
     }
 
+    // v6.8.8: Si le device n'est pas activé, on s'arrête APRÈS avoir récupéré les infos de base
+    if (!dev.xEnabled && dev.ucDiscStep >= DISC_OBJ_OID) {
+        // On met en pause la découverte. Elle reprendra dès que xEnabled passera à true.
+        return;
+    }
+
     uint8_t a[64];
     uint16_t al = 0;
-    
+
     // 1. Paramètres par défaut basés sur l'étape actuelle
     uint16_t type = 8;               // Type Device par défaut
     uint32_t inst = dev.ulDeviceId;  // Instance du device cible
@@ -906,43 +912,53 @@ void execute_discovery_logic(BACnetDevice &dev) {
     uint16_t prop = cfg.prop;
     int32_t index = cfg.idx;
 
-    // 2. Ajustements dynamiques selon la phase (Device vs Objet)
-    if (dev.ucDiscStep == DISC_DEV_ID) {
-        inst = 4194303; // Wildcard pour l'auto-découverte d'ID
-    } else if (dev.ucDiscStep >= DISC_OBJ_OID) {
-        // Vérification des limites de l'objet actuel
-        if (dev.objects.empty() && dev.xEnabled) {
-            // Sécurité : On ne peut pas terminer une découverte sans objets si activé
-            dev.ucDiscStep = DISC_DEV_ID; 
-            return;
-        }
+    // 2. Logique de transition et de construction (v6.8.8: Switch-Case pour plus de clarté)
+    switch (dev.ucDiscStep) {
+        case DISC_DEV_ID:
+            inst = 4194303; // Wildcard
+            break;
 
-        if (dev.usDiscObjIdx >= dev.objects.size()) {
-            dev.xDiscoveryDone = true;
-            save_device_objects_locked(dev.ulDeviceId);
-            trigger_ha_discovery(dev.ulDeviceId, 0xFFFFFFFF, 0xFFFF);
-            return;
-        }
+        case DISC_DEV_NAME:
+        case DISC_DEV_VENDOR:
+        case DISC_DEV_MAX_APDU:
+        case DISC_DEV_TIMEOUT:
+        case DISC_DEV_RETRIES:
+        case DISC_OBJ_COUNT:
+            // Rien de spécial, utilise les params par défaut du Header (prop/idx)
+            break;
 
-        auto& o = dev.objects[dev.usDiscObjIdx];
-        if (dev.ucDiscStep == DISC_OBJ_OID) {
-            index = dev.usDiscObjIdx + 1; // Index 1-based dans la liste OID
-        } else {
-            type = o.usType;
-            inst = o.ulInstance;
-            
-            // Logique spécifique pour Multi-States (itérative)
-            if (dev.ucDiscStep == DISC_OBJ_STATES) {
-                if (o.ucExpectedStatesCount > 0 && o.state_texts.empty()) {
-                    index = -1; // Demande du tableau complet
-                } else if (!o.state_texts.empty()) {
-                    // Transition forcée si déjà en cache
-                    dev.ucDiscStep = DISC_OBJ_COMMANDABLE;
-                    prop = DISCOVERY_STEPS[dev.ucDiscStep].prop;
-                    index = DISCOVERY_STEPS[dev.ucDiscStep].idx;
+        default:
+            // Phases de découverte d'objets individuels
+            if (dev.ucDiscStep >= DISC_OBJ_OID) {
+                if (dev.objects.empty() && dev.xEnabled) {
+                    dev.ucDiscStep = DISC_DEV_ID;
+                    return;
+                }
+
+                if (dev.usDiscObjIdx >= dev.objects.size()) {
+                    dev.xDiscoveryDone = true;
+                    save_device_objects_locked(dev.ulDeviceId);
+                    trigger_ha_discovery(dev.ulDeviceId, 0xFFFFFFFF, 0xFFFF);
+                    return;
+                }
+
+                auto& o = dev.objects[dev.usDiscObjIdx];
+                if (dev.ucDiscStep == DISC_OBJ_OID) {
+                    index = dev.usDiscObjIdx + 1; // Index 1-based
+                } else {
+                    type = o.usType;
+                    inst = o.ulInstance;
+                    if (dev.ucDiscStep == DISC_OBJ_STATES) {
+                        if (o.ucExpectedStatesCount > 0 && o.state_texts.empty()) index = -1;
+                        else if (!o.state_texts.empty()) {
+                            dev.ucDiscStep = DISC_OBJ_COMMANDABLE;
+                            prop = DISCOVERY_STEPS[dev.ucDiscStep].prop;
+                            index = DISCOVERY_STEPS[dev.ucDiscStep].idx;
+                        }
+                    }
                 }
             }
-        }
+            break;
     }
 
     // 3. Construction de l'APDU ReadProperty
@@ -950,7 +966,7 @@ void execute_discovery_logic(BACnetDevice &dev) {
         al = build_read_property_apdu(a, next_invoke_id++, type, inst, prop, index);
     }
 
-    // 4. Gestion de la transmission et de l'état FSM MS/TP
+    // 4. Gestion de la transmission
     if (al > 0) {
         retry_count = 0;
         waiting_for_reply = true;
@@ -1099,6 +1115,19 @@ static void bacnet_task(void *pv) {
     z_log(pdLOG_INFO,"BACNET","Master FSM Task Started (Priority 15)\n");
 
     for (;;) {
+        uint32_t now = millis();
+
+        // v6.8.8: Gestion du Lazy Save NVS (Sauvegarde différée après 2s d'inactivité)
+        if (xSemaphoreTake(cache_mutex, 0)) {
+            for (auto& dev : bacnet_network_cache) {
+                if (dev.xDirty && (now - dev.ulLastDirtyTime > 2000)) {
+                    save_device_objects_locked(dev.ulDeviceId);
+                    // xDirty est mis à false par save_device_objects_locked
+                }
+            }
+            xSemaphoreGive(cache_mutex);
+        }
+
         timer_silence_us = (uint32_t)(esp_timer_get_time() - last_rx_time_us);
 
         // --- TÂCHES PÉRIODIQUES (Découverte / Santé) ---
@@ -1122,9 +1151,9 @@ static void bacnet_task(void *pv) {
                 }
                 xSemaphoreGive(cache_mutex);
             }
-            z_log(pdLOG_INFO,"BACNET","Heartbeat - Tokens:%lu, RX:%lu, TX:%lu (State:%d, Cache:%u, Enabled:%lu)\n", 
+            z_log(pdLOG_DEBUG,"BACNET","Heartbeat - Tokens:%lu, RX:%lu, TX:%lu (State:%d, Cache:%u, Enabled:%lu)\n", 
                   bacnetStats.ulTokensSeen, bacnetStats.ulMsMsgsRx, bacnetStats.ulMsMsgsTx, (int)mstp_state, cache_size, enabled_count);
-            z_log(pdLOG_INFO,"BACNET","Polling - objects polled : %lu\n", (unsigned long)period_poll_count);
+            z_log(pdLOG_DEBUG,"BACNET","Polling - objects polled : %lu\n", (unsigned long)period_poll_count);
             period_poll_count = 0;
             heartbeat_timer = millis();
         }

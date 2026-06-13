@@ -186,9 +186,11 @@ struct BACnetDevice {
     uint16_t usDiscObjIdx = 0;
     bool xReloadSingle = false;
     bool xRecoveryMode = false;
+    bool xDirty = false;           // v6.8.8: Drapeau pour sauvegarde différée
+    uint32_t ulLastDirtyTime = 0;  // v6.8.8: Timestamp du dernier changement
 
-    BACnetDevice() {} 
-};
+    BACnetDevice() {}
+    };
 
 extern std::vector<BACnetDevice> bacnet_network_cache;
 extern SemaphoreHandle_t cache_mutex;

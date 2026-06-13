@@ -235,6 +235,24 @@ void save_configuration() {
 }
 
 /**
+ * Marque un équipement comme 'sale' pour déclencher une sauvegarde différée (Lazy Save).
+ * @param ulDeviceId Identifiant de l'équipement.
+ */
+void save_device_objects(uint32_t ulDeviceId) {
+    if (cache_mutex == NULL) return;
+    if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
+        for (auto& dev : bacnet_network_cache) {
+            if (dev.ulDeviceId == ulDeviceId) {
+                dev.xDirty = true;
+                dev.ulLastDirtyTime = millis();
+                break;
+            }
+        }
+        xSemaphoreGive(cache_mutex);
+    }
+}
+
+/**
  * Sauvegarde interne d'un device (doit être appelé avec cache_mutex déjà verrouillé).
  */
 void save_device_objects_locked(uint32_t ulDeviceId) {
@@ -242,12 +260,15 @@ void save_device_objects_locked(uint32_t ulDeviceId) {
     if (xSemaphoreTake(nvs_mutex, pdMS_TO_TICKS(1000))) {
         for (auto& dev : bacnet_network_cache) {
             if (dev.ulDeviceId == ulDeviceId) {
-                char ns[16]; 
+                // v6.8.8: Reset du flag dirty avant l'écriture
+                dev.xDirty = false;
+
+                char ns[16];
                 snprintf(ns, sizeof(ns), "dv_%lu", (unsigned long)ulDeviceId); // Namespace standard
                 Preferences prefs;
-                
+
                 if (prefs.begin(ns, false)) {
-                    prefs.clear(); 
+                    prefs.clear();
 
                     BACnetPersistenceDev head;
                     memset(&head, 0, sizeof(head));
@@ -260,14 +281,19 @@ void save_device_objects_locked(uint32_t ulDeviceId) {
                     head.usDiscObjIdx = dev.usDiscObjIdx;
                     strlcpy(head.cName, dev.name.c_str(), 32);
                     strlcpy(head.cVendor, dev.vendor.c_str(), 32);
-                    
+                    // v6.8.3
+                    head.usMaxApduLengthAccepted = dev.usMaxApduLengthAccepted;
+                    head.ulApduTimeout = dev.ulApduTimeout;
+                    head.ucNumberOfApduRetries = dev.ucNumberOfApduRetries;
+                    head.xSupportsRpm = dev.xSupportsRpm;
+
                     prefs.putBytes("head", &head, sizeof(head));
 
                     for (int p = 0; p * 20 < (int)dev.objects.size(); p++) {
                         BACnetPersistencePage page;
                         memset(&page, 0, sizeof(page));
                         page.ulDeviceId = ulDeviceId;
-                        page.page_index = p;
+                        page.page_index = (uint16_t)p;
 
                         for (int i = 0; i < 20 && (p * 20 + i) < (int)dev.objects.size(); i++) {
                             auto& o = dev.objects[p * 20 + i];
@@ -297,23 +323,12 @@ void save_device_objects_locked(uint32_t ulDeviceId) {
                         }
                         reg.end();
                     }
-                    z_log(pdLOG_INFO, "NVS", "[NVS] SUCCESS: Saved Device %lu\n", (unsigned long)ulDeviceId);
+                    z_log(pdLOG_INFO, "NVS", "Device %lu saved to Flash (Lazy Save)\n", (unsigned long)ulDeviceId);
                 }
-                break; 
+                break;
             }
         }
         xSemaphoreGive(nvs_mutex);
-    }
-}
-
-/**
- * Fonction publique de sauvegarde d'un device (gère le verrouillage).
- */
-void save_device_objects(uint32_t ulDeviceId) {
-    if (cache_mutex == NULL) return;
-    if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(1000))) {
-        save_device_objects_locked(ulDeviceId);
-        xSemaphoreGive(cache_mutex);
     }
 }
 
