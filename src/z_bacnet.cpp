@@ -419,11 +419,22 @@ static void handle_complex_ack_discovery(BACnetDevice &dev, const uint8_t *apdu,
             else if (dev.ucDiscStep == DISC_DEV_TIMEOUT) { dev.ulApduTimeout = val; dev.ucDiscStep = DISC_DEV_RETRIES; }
             else if (dev.ucDiscStep == DISC_DEV_RETRIES) { dev.ucNumberOfApduRetries = (uint8_t)val; dev.ucDiscStep = DISC_OBJ_COUNT; }
             else if (dev.ucDiscStep == DISC_OBJ_COUNT) {
-                z_log(pdLOG_INFO, "BACNET", "Device Object Count: %lu\n", (unsigned long)val); 
-                dev.objects.clear(); dev.objects.reserve(val); 
-                for(uint32_t i=0; i<val; i++){ BACnetObject o; dev.objects.push_back(o); } 
-                dev.usDiscObjIdx = 0; dev.ucDiscStep = DISC_OBJ_OID; 
-                if (!dev.xEnabled) { dev.xDiscoveryDone = true; save_device_objects_locked(dev.ulDeviceId); }
+                if (val > 2000) {
+                    z_log(pdLOG_ERROR, "BACNET", "INVALID OBJECT COUNT: %lu (Safety cap 2000 triggered)\n", (unsigned long)val);
+                    val = 0;
+                }
+                z_log(pdLOG_INFO, "BACNET", "Device Object Count: %lu\n", (unsigned long)val);
+                dev.objects.clear();
+                if (val > 0) {
+                    try {
+                        dev.objects.resize(val);
+                    } catch (...) {
+                        z_log(pdLOG_ERROR, "BACNET", "Memory allocation failed for %lu objects\n", (unsigned long)val);
+                        val = 0;
+                    }
+                }
+                dev.usDiscObjIdx = 0; dev.ucDiscStep = DISC_OBJ_OID;
+                if (val == 0 || !dev.xEnabled) { dev.xDiscoveryDone = true; save_device_objects_locked(dev.ulDeviceId); }
             }
             break;
         }

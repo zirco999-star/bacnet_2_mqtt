@@ -595,8 +595,9 @@ void setup_network_infrastructure() {
     WiFi.persistent(false); WiFi.disconnect(true);
     vTaskDelay(pdMS_TO_TICKS(100));
 
-    // Démarrage en mode Point d'Accès si aucun SSID n'est configuré.
-    if (strlen(sysCfg.wifi_ssid) == 0) {
+    // Démarrage en mode Point d'Accès si les identifiants WiFi sont incomplets.
+    if (strlen(sysCfg.wifi_ssid) == 0 || strlen(sysCfg.wifi_pass) == 0) {
+        z_log(pdLOG_INFO, "WIFI", "Credentials missing. Starting Access Point: ZIRCON-GW-CONFIG\n");
         is_ap_mode = true; WiFi.mode(WIFI_AP);
         WiFi.softAP("ZIRCON-GW-CONFIG", "admin1234");
     } else {
@@ -621,8 +622,9 @@ void setup_network_infrastructure() {
     ArduinoOTA.begin();
 
     webServer.begin();
-    z_log(pdLOG_INFO, "WEB", "Web Server started\n");
+    // Log déplacé vers system_task (Core 0) pour cohérence visuelle
 }
+
 
 /**
  * @brief Gère les tâches réseau récurrentes.
