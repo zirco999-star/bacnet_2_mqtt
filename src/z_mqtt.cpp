@@ -19,6 +19,14 @@ static std::atomic<uint32_t> target_inst{0};
 static std::atomic<uint16_t> target_type{0xFFFF};
 static bool mqtt_is_connected = false;
 static bool force_full_discovery = false; 
+
+// v6.8.11: Variables pour la découverte fragmentée
+static size_t disc_dev_idx = 0;
+static size_t disc_obj_idx = 0;
+static bool disc_in_progress = false;
+static bool disc_gw_done = false;
+static uint32_t disc_start_time = 0;
+static uint32_t last_batch_time = 0;
 static std::atomic<bool> mqtt_pending_connected_log{false};
 static std::atomic<bool> mqtt_pending_disconnected_log{false};
 static std::atomic<bool> mqtt_pending_auth_error_log{false};
@@ -179,41 +187,93 @@ static void mqtt_gatekeeper_task(void *pv) {
         }
 
         if (mqtt_is_connected && !circuit_breaker_active) {
-            // 1. Traitement de l'Auto-Discovery (Atomique pour éviter les loops de triggers)
-            if (pending_discovery.load(std::memory_order_acquire)) {
+            // 1. Gestion de la Découverte HA Fragmentée (v6.8.11)
+            uint32_t now = millis();
+            
+            // Initiation d'une nouvelle découverte
+            if (pending_discovery.load(std::memory_order_acquire) && !disc_in_progress) {
                 uint32_t t_did = target_did.load();
-                uint32_t t_inst = target_inst.load();
-                uint16_t t_type = target_type.load();
                 bool is_global = (t_did == 0 || force_full_discovery);
                 
-                uint32_t now = millis();
-                bool can_pub = false;
+                bool can_start = false;
                 if (is_global) {
-                    if (now - last_global_disc > 30000) { can_pub = true; last_global_disc = now; }
+                    if (now - last_global_disc > 30000) { can_start = true; last_global_disc = now; }
                 } else {
-                    if (now - last_single_disc > 5000) { can_pub = true; last_single_disc = now; }
+                    if (now - last_single_disc > 5000) { can_start = true; last_single_disc = now; }
                 }
 
-                if (can_pub) {
-                    pending_discovery.store(false, std::memory_order_release);
-                    if (force_full_discovery) {
-                        t_did = 0; 
-                        t_inst = 0xFFFFFFFF;
-                        force_full_discovery = false;
-                    }
-                    publish_ha_autodiscovery(t_did, t_inst, t_type);
-                } else {
-                    // On ne reset PAS pending_discovery, on attendra la prochaine boucle (non-dropping)
-                    // On logue une seule fois pour éviter le flood de logs
-                    static uint32_t last_log = 0;
-                    if (now - last_log > 5000) {
-                        z_log(pdLOG_DEBUG, "MQTT", "HA Discovery deferred (throttle active)\n");
-                        last_log = now;
+                if (can_start) {
+                    disc_in_progress = true;
+                    disc_gw_done = false;
+                    disc_dev_idx = 0;
+                    disc_obj_idx = 0;
+                    disc_start_time = now;
+                    z_log(pdLOG_INFO, "MQTT", "Starting fragmented HA Discovery...\n");
+                }
+            }
+
+            // Exécution d'un lot de découverte
+            if (disc_in_progress && (now - last_batch_time > 50)) {
+                last_batch_time = now;
+                int objects_in_batch = 0;
+                
+                // Étape A: Gateway elle-même
+                if (!disc_gw_done) {
+                    if (target_did.load() == 0) publish_ha_autodiscovery(0, 0xFFFFFFFF, 0xFFFF);
+                    disc_gw_done = true;
+                    objects_in_batch = 5; // On compte la GW comme un gros lot
+                } 
+                else {
+                    // Étape B: Objets des Devices
+                    if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(10))) {
+                        size_t dev_count = bacnet_network_cache.size();
+                        bool found_something = false;
+
+                        while (disc_dev_idx < dev_count && objects_in_batch < 5) {
+                            auto& dev = bacnet_network_cache[disc_dev_idx];
+                            
+                            // Filtrage device
+                            if (target_did.load() != 0 && dev.ulDeviceId != target_did.load()) {
+                                disc_dev_idx++; disc_obj_idx = 0; continue;
+                            }
+
+                            if (disc_obj_idx < dev.objects.size()) {
+                                auto& obj = dev.objects[disc_obj_idx];
+                                
+                                // On relâche le mutex pour publier (publish_ha_autodiscovery le reprendra mais c'est safe)
+                                uint32_t d = dev.ulDeviceId;
+                                uint32_t i = obj.ulInstance;
+                                uint16_t t = obj.usType;
+                                xSemaphoreGive(cache_mutex);
+                                
+                                publish_ha_autodiscovery(d, i, t);
+                                
+                                objects_in_batch++;
+                                found_something = true;
+                                
+                                // On reprend le mutex pour avancer les index
+                                if (!xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(10))) break; 
+                                disc_obj_idx++;
+                            } else {
+                                disc_dev_idx++;
+                                disc_obj_idx = 0;
+                            }
+                        }
+                        
+                        if (disc_dev_idx >= dev_count) {
+                            disc_in_progress = false;
+                            pending_discovery.store(false, std::memory_order_release);
+                            force_full_discovery = false;
+                            z_log(pdLOG_INFO, "MQTT", "Fragmented HA Discovery Finished (%lu ms)\n", millis() - disc_start_time);
+                        }
+                        
+                        if (xSemaphoreTake(cache_mutex, 0)) xSemaphoreGive(cache_mutex); // Sécurité si on a break
+                        else xSemaphoreGive(cache_mutex); // On est censé l'avoir
                     }
                 }
             }
 
-            // 2. Traitement de la queue de publication
+            // 2. Traitement de la queue de publication (Données temps réel)
             MQTTPublishJob pubJob;
             while (xQueueReceive(mqtt_publish_queue, &pubJob, 0) == pdTRUE) {
                 char topic[128];

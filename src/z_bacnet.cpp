@@ -492,12 +492,14 @@ static void handle_complex_ack_discovery(BACnetDevice &dev, const uint8_t *apdu,
         case STORE_OBJ_STATES: {
             if (dev.usDiscObjIdx < dev.objects.size()) {
                 auto& o = dev.objects[dev.usDiscObjIdx];
-                if (vt.number == 2) {
+                if (vt.isContext && vt.number == 2) {
                     o.ucExpectedStatesCount = (uint16_t)decode_bacnet_unsigned(&apdu[ap], vt.len);
+                    z_log(pdLOG_DEBUG, "BACNET", "Obj %u Expecting %u states\n", dev.usDiscObjIdx+1, o.ucExpectedStatesCount);
                     if (o.ucExpectedStatesCount == 0) dev.ucDiscStep = DISC_OBJ_VALUE;
-                } else if (vt.number == 7) {
+                } else if (vt.number == 7 || (!vt.isContext && vt.number == 7)) {
                     char n[64]; decode_bacnet_string(&apdu[ap], vt.len, n, sizeof(n));
                     o.state_texts.push_back(String(n));
+                    z_log(pdLOG_DEBUG, "BACNET", "Obj %u State %zu: %s (len %u)\n", dev.usDiscObjIdx+1, o.state_texts.size(), n, vt.len);
                     if (o.state_texts.size() >= o.ucExpectedStatesCount) {
                         dev.ucDiscStep = DISC_OBJ_COMMANDABLE;
                         save_object_states(dev.ulDeviceId, o.usType, o.ulInstance, o.state_texts);
