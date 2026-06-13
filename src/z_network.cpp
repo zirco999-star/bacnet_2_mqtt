@@ -446,6 +446,12 @@ void setup_web_routes() {
                 for (auto& dev : bacnet_network_cache) {
                     if (dev.ulDeviceId == did) {
                         dev.xEnabled = !dev.xEnabled;
+                        // v6.8.7-patch2: Si on active un device sans objets, on relance la découverte
+                        if (dev.xEnabled && dev.objects.empty()) {
+                            dev.xDiscoveryDone = false;
+                            dev.ucDiscStep = DISC_DEV_ID;
+                            z_log(pdLOG_INFO, "BACNET", "Manual activation: Restarting discovery for Device %lu\n", (unsigned long)did);
+                        }
                         break; 
                     }
                 }

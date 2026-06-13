@@ -434,7 +434,13 @@ static void handle_complex_ack_discovery(BACnetDevice &dev, const uint8_t *apdu,
                     }
                 }
                 dev.usDiscObjIdx = 0; dev.ucDiscStep = DISC_OBJ_OID;
-                if (val == 0 || !dev.xEnabled) { dev.xDiscoveryDone = true; save_device_objects_locked(dev.ulDeviceId); }
+                if (!dev.xEnabled) { 
+                    dev.xDiscoveryDone = true; 
+                    save_device_objects_locked(dev.ulDeviceId); 
+                } else if (val == 0) {
+                    // Si activé mais 0 objets (erreur sécu), on ne termine pas, on laisse en suspens
+                    z_log(pdLOG_WARN, "BACNET", "Discovery suspended for Device %lu (waiting for valid object list)\n", (unsigned long)dev.ulDeviceId);
+                }
             }
             break;
         }
@@ -910,6 +916,12 @@ void execute_discovery_logic(BACnetDevice &dev) {
         inst = 4194303; // Wildcard pour l'auto-découverte d'ID
     } else if (dev.ucDiscStep >= DISC_OBJ_OID) {
         // Vérification des limites de l'objet actuel
+        if (dev.objects.empty() && dev.xEnabled) {
+            // Sécurité : On ne peut pas terminer une découverte sans objets si activé
+            dev.ucDiscStep = DISC_DEV_ID; 
+            return;
+        }
+
         if (dev.usDiscObjIdx >= dev.objects.size()) {
             dev.xDiscoveryDone = true;
             save_device_objects_locked(dev.ulDeviceId);
