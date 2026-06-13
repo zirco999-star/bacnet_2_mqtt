@@ -1080,12 +1080,13 @@ void process_incoming_frame(MSTP_Frame &frame) {
                                 if (!dev.xDiscoveryDone) {
                                     DISC_STEP_T step_before = dev.ucDiscStep;
                                     handle_complex_ack_discovery(dev, apdu, al, ap, vt);
-                                    // v6.8.9: On ne sort de la trame QUE si l'étape a avancé.
-                                    // Cela permet de lire plusieurs tags (ex: tableau de chaînes pour MSV)
-                                    // dans une seule réponse ReadProperty.
+                                    ap += vt.len; // v6.8.10: Avancer IMPÉRATIVEMENT le pointeur après traitement
                                     if (dev.ucDiscStep != step_before) break; 
                                 }
-                                else handle_complex_ack_polling(dev, apdu, al, ap, vt);
+                                else {
+                                    handle_complex_ack_polling(dev, apdu, al, ap, vt);
+                                    // handle_complex_ack_polling gère déjà l'incrément de ap en interne
+                                }
                             }
                         }
                         xSemaphoreGive(cache_mutex);
