@@ -1078,10 +1078,12 @@ void process_incoming_frame(MSTP_Frame &frame) {
                             while (ap < al && decode_next_tag(apdu, &ap, al, &vt)) {
                                 if (vt.isClosing && vt.number == 3) break;
                                 if (!dev.xDiscoveryDone) {
+                                    DISC_STEP_T step_before = dev.ucDiscStep;
                                     handle_complex_ack_discovery(dev, apdu, al, ap, vt);
-                                    // Une fois qu'une propriété est traitée dans la découverte, 
-                                    // on DOIT sortir de cette trame pour attendre la suite (ReadProperty).
-                                    break; 
+                                    // v6.8.9: On ne sort de la trame QUE si l'étape a avancé.
+                                    // Cela permet de lire plusieurs tags (ex: tableau de chaînes pour MSV)
+                                    // dans une seule réponse ReadProperty.
+                                    if (dev.ucDiscStep != step_before) break; 
                                 }
                                 else handle_complex_ack_polling(dev, apdu, al, ap, vt);
                             }
