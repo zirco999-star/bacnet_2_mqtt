@@ -442,3 +442,13 @@
   - Réinitialisation de `dev.usDiscObjIdx = 0` lors de `/api/reload_device` et du redémarrage dans `/api/toggle_device` pour empêcher une auto-détection erronée de fin de découverte avec 0 objet.
   - Persistance de l'état nettoyé en appelant `save_device_objects(did)` lors du reload.
   - Validation réussie du cycle complet (Toggle OFF -> Reload -> Toggle ON -> Découverte des 98 objets) sur le matériel.
+
+## [v6.9.1] - 2026-06-15
+### Ajout
+- **Normalisation de l'unité %RH** :
+  - Remplacement de l'unité `%RH` par `%` dans la construction des payloads d'autodiscovery HA (dans `src/z_mqtt.cpp`) pour se conformer aux exigences de validation strictes de la classe de périphérique `humidity` dans Home Assistant, qui rejette sinon l'entité.
+- **Validation en Masse (HA / REST)** :
+  - Activation globale par lot (poll=1) des 98 objets du périphérique `364004`.
+  - Vérification réussie : 100 % des objets fonctionnels (89 sur 89, hors métadonnées) sont maintenant correctement découverts et actifs dans Home Assistant.
+  - Le rapport détaillé de validation a été généré dans `reports/ha_bulk_activation_report.md`.
+
