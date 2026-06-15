@@ -311,8 +311,11 @@ void setup_web_routes() {
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
                 for (auto& dev : bacnet_network_cache) {
                     JsonObject c = controllers.add<JsonObject>();
-                    c["ulDeviceId"] = dev.ulDeviceId;
-                    c["name"] = dev.name; c["cVendor"] = dev.vendor; c["xEnabled"] = dev.xEnabled;
+                    c["id"] = dev.ulDeviceId;
+                    c["device_id"] = dev.ulDeviceId;
+                    c["name"] = dev.name; 
+                    c["vendor"] = dev.vendor; 
+                    c["enabled"] = dev.xEnabled;
                     JsonArray objs_arr = c["objects"].to<JsonArray>();
                     for (auto& o : dev.objects) {
                         JsonObject obj = objs_arr.add<JsonObject>();
@@ -370,12 +373,14 @@ void setup_web_routes() {
                     if (dev.ulDeviceId == did) {
                         dev.xDiscoveryDone = false;
                         dev.ucDiscStep = DISC_DEV_ID;
+                        dev.usDiscObjIdx = 0;
                         dev.objects.clear();
                         z_log(pdLOG_INFO, "API", "Reloading device %lu\n", (unsigned long)did);
                         break;
                     }
                 }
                 xSemaphoreGive(cache_mutex);
+                save_device_objects(did);
             }
             request->send(200, "text/plain", "RELOADING");
         } else request->send(400, "text/plain", "Missing id");
@@ -494,6 +499,7 @@ void setup_web_routes() {
                         if (dev.xEnabled && dev.objects.empty()) {
                             dev.xDiscoveryDone = false;
                             dev.ucDiscStep = DISC_DEV_ID;
+                            dev.usDiscObjIdx = 0;
                             z_log(pdLOG_INFO, "BACNET", "Manual activation: Restarting discovery for Device %lu\n", (unsigned long)did);
                         }
                         break; 

@@ -347,8 +347,8 @@ static void handle_error_pdu(BACnetDevice &dev, uint8_t type) {
         z_log(pdLOG_DEBUG, "BACNET", "Received PDU type 0x%02X from MAC %d (Step %d)\n", type, dev.ucMacAddress, (int)dev.ucDiscStep);
     }
     
-    // Si on est en phase de découverte, on force le passage à l'étape suivante (v6.8.18: pas de retry sur erreur protocolaire)
-    if (!dev.xDiscoveryDone && dev.usDiscObjIdx < dev.objects.size()) {
+    // Si on est en phase de découverte (soit au niveau device, soit au niveau objet valide)
+    if (!dev.xDiscoveryDone && (dev.ucDiscStep < DISC_OBJ_OID || dev.usDiscObjIdx < dev.objects.size())) {
         auto& o = dev.objects[dev.usDiscObjIdx];
         retry_count = 0;
         
@@ -1179,7 +1179,7 @@ static void bacnet_task(void *pv) {
         timer_silence_us = (uint32_t)(esp_timer_get_time() - last_rx_time_us);
 
         // --- TÂCHES PÉRIODIQUES (Découverte / Santé) ---
-        uint32_t who_is_interval = (bacnet_network_cache.empty()) ? 10000 : 300000;
+        uint32_t who_is_interval = (bacnet_network_cache.empty()) ? 2000 : 300000;
         if (millis() - last_who_is_time > who_is_interval) {
             BACnetJob job; job.type = JOB_WHO_IS; job.target_mac = 0xFF;
             enqueue_bacnet_job(job);
