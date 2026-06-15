@@ -513,55 +513,182 @@ void setup_web_routes() {
     });
 
     // Route API principale pour la sauvegarde des paramètres système (NVS).
+    // v6.9.3: Implémentation du filtre 'dirty' pour éviter de sur-solliciter la NVS et geler le bus SPI.
     webServer.on("/save", HTTP_POST, [](AsyncWebServerRequest *request){
         if (!is_authenticated(request)) return;
         String ft = "";
         if (request->hasParam("form_type", true)) ft = request->getParam("form_type", true)->value();
 
-        if (ft == "wifi") {
-            strlcpy(sysCfg.wifi_ssid, request->getParam("ssid", true)->value().c_str(), 32);
-            String p = request->getParam("pass", true)->value();
-            if (p.length() > 0 && p != "******") strlcpy(sysCfg.wifi_pass, p.c_str(), 64);
-            
-            sysCfg.static_ip = request->hasParam("static_ip", true);
-            strlcpy(sysCfg.local_ip, request->getParam("local_ip", true)->value().c_str(), 16);
-            strlcpy(sysCfg.gateway, request->getParam("gateway", true)->value().c_str(), 16);
-            strlcpy(sysCfg.subnet, request->getParam("subnet", true)->value().c_str(), 16);
-        } else if (ft == "mqtt") {
-            strlcpy(sysCfg.mqtt_server, request->getParam("mqh", true)->value().c_str(), 32);
-            strlcpy(sysCfg.mqtt_user, request->getParam("mqu", true)->value().c_str(), 32);
-            String p = request->getParam("mqp", true)->value();
-            if (p.length() > 0 && p != "******") strlcpy(sysCfg.mqtt_pass, p.c_str(), 32);
-            
-            strlcpy(sysCfg.mqtt_prefix, request->getParam("mqpr", true)->value().c_str(), 64);
-            sysCfg.ha_discover = request->hasParam("ha_disc", true);
-        } else if (ft == "bac") {
-            sysCfg.ucMacAddress = (uint8_t)request->getParam("mac", true)->value().toInt();
-            sysCfg.ulDeviceId = (uint32_t)request->getParam("did", true)->value().toInt();
-            sysCfg.max_master = (uint8_t)request->getParam("mm", true)->value().toInt();
-            sysCfg.max_retries = (uint8_t)request->getParam("retries", true)->value().toInt();
-            sysCfg.ulApduTimeout = (uint16_t)request->getParam("timeout", true)->value().toInt();
-            sysCfg.token_skip = (uint8_t)request->getParam("tskip", true)->value().toInt();
-            sysCfg.max_info_frames = (uint8_t)request->getParam("mif", true)->value().toInt();
-            sysCfg.heartbeat_interval = (uint32_t)request->getParam("hbeat", true)->value().toInt();
-        } else if (ft == "poll") {
-            sysCfg.mqtt_poll_interval = (uint16_t)request->getParam("mpi", true)->value().toInt();
-            sysCfg.bacnet_poll_interval = (uint16_t)request->getParam("bpi", true)->value().toInt();
-        } else if (ft == "sec") {
-            strlcpy(sysCfg.admin_user, request->getParam("admin_u", true)->value().c_str(), 32);
-            String p = request->getParam("admin_p", true)->value();
-            if (p.length() > 0 && p != "******") strlcpy(sysCfg.admin_pass, p.c_str(), 64);
-            
-            if (request->hasParam("lvl", true)) sysCfg.log_level = (uint8_t)request->getParam("lvl", true)->value().toInt();
+        bool changed = false;
+        String ip_str = "unknown";
+        if (request->client() != nullptr) {
+            ip_str = request->client()->remoteIP().toString();
         }
 
-        save_configuration();
-        request->send(200, "text/plain", "OK");
-        
         if (ft == "wifi") {
-            pending_reboot = true; reboot_timer = millis();
+            // Comparaison SSID
+            String ssid = request->getParam("ssid", true)->value();
+            if (strcmp(sysCfg.wifi_ssid, ssid.c_str()) != 0) {
+                strlcpy(sysCfg.wifi_ssid, ssid.c_str(), 32);
+                changed = true;
+            }
+            
+            // Comparaison Mot de passe (on ignore ****** qui est la valeur factice)
+            String p = request->getParam("pass", true)->value();
+            if (p.length() > 0 && p != "******") {
+                if (strcmp(sysCfg.wifi_pass, p.c_str()) != 0) {
+                    strlcpy(sysCfg.wifi_pass, p.c_str(), 64);
+                    changed = true;
+                }
+            }
+            
+            // Mode IP Statique
+            bool static_ip = request->hasParam("static_ip", true);
+            if (sysCfg.static_ip != static_ip) {
+                sysCfg.static_ip = static_ip;
+                changed = true;
+            }
+            
+            // Local IP
+            String ip = request->getParam("local_ip", true)->value();
+            if (strcmp(sysCfg.local_ip, ip.c_str()) != 0) {
+                strlcpy(sysCfg.local_ip, ip.c_str(), 16);
+                changed = true;
+            }
+            
+            // Passerelle
+            String gw = request->getParam("gateway", true)->value();
+            if (strcmp(sysCfg.gateway, gw.c_str()) != 0) {
+                strlcpy(sysCfg.gateway, gw.c_str(), 16);
+                changed = true;
+            }
+            
+            // Masque de sous-réseau
+            String subnet = request->getParam("subnet", true)->value();
+            if (strcmp(sysCfg.subnet, subnet.c_str()) != 0) {
+                strlcpy(sysCfg.subnet, subnet.c_str(), 16);
+                changed = true;
+            }
         } else if (ft == "mqtt") {
-            setup_mqtt();
+            // Serveur MQTT
+            String server = request->getParam("mqh", true)->value();
+            if (strcmp(sysCfg.mqtt_server, server.c_str()) != 0) {
+                strlcpy(sysCfg.mqtt_server, server.c_str(), 32);
+                changed = true;
+            }
+            
+            // Utilisateur MQTT
+            String user = request->getParam("mqu", true)->value();
+            if (strcmp(sysCfg.mqtt_user, user.c_str()) != 0) {
+                strlcpy(sysCfg.mqtt_user, user.c_str(), 32);
+                changed = true;
+            }
+            
+            // Mot de passe MQTT
+            String p = request->getParam("mqp", true)->value();
+            if (p.length() > 0 && p != "******") {
+                if (strcmp(sysCfg.mqtt_pass, p.c_str()) != 0) {
+                    strlcpy(sysCfg.mqtt_pass, p.c_str(), 32);
+                    changed = true;
+                }
+            }
+            
+            // Préfixe MQTT
+            String prefix = request->getParam("mqpr", true)->value();
+            if (strcmp(sysCfg.mqtt_prefix, prefix.c_str()) != 0) {
+                strlcpy(sysCfg.mqtt_prefix, prefix.c_str(), 64);
+                changed = true;
+            }
+            
+            // Découverte HA
+            bool ha_disc = request->hasParam("ha_disc", true);
+            if (sysCfg.ha_discover != ha_disc) {
+                sysCfg.ha_discover = ha_disc;
+                changed = true;
+            }
+        } else if (ft == "bac") {
+            // Adresse MAC BACnet
+            uint8_t mac = (uint8_t)request->getParam("mac", true)->value().toInt();
+            if (sysCfg.ucMacAddress != mac) { sysCfg.ucMacAddress = mac; changed = true; }
+
+            // Device ID
+            uint32_t did = (uint32_t)request->getParam("did", true)->value().toInt();
+            if (sysCfg.ulDeviceId != did) { sysCfg.ulDeviceId = did; changed = true; }
+
+            // Max Master
+            uint8_t mm = (uint8_t)request->getParam("mm", true)->value().toInt();
+            if (sysCfg.max_master != mm) { sysCfg.max_master = mm; changed = true; }
+
+            // Retries
+            uint8_t retries = (uint8_t)request->getParam("retries", true)->value().toInt();
+            if (sysCfg.max_retries != retries) { sysCfg.max_retries = retries; changed = true; }
+
+            // Timeout APDU
+            uint16_t timeout = (uint16_t)request->getParam("timeout", true)->value().toInt();
+            if (sysCfg.ulApduTimeout != timeout) { sysCfg.ulApduTimeout = timeout; changed = true; }
+
+            // Token Skip
+            uint8_t tskip = (uint8_t)request->getParam("tskip", true)->value().toInt();
+            if (sysCfg.token_skip != tskip) { sysCfg.token_skip = tskip; changed = true; }
+
+            // Max Info Frames
+            uint8_t mif = (uint8_t)request->getParam("mif", true)->value().toInt();
+            if (sysCfg.max_info_frames != mif) { sysCfg.max_info_frames = mif; changed = true; }
+
+            // Heartbeat Interval
+            uint32_t hbeat = (uint32_t)request->getParam("hbeat", true)->value().toInt();
+            if (sysCfg.heartbeat_interval != hbeat) { sysCfg.heartbeat_interval = hbeat; changed = true; }
+        } else if (ft == "poll") {
+            // Intervalles de Polling
+            uint16_t mpi = (uint16_t)request->getParam("mpi", true)->value().toInt();
+            if (sysCfg.mqtt_poll_interval != mpi) { sysCfg.mqtt_poll_interval = mpi; changed = true; }
+
+            uint16_t bpi = (uint16_t)request->getParam("bpi", true)->value().toInt();
+            if (sysCfg.bacnet_poll_interval != bpi) { sysCfg.bacnet_poll_interval = bpi; changed = true; }
+        } else if (ft == "sec") {
+            // Admin Username
+            String admin_u = request->getParam("admin_u", true)->value();
+            if (strcmp(sysCfg.admin_user, admin_u.c_str()) != 0) {
+                strlcpy(sysCfg.admin_user, admin_u.c_str(), 32);
+                changed = true;
+            }
+            
+            // Admin Password
+            String p = request->getParam("admin_p", true)->value();
+            if (p.length() > 0 && p != "******") {
+                if (strcmp(sysCfg.admin_pass, p.c_str()) != 0) {
+                    strlcpy(sysCfg.admin_pass, p.c_str(), 64);
+                    changed = true;
+                }
+            }
+            
+            // Log Level
+            if (request->hasParam("lvl", true)) {
+                uint8_t lvl = (uint8_t)request->getParam("lvl", true)->value().toInt();
+                if (sysCfg.log_level != lvl) {
+                    sysCfg.log_level = lvl;
+                    changed = true;
+                }
+            }
+        }
+
+        // v6.9.3: On n'écrit la Flash SPI que si un paramètre a été modifié
+        if (changed) {
+            z_log(pdLOG_INFO, "WEB", "POST /save from %s: configuration modified (type: %s), saving NVS\n", ip_str.c_str(), ft.c_str());
+            save_configuration();
+        } else {
+            z_log(pdLOG_INFO, "WEB", "POST /save from %s: configuration unchanged (type: %s), skipping NVS save\n", ip_str.c_str(), ft.c_str());
+        }
+
+        request->send(200, "text/plain", "OK");
+
+        // Action post-sauvegarde si modification effective
+        if (changed) {
+            if (ft == "wifi") {
+                pending_reboot = true; reboot_timer = millis();
+            } else if (ft == "mqtt") {
+                setup_mqtt();
+            }
         }
     });
 

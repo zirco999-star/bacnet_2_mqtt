@@ -85,14 +85,16 @@ static const uint32_t T_TURNAROUND_US = 1050;
 static const uint32_t T_NO_TOKEN_US = 500000;
 
 // --- PROTOTYPES INTERNES (v6.3.0) ---
-static bool validate_rx_header_crc(const uint8_t *header);
-static bool validate_rx_data_crc(const uint8_t *data, size_t len);
+static IRAM_ATTR bool validate_rx_header_crc(const uint8_t *header);
+static IRAM_ATTR bool validate_rx_data_crc(const uint8_t *data, size_t len);
+static IRAM_ATTR uint8_t calc_header_crc(uint8_t *data, size_t len);
+static IRAM_ATTR uint16_t calc_data_crc(uint8_t *data, size_t len);
 static void send_mstp_frame(uint8_t target, uint8_t type, const uint8_t* apdu, uint16_t len);
 bool has_bacnet_work();
 static void check_ha_dependencies(uint32_t did, uint16_t type, uint32_t inst);
 
-// --- TÂCHE DE RÉCEPTION DÉDIÉE (Priorité Critique) ---
-static void mstp_rx_task(void *pv) {
+// --- TÂCHE DE RÉCEPTION DÉDIÉE (Priorité Critique) - Exécutée en IRAM pour éviter les gels SPI flash ---
+static IRAM_ATTR void mstp_rx_task(void *pv) {
     uint8_t rx_byte; 
     uint8_t header[6]; uint8_t header_idx=0;
     uint16_t data_len_local=0, data_idx=0;
@@ -124,7 +126,10 @@ static void mstp_rx_task(void *pv) {
                             frame.len = data_len_local;
                             
                             if (frame.type != 0x00 && frame.type != 0x01) {
-                                z_log(pdLOG_DEBUG, "MSTP", "RX Frame: T=0x%02X, S=%d, D=%d, L=%d\n", frame.type, frame.src, frame.dest, frame.len);
+                                // v6.9.3: Garde de niveau pour éviter de charger le code z_log en Flash si DEBUG désactivé
+                                if (sysCfg.log_level >= pdLOG_DEBUG) {
+                                    z_log(pdLOG_DEBUG, "MSTP", "RX Frame: T=0x%02X, S=%d, D=%d, L=%d\n", frame.type, frame.src, frame.dest, frame.len);
+                                }
                             }
 
                             // Auto-Discovery MAC (Axe 4: via Queue pour éviter inversion de priorité)
@@ -139,7 +144,10 @@ static void mstp_rx_task(void *pv) {
                                 rx_state = RX_IDLE; 
                             }
                         } else { 
-                            z_log(pdLOG_DEBUG, "MSTP", "Header CRC Error\n");
+                            // v6.9.3: Garde de niveau pour éviter de charger le code z_log en Flash si DEBUG désactivé
+                            if (sysCfg.log_level >= pdLOG_DEBUG) {
+                                z_log(pdLOG_DEBUG, "MSTP", "Header CRC Error\n");
+                            }
                             bacnetStats.ulErrorsCrc++; rx_state = RX_IDLE; 
                         }
                     }
@@ -166,7 +174,7 @@ static void mstp_rx_task(void *pv) {
     }
 }
 
-static uint8_t calc_header_crc(uint8_t *data, size_t len) {
+static IRAM_ATTR uint8_t calc_header_crc(uint8_t *data, size_t len) {
     uint8_t crc = 0xFF;
     for (size_t i = 0; i < len; i++) {
         crc ^= data[i];
@@ -176,7 +184,7 @@ static uint8_t calc_header_crc(uint8_t *data, size_t len) {
     return (~crc) & 0xFF;
 }
 
-static uint16_t calc_data_crc(uint8_t *data, size_t len) {
+static IRAM_ATTR uint16_t calc_data_crc(uint8_t *data, size_t len) {
     uint16_t crc = 0xFFFF;
     for (size_t i = 0; i < len; i++) {
         uint8_t crc_low = (crc & 0xff) ^ data[i];
@@ -185,7 +193,7 @@ static uint16_t calc_data_crc(uint8_t *data, size_t len) {
     return (~crc) & 0xFFFF;
 }
 
-static bool validate_rx_header_crc(const uint8_t *header) {
+static IRAM_ATTR bool validate_rx_header_crc(const uint8_t *header) {
     uint8_t crc = 0xFF;
     for (size_t i = 0; i < 6; i++) { 
         crc ^= header[i];
@@ -195,7 +203,7 @@ static bool validate_rx_header_crc(const uint8_t *header) {
     return (crc == 0x55);
 }
 
-static bool validate_rx_data_crc(const uint8_t *data, size_t len) {
+static IRAM_ATTR bool validate_rx_data_crc(const uint8_t *data, size_t len) {
     uint16_t crc = 0xFFFF;
     for (size_t i = 0; i < len; i++) {
         uint8_t crc_low = (crc & 0xff) ^ data[i];

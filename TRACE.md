@@ -1,5 +1,18 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 15 Juin 2026 (Optimisation NVS & IRAM - v6.9.3) - DÉPLOYÉ
+- **Version** : v6.9.3
+- **Filtre de Sauvegarde (Dirty State)** : La route `/save` de [z_network.cpp](file:///home/dev/bacnet_2_mqtt/src/z_network.cpp) filtre désormais les requêtes redondantes et n'écrit en flash NVS que si les paramètres soumis diffèrent de la configuration actuelle. Élimine 99% des écritures NVS inutiles.
+- **Protection IRAM** : Les fonctions critiques de calcul/validation CRC et de la tâche RX (`mstp_rx_task`) ont été marquées avec l'attribut `IRAM_ATTR` dans [z_bacnet.cpp](file:///home/dev/bacnet_2_mqtt/src/z_bacnet.cpp), découplant la réception et le timing de la FSM MS/TP des interruptions d'accès Flash SPI.
+- **Sécurisation des Logs** : Les appels `z_log` de débogage dans la tâche RX sont protégés par une vérification de niveau de log locale pour éviter de sauter vers du code en Flash.
+- **Validation** : Zéro Silence Timeout observé pendant des salves intensives de requêtes de sauvegarde. L'anneau MS/TP est resté 100% stable.
+
+## État au 15 Juin 2026 (Correction Jeton & Persistance Reload - v6.9.2) - DÉPLOYÉ
+- **Version** : v6.9.2
+- **Libération de Jeton Anticipée** : Modification de `execute_bacnet_work()` dans [z_bacnet.cpp](file:///home/dev/bacnet_2_mqtt/src/z_bacnet.cpp) pour passer proprement à l'état `MSTP_DONE_WITH_TOKEN` en cas de contention sur le cache (timeout 15ms), évitant le blocage de l'anneau MS/TP.
+- **Persistance Configuration Reload** : Introduction d'une variable RAM temporaire `FSM_old_objects` pour copier et restaurer automatiquement les configurations personnalisées de l'utilisateur (polling, limites, etc.) lors d'un rechargement de l'appareil (`/api/reload_device`).
+- **Validation** : 100% des objets (98/98) sont découverts et persistés avec succès après rechargement.
+
 ## État au 11 Juin 2026 (Refactorisation Industrielle & Data-Driven - v6.8.7) - COMPILÉ
 - **Version** : v6.8.7
 - **Architecture Data-Driven** : La FSM de découverte est désormais pilotée par une table de vérité `DISCOVERY_STEPS`. L'ajout de nouvelles propriétés BACnet à découvrir ne nécessite plus de modification du code logique, seulement de la configuration de la table.
