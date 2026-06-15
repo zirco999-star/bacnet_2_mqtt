@@ -571,9 +571,10 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                     String unit = String(obj_unit_text);
                     if (unit == "Unknown" || unit.length() == 0 || unit == "none") unit = get_unit_text(obj_units);
                     if (unit != "no-usUnits" && unit.length() > 0) {
+                        if (unit == "%RH") unit = "%";
                         doc["unit_of_meas"] = unit;
                         if (unit == "°C" || unit == "°F") doc["dev_cla"] = "temperature";
-                        else if (unit == "%" || unit == "%RH") doc["dev_cla"] = "humidity";
+                        else if (unit == "%") doc["dev_cla"] = "humidity";
                         else if (unit == "kW" || unit == "W") doc["dev_cla"] = "power";
                         else if (unit == "kWh") doc["dev_cla"] = "energy";
                     }
