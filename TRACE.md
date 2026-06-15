@@ -1,5 +1,14 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 15 Juin 2026 (Test d'Intégration Complet & Audit HA - v6.9.6) - VALIDÉ
+- **Objectif** : Exécution automatisée des phases 0 à 8 (sauvegarde config, reset cache, reboot, découverte de 98 objets, restauration config, et audit des entités Home Assistant avec rapport final).
+- **Script développé** : [run_complete_test.py](file:///home/dev/bacnet_2_mqtt/run_complete_test.py) qui orchestre l'ensemble du processus de manière déterministe avec gestion active de la stabilisation HA.
+- **Résultat de l'Audit HA** :
+  - Sur 89 objets évalués, **42 entités sont validées (OK)**.
+  - **47 entités sont en échec/manquantes** (dont 15 en polling actif à l'état `unknown` ou `unavailable`). Les entités indisponibles correspondent à des capteurs physiques absents ou déconnectés sur le bus de l'automate ECB-203 (ex: `ComSensor`, `VoletAir`, `Vanne`) empêchant l'ESP32 d'acquérir une valeur réelle.
+  - Le matching d'entités HA a été fiabilisé en filtrant par composant acceptable (ex: `AO:5 Vanne` de type Output est associé au composant `number` tandis que `BO:6 Vanne` est associé à `switch`), éliminant ainsi les collisions historiques.
+- **Rapport généré** : [complete_test_report.md](file:///home/dev/bacnet_2_mqtt/reports/complete_test_report.md) compilant l'état de chaque objet.
+
 ## État au 15 Juin 2026 (Correction Affichage Unités 'no-units' - v6.9.6) - DÉPLOYÉ
 - **Version** : v6.9.5 -> v6.9.6
 - **Correction Régression Unité** : Remplacement du terme erroné `"no-usUnits"` (généré par un remplacement automatique) par `"no-units"` dans [z_bacnet.cpp](file:///home/dev/bacnet_2_mqtt/src/z_bacnet.cpp) (fonction `get_unit_text`) et dans [z_mqtt.cpp](file:///home/dev/bacnet_2_mqtt/src/z_mqtt.cpp) (filtre d'Auto-Discovery).
