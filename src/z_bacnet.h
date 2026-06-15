@@ -18,7 +18,10 @@ struct BACnetPersistenceObj {
     float fMinValue;      // v6.4.3: Prop 69
     float fMaxValue;      // v6.4.3: Prop 65
     char cLastHaComponent[16]; // v6.3.6: For ghost entity cleanup (sensor/select/switch)
-}; // Total: 4 + 32 + 12 + 3 + 2 + 1 + 4 + 4 + 16 = 78 bytes
+    float fStepValue;     // v6.9.0
+    char cMinRef[6];      // v6.9.0
+    char cMaxRef[6];      // v6.9.0
+}; // Total: 94 bytes
 
 struct BACnetPersistenceDev {
     uint32_t ulDeviceId;
@@ -158,6 +161,9 @@ struct BACnetObject {
     char cUnitText[20] = "";
     float fMinValue = NAN;
     float fMaxValue = NAN;
+    float fStepValue = 1.0f;
+    char cMinRef[6] = "";
+    char cMaxRef[6] = "";
     bool xDiscoveryDone = false;
     bool xIsCommandable = false; // Prop 87
     char cLastHaComponent[16] = ""; // Pour nettoyer les doublons si on change sensor -> select
@@ -192,8 +198,10 @@ struct BACnetDevice {
     BACnetDevice() {}
     };
 
+#include <map>
 extern std::vector<BACnetDevice> bacnet_network_cache;
 extern SemaphoreHandle_t cache_mutex;
+extern std::map<String, std::vector<std::pair<uint32_t, uint32_t>>> ha_dependencies;
 
 extern uint32_t period_poll_count;
 extern uint32_t period_mqtt_pub_count;

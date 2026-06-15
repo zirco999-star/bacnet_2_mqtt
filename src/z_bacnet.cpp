@@ -9,6 +9,7 @@
 uint32_t period_poll_count = 0;
 BACnet_Stats bacnetStats = {0, 0, 0, 0, 0, 0, 0, false};
 std::vector<BACnetDevice> bacnet_network_cache;
+std::map<String, std::vector<std::pair<uint32_t, uint32_t>>> ha_dependencies;
 QueueHandle_t bacnet_job_queue = NULL;
 QueueHandle_t mac_discovery_queue = NULL; // Axe 4: Pour auto-discovery MAC sans mutex
 QueueHandle_t uart_evt_queue = NULL;
@@ -87,6 +88,7 @@ static bool validate_rx_header_crc(const uint8_t *header);
 static bool validate_rx_data_crc(const uint8_t *data, size_t len);
 static void send_mstp_frame(uint8_t target, uint8_t type, const uint8_t* apdu, uint16_t len);
 bool has_bacnet_work();
+static void check_ha_dependencies(uint32_t did, uint16_t type, uint32_t inst);
 
 // --- TÂCHE DE RÉCEPTION DÉDIÉE (Priorité Critique) ---
 static void mstp_rx_task(void *pv) {
@@ -321,6 +323,7 @@ static void handle_simple_ack(uint8_t src_mac) {
                         if (pending_write_job.prop_id == 85) {
                             o.fPresentValue = pending_write_job.write_value;
                             publish_mqtt_topic(d.ulDeviceId, o, 85, false);
+                            check_ha_dependencies(d.ulDeviceId, o.usType, o.ulInstance);
                         } else if (pending_write_job.prop_id == 77) {
                             publish_mqtt_topic(d.ulDeviceId, o, 77, true);
                         }
@@ -527,7 +530,6 @@ static void handle_complex_ack_discovery(BACnetDevice &dev, const uint8_t *apdu,
                     dev.xDiscoveryDone = true; dev.xReloadSingle = false; dev.xRecoveryMode = false; 
                     save_device_objects_locked(dev.ulDeviceId); 
                     if (dev.usDiscObjIdx>=dev.objects.size()) { publish_all_names(); trigger_ha_discovery(dev.ulDeviceId, 0xFFFFFFFF, 0xFFFF); }
-                    else trigger_ha_discovery(dev.ulDeviceId, o.ulInstance, o.usType);
                 }
             }
             break;
@@ -543,6 +545,20 @@ static void handle_complex_ack_discovery(BACnetDevice &dev, const uint8_t *apdu,
                 ap = al; 
             }
             break;
+    }
+}
+
+static void check_ha_dependencies(uint32_t did, uint16_t type, uint32_t inst) {
+    String t_str = "";
+    if (type == 0) t_str = "AI";
+    else if (type == 1) t_str = "AO";
+    else if (type == 2) t_str = "AV";
+    if (t_str.length() == 0) return;
+    
+    String key = String(did) + "_" + t_str + ":" + String(inst);
+    auto it = ha_dependencies.find(key);
+    if (it != ha_dependencies.end()) {
+        for (auto& dep : it->second) trigger_ha_discovery(did, dep.second, dep.first);
     }
 }
 
@@ -570,9 +586,14 @@ static void handle_complex_ack_polling(BACnetDevice &dev, const uint8_t *apdu, u
                     uint32_t t_inst = current_oid & 0x3FFFFF;
                     for (auto& o : dev.objects) {
                         if (o.usType == t_type && o.ulInstance == t_inst) {
-                            o.fPresentValue = v;
-                            o.ulLastUpdate = millis();
-                            if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
+                            if (o.fPresentValue != v) {
+                                o.fPresentValue = v;
+                                o.ulLastUpdate = millis();
+                                if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
+                                check_ha_dependencies(dev.ulDeviceId, o.usType, o.ulInstance);
+                            } else {
+                                o.ulLastUpdate = millis();
+                            }
                             break;
                         }
                     }
@@ -586,14 +607,22 @@ static void handle_complex_ack_polling(BACnetDevice &dev, const uint8_t *apdu, u
         if (vt.number == 4) {
             float v = decode_bacnet_real(&apdu[ap]);
             if (current_poll_idx < dev.objects.size()) {
-                auto& o = dev.objects[current_poll_idx]; o.fPresentValue = v; o.ulLastUpdate = millis();
-                if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
+                auto& o = dev.objects[current_poll_idx]; 
+                if (o.fPresentValue != v) {
+                    o.fPresentValue = v; o.ulLastUpdate = millis();
+                    if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
+                    check_ha_dependencies(dev.ulDeviceId, o.usType, o.ulInstance);
+                } else o.ulLastUpdate = millis();
             }
         } else if (vt.number == 2 || vt.number == 9) {
             uint32_t v = decode_bacnet_unsigned(&apdu[ap], vt.len);
             if (current_poll_idx < dev.objects.size()) {
-                auto& o = dev.objects[current_poll_idx]; o.fPresentValue = (float)v; o.ulLastUpdate = millis();
-                if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
+                auto& o = dev.objects[current_poll_idx]; 
+                if (o.fPresentValue != (float)v) {
+                    o.fPresentValue = (float)v; o.ulLastUpdate = millis();
+                    if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
+                    check_ha_dependencies(dev.ulDeviceId, o.usType, o.ulInstance);
+                } else o.ulLastUpdate = millis();
             }
         }
         ap += vt.len;

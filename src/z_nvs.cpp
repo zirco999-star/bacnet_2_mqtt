@@ -66,6 +66,9 @@ void load_device_objects(uint32_t ulDeviceId) {
                                 obj.ucExpectedStatesCount = page.objects[i].ucExpectedStatesCount;
                                 obj.fMinValue = page.objects[i].fMinValue;
                                 obj.fMaxValue = page.objects[i].fMaxValue;
+                                obj.fStepValue = page.objects[i].fStepValue;
+                                strlcpy(obj.cMinRef, page.objects[i].cMinRef, sizeof(obj.cMinRef));
+                                strlcpy(obj.cMaxRef, page.objects[i].cMaxRef, sizeof(obj.cMaxRef));
                                 
                                 strlcpy(obj.cName, page.objects[i].cName, sizeof(obj.cName));
                                 strlcpy(obj.cUnitText, page.objects[i].cUnitText, sizeof(obj.cUnitText));
@@ -79,6 +82,15 @@ void load_device_objects(uint32_t ulDeviceId) {
 
                                 obj.fPresentValue = 0.0f;
                                 dev.objects.push_back(obj);
+                                
+                                if (strlen(obj.cMinRef) > 0) {
+                                    String key = String(ulDeviceId) + "_" + String(obj.cMinRef);
+                                    ha_dependencies[key].push_back({obj.usType, obj.ulInstance});
+                                }
+                                if (strlen(obj.cMaxRef) > 0) {
+                                    String key = String(ulDeviceId) + "_" + String(obj.cMaxRef);
+                                    ha_dependencies[key].push_back({obj.usType, obj.ulInstance});
+                                }
                             }
                         }
                     }
@@ -305,6 +317,9 @@ void save_device_objects_locked(uint32_t ulDeviceId) {
                             page.objects[i].ucExpectedStatesCount = (uint8_t)std::min((int)o.ucExpectedStatesCount, 255);
                             page.objects[i].fMinValue = o.fMinValue;
                             page.objects[i].fMaxValue = o.fMaxValue;
+                            page.objects[i].fStepValue = o.fStepValue;
+                            strlcpy(page.objects[i].cMinRef, o.cMinRef, sizeof(page.objects[i].cMinRef));
+                            strlcpy(page.objects[i].cMaxRef, o.cMaxRef, sizeof(page.objects[i].cMaxRef));
                             strlcpy(page.objects[i].cName, o.cName, 32);
                             strlcpy(page.objects[i].cUnitText, o.cUnitText, 12);
                             strlcpy(page.objects[i].cLastHaComponent, o.cLastHaComponent, 16);

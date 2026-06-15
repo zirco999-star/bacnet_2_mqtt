@@ -216,10 +216,6 @@ void setup_web_routes() {
 
         // v6.4.8: API Serialization
         if (xSemaphoreTake(api_mutex, pdMS_TO_TICKS(1000))) {
-            AsyncResponseStream *stream = request->beginResponseStream("application/json");
-            if (!stream) { xSemaphoreGive(api_mutex); return; }
-            stream->addHeader("Connection", "close");
-
             // v6.4.9: Force PSRAM allocation
             JsonDocument doc(&psram_alloc);
             doc["ver"] = configVERSION_GLOBAL;
@@ -273,7 +269,7 @@ void setup_web_routes() {
                     d["step"] = (int)dev.ucDiscStep;
                     d["idx"] = dev.usDiscObjIdx;
                     d["total"] = dev.objects.size();
-                    d["xEnabled"] = dev.xEnabled;
+                    d["enabled"] = dev.xEnabled;
                     d["done"] = dev.xDiscoveryDone;
                     
                     int sel = 0;
@@ -283,8 +279,13 @@ void setup_web_routes() {
                 xSemaphoreGive(cache_mutex);
             }
 
-            serializeJson(doc, *stream);
-            request->send(stream);
+            String payload;
+            serializeJson(doc, payload);
+            AsyncWebServerResponse *response = request->beginResponse(200, "application/json", payload);
+            if (response) {
+                response->addHeader("Connection", "close");
+                request->send(response);
+            }
             xSemaphoreGive(api_mutex);
         } else {
             request->send(503, "text/plain", "Service Unavailable: API Busy");
@@ -303,10 +304,6 @@ void setup_web_routes() {
 
         // v6.4.8: API Serialization
         if (xSemaphoreTake(api_mutex, pdMS_TO_TICKS(1000))) {
-            AsyncResponseStream *stream = request->beginResponseStream("application/json");
-            if (!stream) { xSemaphoreGive(api_mutex); return; }
-            stream->addHeader("Connection", "close");
-
             // v6.4.9: Force PSRAM allocation
             JsonDocument doc(&psram_alloc); 
             JsonArray controllers = doc.to<JsonArray>();
@@ -322,12 +319,22 @@ void setup_web_routes() {
                         obj["type"] = o.usType; obj["inst"] = o.ulInstance; obj["name"] = o.cName;
                         obj["val"] = o.fPresentValue; obj["poll"] = o.xEnabled;
                         obj["unit"] = o.cUnitText;
+                        if (!isnan(o.fMinValue)) obj["min"] = o.fMinValue;
+                        if (!isnan(o.fMaxValue)) obj["max"] = o.fMaxValue;
+                        obj["step"] = o.fStepValue;
+                        if (strlen(o.cMinRef) > 0) obj["min_ref"] = o.cMinRef;
+                        if (strlen(o.cMaxRef) > 0) obj["max_ref"] = o.cMaxRef;
                     }
                 }
                 xSemaphoreGive(cache_mutex);
             }
-            serializeJson(doc, *stream);
-            request->send(stream);
+            String payload;
+            serializeJson(doc, payload);
+            AsyncWebServerResponse *response = request->beginResponse(200, "application/json", payload);
+            if (response) {
+                response->addHeader("Connection", "close");
+                request->send(response);
+            }
             xSemaphoreGive(api_mutex);
         } else {
             request->send(503, "text/plain", "Service Unavailable: API Busy");
@@ -403,7 +410,7 @@ void setup_web_routes() {
         } else request->send(400, "text/plain", "Missing params");
     });
 
-    // Route API pour sauvegarder les modifications d'un objet (nom, unités, polling).
+    // Route API pour sauvegarder les modifications d'un objet (nom, unités, polling, min, max, step).
     webServer.on("/api/save_object", HTTP_POST, [](AsyncWebServerRequest *request){
         if(!is_authenticated(request)) return;
         if (request->hasParam("did", true) && request->hasParam("inst", true) && request->hasParam("type", true)) {
@@ -414,6 +421,9 @@ void setup_web_routes() {
             String name = request->hasParam("name", true) ? request->getParam("name", true)->value() : "";
             String unit = request->hasParam("unit", true) ? request->getParam("unit", true)->value() : "";
             bool poll = request->hasParam("poll", true) ? (request->getParam("poll", true)->value() == "1") : true;
+            String min_str = request->hasParam("min", true) ? request->getParam("min", true)->value() : "";
+            String max_str = request->hasParam("max", true) ? request->getParam("max", true)->value() : "";
+            String step_str = request->hasParam("step", true) ? request->getParam("step", true)->value() : "";
 
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
                 for (auto& dev : bacnet_network_cache) {
@@ -423,6 +433,40 @@ void setup_web_routes() {
                                 if (name.length() > 0) strlcpy(obj.cName, name.c_str(), sizeof(obj.cName));
                                 if (unit.length() > 0) strlcpy(obj.cUnitText, unit.c_str(), sizeof(obj.cUnitText));
                                 obj.xEnabled = poll;
+                                
+                                if (step_str.length() > 0) {
+                                    float s = step_str.toFloat();
+                                    if (s < 0.1f) s = 0.1f;
+                                    obj.fStepValue = s;
+                                }
+                                
+                                if (min_str.length() > 0) {
+                                    if (min_str.indexOf(':') != -1) {
+                                        strlcpy(obj.cMinRef, min_str.c_str(), sizeof(obj.cMinRef));
+                                        String key = String(did) + "_" + min_str;
+                                        auto& vec = ha_dependencies[key];
+                                        bool found = false;
+                                        for (auto& item : vec) { if (item.first == type && item.second == inst) { found = true; break; } }
+                                        if (!found) vec.push_back({type, inst});
+                                    } else {
+                                        obj.cMinRef[0] = '\0';
+                                        obj.fMinValue = min_str.toFloat();
+                                    }
+                                }
+                                
+                                if (max_str.length() > 0) {
+                                    if (max_str.indexOf(':') != -1) {
+                                        strlcpy(obj.cMaxRef, max_str.c_str(), sizeof(obj.cMaxRef));
+                                        String key = String(did) + "_" + max_str;
+                                        auto& vec = ha_dependencies[key];
+                                        bool found = false;
+                                        for (auto& item : vec) { if (item.first == type && item.second == inst) { found = true; break; } }
+                                        if (!found) vec.push_back({type, inst});
+                                    } else {
+                                        obj.cMaxRef[0] = '\0';
+                                        obj.fMaxValue = max_str.toFloat();
+                                    }
+                                }
                                 break;
                             }
                         }

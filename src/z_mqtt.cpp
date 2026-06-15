@@ -461,7 +461,8 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
             char obj_name[64] = {0};
             char obj_unit_text[32] = {0};
             uint16_t obj_units = 0;
-            float obj_min = NAN, obj_max = NAN;
+            float obj_min = NAN, obj_max = NAN, obj_step = 0.1f;
+            char obj_min_ref[6] = {0}, obj_max_ref[6] = {0};
             bool obj_enabled = false, obj_commandable = false;
             std::vector<String> obj_states;
 
@@ -476,6 +477,9 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                     obj_units = obj.usUnits;
                     obj_min = obj.fMinValue;
                     obj_max = obj.fMaxValue;
+                    obj_step = obj.fStepValue;
+                    strlcpy(obj_min_ref, obj.cMinRef, sizeof(obj_min_ref));
+                    strlcpy(obj_max_ref, obj.cMaxRef, sizeof(obj_max_ref));
                     obj_enabled = obj.xEnabled;
                     obj_commandable = obj.xIsCommandable;
                     obj_states = obj.state_texts; 
@@ -527,9 +531,40 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                 }
 
                 if (strcmp(ha_component, "number") == 0) {
-                    doc["min"] = isnan(obj_min) ? sysCfg.default_number_min : obj_min;
-                    doc["max"] = isnan(obj_max) ? sysCfg.default_number_max : obj_max;
-                    doc["step"] = sysCfg.default_number_step;
+                    float final_min = isnan(obj_min) ? sysCfg.default_number_min : obj_min;
+                    float final_max = isnan(obj_max) ? sysCfg.default_number_max : obj_max;
+                    
+                    if (strlen(obj_min_ref) > 0) {
+                        uint16_t ref_type = 65535; uint32_t ref_inst = 0;
+                        if (strncmp(obj_min_ref, "AI:", 3) == 0) { ref_type = 0; ref_inst = atoi(obj_min_ref + 3); }
+                        else if (strncmp(obj_min_ref, "AV:", 3) == 0) { ref_type = 2; ref_inst = atoi(obj_min_ref + 3); }
+                        if (ref_type != 65535) {
+                            if (d_idx < bacnet_network_cache.size()) {
+                                for (auto& ro : bacnet_network_cache[d_idx].objects) {
+                                    if (ro.usType == ref_type && ro.ulInstance == ref_inst) {
+                                        final_min = ro.fPresentValue; break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (strlen(obj_max_ref) > 0) {
+                        uint16_t ref_type = 65535; uint32_t ref_inst = 0;
+                        if (strncmp(obj_max_ref, "AI:", 3) == 0) { ref_type = 0; ref_inst = atoi(obj_max_ref + 3); }
+                        else if (strncmp(obj_max_ref, "AV:", 3) == 0) { ref_type = 2; ref_inst = atoi(obj_max_ref + 3); }
+                        if (ref_type != 65535) {
+                            if (d_idx < bacnet_network_cache.size()) {
+                                for (auto& ro : bacnet_network_cache[d_idx].objects) {
+                                    if (ro.usType == ref_type && ro.ulInstance == ref_inst) {
+                                        final_max = ro.fPresentValue; break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    doc["min"] = final_min;
+                    doc["max"] = final_max;
+                    doc["step"] = obj_step;
                 }
 
                 if (obj_type <= 2) { // AI, AO, AV
@@ -564,14 +599,16 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                 } else {
                     total_published++;
                 }
-            } else if (!dev_enabled || !obj_enabled) {
+            } else if ((!dev_enabled || !obj_enabled) && dev_discovery_done) {
                 esp_mqtt_client_publish(mqtt_client, topic, "", 0, 1, 1);
             }
 
-            if (total_published % 10 == 0 && total_published > 0) {
-                z_log(pdLOG_INFO, "MQTT", "Discovery progress: %d objects sent...\n", total_published);
+            if (dev_discovery_done) {
+                if (total_published % 10 == 0 && total_published > 0) {
+                    z_log(pdLOG_INFO, "MQTT", "Discovery progress: %d objects sent...\n", total_published);
+                }
+                vTaskDelay(pdMS_TO_TICKS(100)); // Pacing stable
             }
-            vTaskDelay(pdMS_TO_TICKS(100)); // Pacing stable
         }
     }
     z_log(pdLOG_INFO, "MQTT", "HA Auto-Discovery payload sent (%d objects).\n", total_published);

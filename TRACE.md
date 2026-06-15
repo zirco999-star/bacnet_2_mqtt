@@ -425,3 +425,15 @@
 - **Phase 3** : Implémentation du moteur de Polling par Lot (ReadPropertyMultiple - RPM) pour optimiser les performances du bus.
 - **Phase 4** : Découverte dynamique BACnet (lecture adaptative des limites réseaux distantes via la FSM MS/TP).
 - Mise à jour stricte de `GEMINI.md` pour imposer les normes de codage et le workflow de compilation.
+
+## [v6.9.0] - 2026-06-15
+### Ajout
+- **Min, Max, Step Dynamiques** : 
+  - Ajout des champs `min`, `max`, et `step` (avec références dynamiques de type "AV:42" possibles pour min et max) persistés en NVS.
+  - Résolution dynamique de la découverte HA MQTT selon une table des dépendances `ha_dependencies` gérée en RAM.
+  - Republish MQTT automatique des objets dépendants lors du changement d'une valeur de référence.
+- **Interface Utilisateur Dev UI** : Modification du frontend pour gérer la saisie des limites avec validation compacte et en grille.
+- **Compilation & Correctifs Stabilité** :
+  - Résolution du crash Watchdog (WDT) sur CPU 0 lié à `AsyncResponseStream` : remplacement par des réponses JSON basées sur des payloads `String` statiques pour éliminer le décalage quadratique mémoire `O(N^2)` de `StreamString::read()` lors du transfert de gros fichiers contenant des symboles `%` (comme les unités).
+  - Élimination des verrous imbriqués `cache_mutex` dans `publish_ha_autodiscovery` (évite des blocages de 100ms par objet pilotable).
+  - Compilation réussie avec `utils/compil.sh` et Flash OTA validé avec succès sur le matériel.

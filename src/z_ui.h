@@ -307,7 +307,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
     <script>
         const UNITS = {
-            "": "---", 95: "no-usUnits", 62: "°C", 63: "°K", 64: "°F", 98: "%", 29: "%RH", 96: "ppm", 5: "V", 124: "mV", 2: "mA", 3: "A", 4: "Ohm", 8: "VA", 9: "kVA", 19: "kWh", 18: "Wh", 146: "MWh", 48: "kW", 47: "W", 49: "MW", 53: "Pa", 54: "kPa", 55: "bar", 56: "psi", 82: "L", 80: "m³", 87: "L/s", 88: "L/min", 136: "L/h", 85: "m³/s", 135: "m³/h", 159: "ms", 73: "s", 72: "min", 71: "h"
+            "": "---", 95: "no-units", 62: "°C", 63: "°K", 64: "°F", 98: "%", 29: "%RH", 96: "ppm", 5: "V", 124: "mV", 2: "mA", 3: "A", 4: "Ohm", 8: "VA", 9: "kVA", 19: "kWh", 18: "Wh", 146: "MWh", 48: "kW", 47: "W", 49: "MW", 53: "Pa", 54: "kPa", 55: "bar", 56: "psi", 82: "L", 80: "m³", 87: "L/s", 88: "L/min", 136: "L/h", 85: "m³/s", 135: "m³/h", 159: "ms", 73: "s", 72: "min", 71: "h"
         };
         const progHysteresis = {}; 
         const devBoxState = {};
@@ -376,22 +376,22 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 let html = '';
                 if (!Array.isArray(data)) return;
                 data.forEach(dev => {
-                    const isOpen = (dev.xEnabled && (devBoxState[dev.ulDeviceId] !== undefined ? devBoxState[dev.ulDeviceId] : true));
-                    html += `<details class="card dev-card" data-did="${dev.ulDeviceId}" ${isOpen ? 'open' : ''}>
+                    const isOpen = (dev.enabled && (devBoxState[dev.device_id] !== undefined ? devBoxState[dev.device_id] : true));
+                    html += `<details class="card dev-card" data-did="${dev.device_id}" ${isOpen ? 'open' : ''}>
                         <summary class="dev-header">
                             <div>
-                                <span style="color:var(--primary); font-weight:800">ID:${dev.ulDeviceId}</span> | 
+                                <span style="color:var(--primary); font-weight:800">ID:${dev.device_id}</span> | 
                                 <span style="font-size:0.75rem">${dev.name || 'Unnamed Device'}</span>
-                                <div style="font-size:0.55rem; color:var(--muted); margin-top:2px">${dev.cVendor || 'Unknown Vendor'}</div>
+                                <div style="font-size:0.55rem; color:var(--muted); margin-top:2px">${dev.vendor || 'Unknown Vendor'}</div>
                             </div>
                             <div class="dev-actions">
-                                <button class="btn btn-s btn-sm" onclick="event.stopPropagation(); reloadDevice(${dev.ulDeviceId})">↻ Reload</button>
-                                <label class="switch" onclick="event.stopPropagation()"><input type="checkbox" ${dev.xEnabled?'checked':''} onchange="toggleDevice(${dev.ulDeviceId})"><span class="slider"></span></label>
+                                <button class="btn btn-s btn-sm" onclick="event.stopPropagation(); reloadDevice(${dev.id})">↻ Reload</button>
+                                <label class="switch" onclick="event.stopPropagation()"><input type="checkbox" ${dev.enabled?'checked':''} onchange="toggleDevice(${dev.id})"><span class="slider"></span></label>
                             </div>
                         </summary>
                         <div class="card-b" style="padding:0">
                             <table class="compact-table">
-                                <thead><tr><th style="width:22px"></th><th style="width:50px">OBJ</th><th>NAME / UNIT</th><th style="width:55px">VAL</th><th style="width:35px">POLL</th></tr></thead>
+                                <thead><tr><th style="width:22px"></th><th style="width:50px">OBJ</th><th>CONFIG</th><th style="width:55px">VAL</th><th style="width:35px">POLL</th></tr></thead>
                                 <tbody>`;
                     if (Array.isArray(dev.objects)) {
                         dev.objects.forEach((o, idx) => {
@@ -400,18 +400,26 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                             let rowClass = o.poll ? '' : 'grisé';
                             let valDisplay = (o.val !== null && !isNaN(o.val)) ? o.val.toFixed(2) : '--';
                             
-                            html += `<tr data-did="${dev.ulDeviceId}" data-inst="${o.inst}" data-type="${o.type}" class="${rowClass}">
-                                <td style="text-align:center"><button class="btn btn-s btn-sm" style="padding:2px 4px" onclick="reloadObject(${dev.ulDeviceId}, ${o.inst}, ${o.type})" title="Reload Object Properties">↻</button></td>
+                            html += `<tr data-did="${dev.device_id}" data-inst="${o.inst}" data-type="${o.type}" class="${rowClass}">
+                                <td style="text-align:center"><button class="btn btn-s btn-sm" style="padding:2px 4px" onclick="reloadObject(${dev.device_id}, ${o.inst}, ${o.type})" title="Reload Object Properties">↻</button></td>
                                 <td><span class="obj-badge">${typeStr}:${o.inst}</span></td>
-                                <td>
-                                    <input type="text" class="in-text" value="${o.name || ''}" onchange="saveObj(this)">
-                                    <select onchange="saveObj(this)" style="margin-top:4px">`;
+                                <td style="padding: 0.4rem;">
+                                    <div style="display:grid; grid-template-columns: 2fr 1fr; gap: 4px;">
+                                        <input type="text" class="in-text" value="${o.name || ''}" maxlength="30" placeholder="Name" onchange="saveObj(this)">
+                                        <select onchange="saveObj(this)">`;
                             for(let u in UNITS) {
                                 let label = UNITS[u];
-                                let isSelected = (o.unit === label) || (!o.unit && u === "") || (o.unit === "no-usUnits" && label === "no-usUnits");
+                                let isSelected = (o.unit === label) || (!o.unit && u === "") || (o.unit === "no-units" && label === "no-units");
                                 html += `<option value="${u}" ${isSelected?'selected':''}>${label}</option>`;
                             }
-                            html += `</select></td>
+                            html += `           </select>
+                                    </div>
+                                    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin-top: 4px;">
+                                        <input type="text" class="in-text min-in" value="${o.min_ref || (o.min !== undefined && o.min !== null ? o.min : '')}" maxlength="6" placeholder="Min" onchange="saveObj(this)">
+                                        <input type="text" class="in-text max-in" value="${o.max_ref || (o.max !== undefined && o.max !== null ? o.max : '')}" maxlength="6" placeholder="Max" onchange="saveObj(this)">
+                                        <input type="number" class="in-text step-in" value="${o.step !== undefined && o.step !== null ? o.step : '1.0'}" step="0.1" placeholder="Step" onchange="saveObj(this)">
+                                    </div>
+                                </td>
                                 <td><span class="val-text">${valDisplay}</span></td>
                                 <td><label class="switch"><input type="checkbox" ${o.poll?'checked':''} onchange="saveObj(this, true)"><span class="slider"></span></label></td>
                             </tr>`;
@@ -431,11 +439,14 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             const did = tr.dataset.did;
             const inst = tr.dataset.inst;
             const type = tr.dataset.type;
-            const name = tr.querySelector('.in-text').value;
+            const name = tr.querySelector('input[placeholder="Name"]').value;
             const unit = tr.querySelector('select').value;
+            const min_val = tr.querySelector('.min-in').value;
+            const max_val = tr.querySelector('.max-in').value;
+            const step_val = tr.querySelector('.step-in').value;
             const poll = tr.querySelector('input[type="checkbox"]').checked;
             if(isToggle) tr.classList.toggle('grisé', !poll);
-            const params = new URLSearchParams({ did, inst, type, name, unit: UNITS[unit], poll: poll?1:0 });
+            const params = new URLSearchParams({ did, inst, type, name, unit: UNITS[unit], poll: poll?1:0, min: min_val, max: max_val, step: step_val });
             fetch('/api/save_object', {method:'POST', body:params});
         }
 
@@ -495,9 +506,9 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                         let status = "Discovery...";
                         let sCol = 'var(--primary)';
 
-                        if(dev.step < 6) { // DISC_DEV_ID to DISC_OBJ_COUNT
-                            pct = (dev.step / 6) * 100;
-                        } else if (!dev.xEnabled) {
+                        if(dev.step < 4) { // DISC_DEV_ID to DISC_OBJ_COUNT
+                            pct = (dev.step / 4) * 100;
+                        } else if (!dev.enabled) {
                             status = "DESACTIVATED";
                             sCol = 'var(--muted)';
                             pct = 100; // Information de base récupérée
