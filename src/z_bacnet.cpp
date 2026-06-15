@@ -777,7 +777,7 @@ String get_unit_text(uint16_t usUnits) {
         case 29: return "%RH"; case 98: return "%"; case 96: return "ppm";
         case 73: return "s"; case 72: return "min"; case 71: return "h"; case 159: return "ms";
         case 82: return "L"; case 80: return "m³";
-        case 95: return "no-usUnits"; case 255: return "none";
+        case 95: return "no-units"; case 255: return "none";
         default: return "Unit " + String(usUnits);
     }
 }

@@ -570,7 +570,7 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                 if (obj_type <= 2) { // AI, AO, AV
                     String unit = String(obj_unit_text);
                     if (unit == "Unknown" || unit.length() == 0 || unit == "none") unit = get_unit_text(obj_units);
-                    if (unit != "no-usUnits" && unit.length() > 0) {
+                    if (unit != "no-units" && unit.length() > 0) {
                         if (unit == "%RH") unit = "%";
                         doc["unit_of_meas"] = unit;
                         if (unit == "°C" || unit == "°F") doc["dev_cla"] = "temperature";

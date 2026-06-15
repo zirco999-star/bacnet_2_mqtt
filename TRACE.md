@@ -1,5 +1,11 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 15 Juin 2026 (Correction Affichage Unités 'no-units' - v6.9.6) - DÉPLOYÉ
+- **Version** : v6.9.5 -> v6.9.6
+- **Correction Régression Unité** : Remplacement du terme erroné `"no-usUnits"` (généré par un remplacement automatique) par `"no-units"` dans [z_bacnet.cpp](file:///home/dev/bacnet_2_mqtt/src/z_bacnet.cpp) (fonction `get_unit_text`) et dans [z_mqtt.cpp](file:///home/dev/bacnet_2_mqtt/src/z_mqtt.cpp) (filtre d'Auto-Discovery).
+- **Impact UI** : Résout le problème où les objets sans unités (`no-units` / code 95) comme `Temp_salon` s'affichaient par défaut comme `"mA"` dans l'UI Web (en raison d'un mauvais appariement de chaîne forçant le navigateur à se rabattre sur la première clé triée du dictionnaire JS).
+- **Validation** : Test de persistance reload concluant et vérification par API que l'unité reçue pour les objets sans unités est bien redevenue `"no-units"`.
+
 ## État au 15 Juin 2026 (Réactivité FSM & Résolution Watchdog - v6.9.5) - DÉPLOYÉ
 - **Version** : v6.9.5
 - **Correction Stabilité FSM** : Remplacement de `vTaskDelay(1)` par `taskYIELD()` à la fin de la boucle principale de la tâche `bacnet_task` dans [z_bacnet.cpp](file:///home/dev/bacnet_2_mqtt/src/z_bacnet.cpp) pour éliminer les délais artificiels lors du traitement actif et de la transmission du jeton. Restauration de la réactivité MS/TP temps réel dure.
