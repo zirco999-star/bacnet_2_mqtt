@@ -437,3 +437,8 @@
   - Résolution du crash Watchdog (WDT) sur CPU 0 lié à `AsyncResponseStream` : remplacement par des réponses JSON basées sur des payloads `String` statiques pour éliminer le décalage quadratique mémoire `O(N^2)` de `StreamString::read()` lors du transfert de gros fichiers contenant des symboles `%` (comme les unités).
   - Élimination des verrous imbriqués `cache_mutex` dans `publish_ha_autodiscovery` (évite des blocages de 100ms par objet pilotable).
   - Compilation réussie avec `utils/compil.sh` et Flash OTA validé avec succès sur le matériel.
+- **Correctif FSM / Reload / Toggle** :
+  - Résolution définitive du blocage / deadlock FSM sur timeout appareil (metadata) en forçant l'avancement dans `handle_error_pdu` si `dev.ucDiscStep < DISC_OBJ_OID`.
+  - Réinitialisation de `dev.usDiscObjIdx = 0` lors de `/api/reload_device` et du redémarrage dans `/api/toggle_device` pour empêcher une auto-détection erronée de fin de découverte avec 0 objet.
+  - Persistance de l'état nettoyé en appelant `save_device_objects(did)` lors du reload.
+  - Validation réussie du cycle complet (Toggle OFF -> Reload -> Toggle ON -> Découverte des 98 objets) sur le matériel.
