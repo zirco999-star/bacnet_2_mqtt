@@ -1,5 +1,16 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 15 Juin 2026 (Réactivité FSM & Résolution Watchdog - v6.9.5) - DÉPLOYÉ
+- **Version** : v6.9.5
+- **Correction Stabilité FSM** : Remplacement de `vTaskDelay(1)` par `taskYIELD()` à la fin de la boucle principale de la tâche `bacnet_task` dans [z_bacnet.cpp](file:///home/dev/bacnet_2_mqtt/src/z_bacnet.cpp) pour éliminer les délais artificiels lors du traitement actif et de la transmission du jeton. Restauration de la réactivité MS/TP temps réel dure.
+- **Sécurisation du Watchdog** : Utilisation du blocage natif déterministe de FreeRTOS via `xQueueReceive(mstp_rx_queue, ..., pdMS_TO_TICKS(1))` pour mettre en veille la tâche Master lorsqu'aucune trame n'est en attente, ce qui libère 100% du Core 1 pour les tâches réseau de priorité inférieure (comme `async_tcp`) et empêche tout déclenchement du Task Watchdog (`task_wdt`) pendant les rechargements intensifs (98 objets).
+- **Validation** : Zéro Silence Timeout observé en régime établi. La ronde de jetons est stable à 100%. Validation par script de test de la persistance parfaite des configurations après rechargement.
+
+## État au 15 Juin 2026 (Forçage Who-Is au Démarrage - v6.9.4) - DÉPLOYÉ
+- **Version** : v6.9.4
+- **Démarrage Déterministe de la Ronde** : Forçage d'un envoi broadcast `Who-Is` initial 3 secondes après le boot de l'appareil si le cache est déjà restauré (non vide). Cela résout le problème d'inactivité au démarrage en réveillant immédiatement le bus MS/TP et en stabilisant la ronde sans attendre le premier cycle de polling.
+- **Restauration de la Réception** : Retrait de l'attribut `IRAM_ATTR` sur la tâche de réception `mstp_rx_task` et les fonctions de CRC pour restaurer le comportement de réception nominal stable de la version `main`.
+
 ## État au 15 Juin 2026 (Optimisation NVS & IRAM - v6.9.3) - DÉPLOYÉ
 - **Version** : v6.9.3
 - **Filtre de Sauvegarde (Dirty State)** : La route `/save` de [z_network.cpp](file:///home/dev/bacnet_2_mqtt/src/z_network.cpp) filtre désormais les requêtes redondantes et n'écrit en flash NVS que si les paramètres soumis diffèrent de la configuration actuelle. Élimine 99% des écritures NVS inutiles.

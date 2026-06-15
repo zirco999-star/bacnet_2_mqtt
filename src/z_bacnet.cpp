@@ -85,16 +85,16 @@ static const uint32_t T_TURNAROUND_US = 1050;
 static const uint32_t T_NO_TOKEN_US = 500000;
 
 // --- PROTOTYPES INTERNES (v6.3.0) ---
-static IRAM_ATTR bool validate_rx_header_crc(const uint8_t *header);
-static IRAM_ATTR bool validate_rx_data_crc(const uint8_t *data, size_t len);
-static IRAM_ATTR uint8_t calc_header_crc(uint8_t *data, size_t len);
-static IRAM_ATTR uint16_t calc_data_crc(uint8_t *data, size_t len);
+static bool validate_rx_header_crc(const uint8_t *header);
+static bool validate_rx_data_crc(const uint8_t *data, size_t len);
+static uint8_t calc_header_crc(uint8_t *data, size_t len);
+static uint16_t calc_data_crc(uint8_t *data, size_t len);
 static void send_mstp_frame(uint8_t target, uint8_t type, const uint8_t* apdu, uint16_t len);
 bool has_bacnet_work();
 static void check_ha_dependencies(uint32_t did, uint16_t type, uint32_t inst);
 
-// --- TÂCHE DE RÉCEPTION DÉDIÉE (Priorité Critique) - Exécutée en IRAM pour éviter les gels SPI flash ---
-static IRAM_ATTR void mstp_rx_task(void *pv) {
+// --- TÂCHE DE RÉCEPTION DÉDIÉE (Priorité Critique) ---
+static void mstp_rx_task(void *pv) {
     uint8_t rx_byte; 
     uint8_t header[6]; uint8_t header_idx=0;
     uint16_t data_len_local=0, data_idx=0;
@@ -174,7 +174,7 @@ static IRAM_ATTR void mstp_rx_task(void *pv) {
     }
 }
 
-static IRAM_ATTR uint8_t calc_header_crc(uint8_t *data, size_t len) {
+static uint8_t calc_header_crc(uint8_t *data, size_t len) {
     uint8_t crc = 0xFF;
     for (size_t i = 0; i < len; i++) {
         crc ^= data[i];
@@ -184,7 +184,7 @@ static IRAM_ATTR uint8_t calc_header_crc(uint8_t *data, size_t len) {
     return (~crc) & 0xFF;
 }
 
-static IRAM_ATTR uint16_t calc_data_crc(uint8_t *data, size_t len) {
+static uint16_t calc_data_crc(uint8_t *data, size_t len) {
     uint16_t crc = 0xFFFF;
     for (size_t i = 0; i < len; i++) {
         uint8_t crc_low = (crc & 0xff) ^ data[i];
@@ -193,7 +193,7 @@ static IRAM_ATTR uint16_t calc_data_crc(uint8_t *data, size_t len) {
     return (~crc) & 0xFFFF;
 }
 
-static IRAM_ATTR bool validate_rx_header_crc(const uint8_t *header) {
+static bool validate_rx_header_crc(const uint8_t *header) {
     uint8_t crc = 0xFF;
     for (size_t i = 0; i < 6; i++) { 
         crc ^= header[i];
@@ -203,7 +203,7 @@ static IRAM_ATTR bool validate_rx_header_crc(const uint8_t *header) {
     return (crc == 0x55);
 }
 
-static IRAM_ATTR bool validate_rx_data_crc(const uint8_t *data, size_t len) {
+static bool validate_rx_data_crc(const uint8_t *data, size_t len) {
     uint16_t crc = 0xFFFF;
     for (size_t i = 0; i < len; i++) {
         uint8_t crc_low = (crc & 0xff) ^ data[i];
@@ -1208,7 +1208,9 @@ static void bacnet_task(void *pv) {
 
         // --- TÂCHES PÉRIODIQUES (Découverte / Santé) ---
         uint32_t who_is_interval = (bacnet_network_cache.empty()) ? 2000 : 300000;
-        if (millis() - last_who_is_time > who_is_interval) {
+        // v6.9.4: Forcer un Who-Is initial 3 secondes après le boot pour réveiller le bus et démarrer la ronde
+        bool force_initial_who_is = (last_who_is_time == 0 && millis() > 3000);
+        if (force_initial_who_is || (millis() - last_who_is_time > who_is_interval)) {
             BACnetJob job; job.type = JOB_WHO_IS; job.target_mac = 0xFF;
             enqueue_bacnet_job(job);
             last_who_is_time = millis();
@@ -1258,7 +1260,8 @@ static void bacnet_task(void *pv) {
         }
 
         // --- CONSOMMATION DE LA QUEUE RX ---
-        ReceivedValidFrame = (xQueueReceive(mstp_rx_queue, &frame, 0) == pdTRUE);
+        // v6.9.4: Timeout de 1 tick (1ms) pour bloquer proprement et éviter de saturer le CPU si la queue est vide
+        ReceivedValidFrame = (xQueueReceive(mstp_rx_queue, &frame, pdMS_TO_TICKS(1)) == pdTRUE);
         
         // Axe 4: Traitement de l'auto-découverte MAC asynchrone
         uint8_t new_mac;
@@ -1304,8 +1307,8 @@ static void bacnet_task(void *pv) {
             case MSTP_ANSWER_DATA_REQUEST: mstp_state = MSTP_IDLE; break;
         }
 
-        if (mstp_state == MSTP_IDLE && !ReceivedValidFrame) vTaskDelay(1);
-        else taskYIELD();
+        // Céder le processeur de façon coopérative aux tâches de priorité équivalente (comme mstp_rx_task ou autres sur Core 1)
+        taskYIELD();
     }
 }
 
