@@ -374,7 +374,6 @@ void setup_web_routes() {
                         dev.xDiscoveryDone = false;
                         dev.ucDiscStep = DISC_DEV_ID;
                         dev.usDiscObjIdx = 0;
-                        dev.objects.clear();
                         z_log(pdLOG_INFO, "API", "Reloading device %lu\n", (unsigned long)did);
                         break;
                     }

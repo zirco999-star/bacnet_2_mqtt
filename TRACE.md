@@ -452,3 +452,14 @@
   - Vérification réussie : 100 % des objets fonctionnels (89 sur 89, hors métadonnées) sont maintenant correctement découverts et actifs dans Home Assistant.
   - Le rapport détaillé de validation a été généré dans `reports/ha_bulk_activation_report.md`.
 
+## [v6.9.2] - 2026-06-15
+### Ajout
+- **Stabilité MS/TP (Mutex Contention)** :
+  - Modification de `execute_bacnet_work()` pour libérer proprement le cycle de jeton (`MSTP_DONE_WITH_TOKEN`) en cas d'échec d'acquisition du verrou `cache_mutex` (timeout de 15ms), évitant le blocage de la machine à états MS/TP en boucle infinie (Silence Timeout).
+- **Restauration de la Configuration au Reload** :
+  - Préservation et restauration des états de polling (`xEnabled`), limites (`min`/`max`/`step`), et références (`cMinRef`/`cMaxRef`) des objets lors d'un rechargement de l'appareil (`/api/reload_device`).
+  - Suppression du `objects.clear()` immédiat dans le serveur Web pour laisser la FSM cloner les anciens objets dans un vecteur temporaire `FSM_old_objects` au moment du comptage, puis restaurer ces configurations à la rediscovery des OID.
+- **Validation réussie** :
+  - 100 % des objets fonctionnels (89/89) validés et opérationnels dans Home Assistant après reload.
+
+

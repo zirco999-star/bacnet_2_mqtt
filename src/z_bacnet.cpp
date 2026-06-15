@@ -78,6 +78,7 @@ static uint8_t frame_count = 0;
 static uint8_t token_skip_count = 0;
 static uint16_t current_poll_idx = 0;
 static uint8_t current_dev_idx = 0;
+static std::vector<BACnetObject> FSM_old_objects;
 static uint32_t last_who_is_time = 0;
 
 static const uint32_t T_TURNAROUND_US = 1050;
@@ -429,6 +430,7 @@ static void handle_complex_ack_discovery(BACnetDevice &dev, const uint8_t *apdu,
                     val = 0;
                 }
                 z_log(pdLOG_INFO, "BACNET", "Device Object Count: %lu\n", (unsigned long)val);
+                FSM_old_objects = dev.objects;
                 dev.objects.clear();
                 if (val > 0) {
                     try { dev.objects.resize(val); } 
@@ -452,6 +454,21 @@ static void handle_complex_ack_discovery(BACnetDevice &dev, const uint8_t *apdu,
             if (dev.usDiscObjIdx < dev.objects.size()) {
                 auto& o = dev.objects[dev.usDiscObjIdx];
                 decode_bacnet_object_id(&apdu[ap], &o.usType, &o.ulInstance);
+                
+                // Restauration de la configuration précédente si elle existe
+                for (const auto& old_o : FSM_old_objects) {
+                    if (old_o.usType == o.usType && old_o.ulInstance == o.ulInstance) {
+                        o.xEnabled = old_o.xEnabled;
+                        o.fMinValue = old_o.fMinValue;
+                        o.fMaxValue = old_o.fMaxValue;
+                        o.fStepValue = old_o.fStepValue;
+                        strlcpy(o.cMinRef, old_o.cMinRef, sizeof(o.cMinRef));
+                        strlcpy(o.cMaxRef, old_o.cMaxRef, sizeof(o.cMaxRef));
+                        strlcpy(o.cLastHaComponent, old_o.cLastHaComponent, sizeof(o.cLastHaComponent));
+                        break;
+                    }
+                }
+                
                 z_log(pdLOG_INFO, "BACNET", "Obj %u OID: T%u I%lu\n", dev.usDiscObjIdx+1, o.usType, (unsigned long)o.ulInstance);
                 dev.ucDiscStep = DISC_OBJ_NAME;
             }
@@ -864,7 +881,10 @@ bool has_bacnet_work() {
 void execute_bacnet_work() {
     BACnetJob j;
 
-    if (!xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(15))) return;
+    if (!xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(15))) {
+        mstp_state = MSTP_DONE_WITH_TOKEN; // Release token cycle if cache is locked
+        return;
+    }
 
     if (xQueueReceive(bacnet_job_queue, &j, 0)) {
         uint8_t b[256]; 
