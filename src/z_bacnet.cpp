@@ -75,7 +75,7 @@ static bool ReceivedValidFrame = false;
 static bool waiting_for_reply = false;
 static uint8_t frame_count = 0;
 static uint8_t token_skip_count = 0;
-static uint8_t current_poll_idx = 0;
+static uint16_t current_poll_idx = 0;
 static uint8_t current_dev_idx = 0;
 static uint32_t last_who_is_time = 0;
 
@@ -341,46 +341,51 @@ static void handle_simple_ack(uint8_t src_mac) {
  */
 static void handle_error_pdu(BACnetDevice &dev, uint8_t type) {
     if (sysCfg.log_level >= pdLOG_DEBUG) {
-        z_log(pdLOG_DEBUG, "BACNET", "Received PDU type 0x%02X (Error/Abort/Reject) from MAC %d\n", type, dev.ucMacAddress);
+        z_log(pdLOG_DEBUG, "BACNET", "Received PDU type 0x%02X from MAC %d (Step %d)\n", type, dev.ucMacAddress, (int)dev.ucDiscStep);
     }
     
-    // Si on est en phase de découverte, on essaie de passer à l'étape suivante ou de retenter
+    // Si on est en phase de découverte, on force le passage à l'étape suivante (v6.8.18: pas de retry sur erreur protocolaire)
     if (!dev.xDiscoveryDone && dev.usDiscObjIdx < dev.objects.size()) {
         auto& o = dev.objects[dev.usDiscObjIdx];
-        if (dev.ucDiscStep == DISC_OBJ_MIN) { dev.ucDiscStep = DISC_OBJ_MAX; }
-        else if (dev.ucDiscStep == DISC_OBJ_MAX) {
-            if(o.usType==13||o.usType==14||o.usType==19){ o.state_texts.clear(); o.ucExpectedStatesCount=0; dev.ucDiscStep=DISC_OBJ_STATES; } 
-            else dev.ucDiscStep=DISC_OBJ_COMMANDABLE;
+        retry_count = 0;
+        
+        switch (dev.ucDiscStep) {
+            case DISC_OBJ_NAME:    dev.ucDiscStep = DISC_OBJ_UNITS; break;
+            case DISC_OBJ_UNITS:   dev.ucDiscStep = DISC_OBJ_MIN; break;
+            case DISC_OBJ_MIN:     dev.ucDiscStep = DISC_OBJ_MAX; break;
+            case DISC_OBJ_MAX:
+                if(o.usType==13||o.usType==14||o.usType==19) dev.ucDiscStep = DISC_OBJ_STATES;
+                else dev.ucDiscStep = DISC_OBJ_COMMANDABLE;
+                break;
+            case DISC_OBJ_STATES:  dev.ucDiscStep = DISC_OBJ_COMMANDABLE; break;
+            case DISC_OBJ_COMMANDABLE:
+                o.xIsCommandable = (o.usType==13||o.usType==14||o.usType==19||o.usType<=5);
+                if(o.xEnabled || dev.xReloadSingle) dev.ucDiscStep = DISC_OBJ_VALUE;
+                else { if(!dev.xReloadSingle) dev.usDiscObjIdx++; dev.ucDiscStep = DISC_OBJ_OID; }
+                break;
+            case DISC_OBJ_VALUE:
+                if(!dev.xReloadSingle) dev.usDiscObjIdx++;
+                dev.ucDiscStep = DISC_OBJ_OID;
+                break;
+            default:
+                dev.ucDiscStep = (DISC_STEP_T)((int)dev.ucDiscStep + 1);
+                break;
         }
-        else if (dev.ucDiscStep == DISC_OBJ_COMMANDABLE) { 
-            o.xIsCommandable = (o.usType==13||o.usType==14||o.usType==19||o.usType<=5);
-            if(o.xEnabled||dev.xReloadSingle) dev.ucDiscStep=DISC_OBJ_VALUE; 
-            else { 
-                if(!dev.xReloadSingle) dev.usDiscObjIdx++; 
-                dev.ucDiscStep=DISC_OBJ_OID; 
-                if(dev.xReloadSingle){dev.xDiscoveryDone=true; dev.xReloadSingle=false;} 
+
+        if (dev.xReloadSingle && dev.ucDiscStep == DISC_OBJ_OID) {
+            dev.xDiscoveryDone = true;
+            dev.xReloadSingle = false;
+        }
+    } else {
+        waiting_for_reply = false;
+        if (dev.xSupportsRpm) {
+            z_log(pdLOG_WARN, "BACNET", "MAC %d RPM rejected/timeout (PDU 0x%02X). Fallback to single read.\n", dev.ucMacAddress, type);
+            dev.xSupportsRpm = false;
+        } else {
+            if (dev.xDiscoveryDone && current_poll_idx < dev.objects.size()) {
+                dev.objects[current_poll_idx].ulLastUpdate = millis();
             }
-        } else { 
-            if (retry_count < sysCfg.max_retries) { 
-                retry_count++; 
-                send_mstp_frame(dev.ucMacAddress, 0x05, last_apdu, last_apdu_len); 
-                waiting_for_reply = true; 
-                return; // On attend la réponse
-            } else { 
-                retry_count = 0; 
-                if(!dev.xDiscoveryDone){dev.usDiscObjIdx++; dev.ucDiscStep=DISC_OBJ_OID;} 
-                current_dev_idx = (current_dev_idx + 1) % bacnet_network_cache.size(); 
-            } 
         }
-    } else { 
-        if (retry_count < sysCfg.max_retries) { 
-            retry_count++; 
-            send_mstp_frame(dev.ucMacAddress, 0x05, last_apdu, last_apdu_len); 
-            waiting_for_reply = true; 
-        } else { 
-            retry_count = 0; 
-            current_dev_idx = (current_dev_idx + 1) % bacnet_network_cache.size(); 
-        } 
     }
 }
 
@@ -492,10 +497,10 @@ static void handle_complex_ack_discovery(BACnetDevice &dev, const uint8_t *apdu,
         case STORE_OBJ_STATES: {
             if (dev.usDiscObjIdx < dev.objects.size()) {
                 auto& o = dev.objects[dev.usDiscObjIdx];
-                if (vt.isContext && vt.number == 2) {
+                if (vt.number == 2) {
                     o.ucExpectedStatesCount = (uint16_t)decode_bacnet_unsigned(&apdu[ap], vt.len);
                     z_log(pdLOG_DEBUG, "BACNET", "Obj %u Expecting %u states\n", dev.usDiscObjIdx+1, o.ucExpectedStatesCount);
-                    if (o.ucExpectedStatesCount == 0) dev.ucDiscStep = DISC_OBJ_VALUE;
+                    if (o.ucExpectedStatesCount == 0) dev.ucDiscStep = DISC_OBJ_COMMANDABLE;
                 } else if (vt.number == 7 || (!vt.isContext && vt.number == 7)) {
                     char n[64]; decode_bacnet_string(&apdu[ap], vt.len, n, sizeof(n));
                     o.state_texts.push_back(String(n));
@@ -788,7 +793,16 @@ void handle_mstp_wait_for_reply() {
             if (retry_count < sysCfg.max_retries) {
                 retry_count++; send_mstp_frame(bacnet_network_cache[current_dev_idx].ucMacAddress, 0x05, last_apdu, last_apdu_len);
                 waiting_for_reply = true;
-            } else { retry_count = 0; mstp_state = MSTP_DONE_WITH_TOKEN; }
+            } else { 
+                retry_count = 0; 
+                // v6.8.18: Si on était en découverte, on force le passage à la suite pour éviter de rester bloqué
+                auto& dev = bacnet_network_cache[current_dev_idx];
+                if (!dev.xDiscoveryDone) {
+                    z_log(pdLOG_WARN, "BACNET", "MAC %d Timeout on step %d, skipping...\n", dev.ucMacAddress, (int)dev.ucDiscStep);
+                    handle_error_pdu(dev, 0); // 0 = Timeout sentinel
+                }
+                mstp_state = MSTP_DONE_WITH_TOKEN; 
+            }
         } else mstp_state = MSTP_DONE_WITH_TOKEN;
     }
 }

@@ -199,7 +199,7 @@ extern uint32_t period_poll_count;
 extern uint32_t period_mqtt_pub_count;
 
 // --- CONSTANTES DE TEMPS ASHRAE 135 (v6.3.0) ---
-const uint32_t T_REPLY_TIMEOUT_US = 265000; // 265 ms (ASHRAE: 255-300ms)
+const uint32_t T_REPLY_TIMEOUT_US = 280000; // 280 ms (Support ECB-203 lent)
 const uint32_t T_USAGE_TIMEOUT_US = 15000;  // 15 ms (T_usage_timeout)
 const uint32_t T_FRAME_ABORT_US   = 50000;  // 50 ms pour abandonner une trame incomplète
 

@@ -154,13 +154,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     }
 }
 
-// v6.8.13: Variables pour la découverte HA asynchrone (Non-blocking)
-static size_t async_disc_dev_idx = 0;
-static size_t async_disc_obj_idx = 0;
-static bool async_disc_in_progress = false;
-static bool async_disc_gw_done = false;
-static uint32_t last_async_disc_step = 0;
-
 static void mqtt_gatekeeper_task(void *pv) {
     z_log(pdLOG_INFO, "MQTT", "Gatekeeper Task Operational.\n");
     uint32_t last_status_pub = 0;
@@ -179,83 +172,53 @@ static void mqtt_gatekeeper_task(void *pv) {
 
         if (mqtt_is_connected && !circuit_breaker_active) {
             
-            // 2. Initialisation de la découverte HA (Throttle)
-            if (pending_discovery.load(std::memory_order_acquire) && !async_disc_in_progress) {
+            // 2. Déclenchement Découverte HA (Synchrone v6.8.15)
+            if (pending_discovery.load(std::memory_order_acquire)) {
                 uint32_t t_did = target_did.load();
                 bool is_global = (t_did == 0 || force_full_discovery);
                 bool can_start = is_global ? (now - last_global_disc > 30000) : (now - last_single_disc > 5000);
 
                 if (can_start) {
                     if (is_global) last_global_disc = now; else last_single_disc = now;
-                    async_disc_in_progress = true;
-                    async_disc_gw_done = false;
-                    async_disc_dev_idx = 0;
-                    async_disc_obj_idx = 0;
-                    z_log(pdLOG_INFO, "MQTT", "Async HA Discovery Started...\n");
+                    publish_ha_autodiscovery(target_did.load(), target_inst.load(), target_type.load());
+                    pending_discovery.store(false, std::memory_order_release);
+                    force_full_discovery = false;
                 }
             }
 
-            // 3. Exécution fragmentée (1 objet toutes les 50ms)
-            if (async_disc_in_progress && (now - last_async_disc_step > 50)) {
-                last_async_disc_step = now;
-                
-                if (!async_disc_gw_done) {
-                    if (target_did.load() == 0) publish_ha_autodiscovery(0, 0xFFFFFFFF, 0xFFFF);
-                    async_disc_gw_done = true;
-                } else {
-                    if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(5))) {
-                        if (async_disc_dev_idx < bacnet_network_cache.size()) {
-                            auto& dev = bacnet_network_cache[async_disc_dev_idx];
-                            
-                            if (target_did.load() != 0 && dev.ulDeviceId != target_did.load()) {
-                                async_disc_dev_idx++; async_disc_obj_idx = 0;
-                            } else if (async_disc_obj_idx < dev.objects.size()) {
-                                uint32_t d = dev.ulDeviceId;
-                                uint32_t i = dev.objects[async_disc_obj_idx].ulInstance;
-                                uint16_t t = dev.objects[async_disc_obj_idx].usType;
-                                xSemaphoreGive(cache_mutex);
-                                
-                                publish_ha_autodiscovery(d, i, t);
-                                async_disc_obj_idx++;
-                            } else {
-                                async_disc_dev_idx++; async_disc_obj_idx = 0;
-                            }
-                        } else {
-                            async_disc_in_progress = false;
-                            pending_discovery.store(false, std::memory_order_release);
-                            force_full_discovery = false;
-                            z_log(pdLOG_INFO, "MQTT", "Async HA Discovery Finished.\n");
-                        }
-                        if (xSemaphoreTake(cache_mutex, 0)) xSemaphoreGive(cache_mutex); 
-                    }
-                }
-            }
-
-            // 4. Queue de publication (Données)
+            // 3. Traitement de la queue de publication
             MQTTPublishJob pubJob;
-            if (xQueueReceive(mqtt_publish_queue, &pubJob, 0) == pdTRUE) {
-                // ... (Logique de publication inchangée mais traitée 1 par 1 pour fluidité)
+            while (xQueueReceive(mqtt_publish_queue, &pubJob, 0) == pdTRUE) {
                 char topic[128];
                 const char* t_str = "OBJ";
                 switch(pubJob.obj_type) {
-                    case 0: t_str = "AI"; break;
-                    case 1: t_str = "AO"; break;
-                    case 2: t_str = "AV"; break;
-                    case 3: t_str = "BI"; break;
-                    case 4: t_str = "BO"; break;
-                    case 5: t_str = "BV"; break;
-                    case 13: t_str = "MSI"; break;
-                    case 14: t_str = "MSO"; break;
-                    case 19: t_str = "MSV"; break;
+                    case OBJ_ANALOG_INPUT:       t_str = "AI"; break;
+                    case OBJ_ANALOG_OUTPUT:      t_str = "AO"; break;
+                    case OBJ_ANALOG_VALUE:       t_str = "AV"; break;
+                    case OBJ_BINARY_INPUT:       t_str = "BI"; break;
+                    case OBJ_BINARY_OUTPUT:      t_str = "BO"; break;
+                    case OBJ_BINARY_VALUE:       t_str = "BV"; break;
+                    case OBJ_MULTI_STATE_INPUT:  t_str = "MSI"; break;
+                    case OBJ_MULTI_STATE_OUTPUT: t_str = "MSO"; break;
+                    case OBJ_MULTI_STATE_VALUE:  t_str = "MSV"; break;
                 }
                 const char* subtopic = (pubJob.prop_id == 77) ? "name" : "state";
                 snprintf(topic, sizeof(topic), "%s/%lu/%s/%lu/%s", sysCfg.mqtt_prefix, (unsigned long)pubJob.ulDeviceId, t_str, (unsigned long)pubJob.obj_instance, subtopic);
-                esp_mqtt_client_publish(mqtt_client, topic, pubJob.value_string, 0, 1, pubJob.retain);
-                period_mqtt_pub_count++;
+                
+                if (esp_mqtt_client_publish(mqtt_client, topic, pubJob.value_string, 0, 1, pubJob.retain) < 0) {
+                    z_log(pdLOG_WARN, "MQTT", "Publish failed. Queue Full or Client error.\n");
+                    vTaskDelay(pdMS_TO_TICKS(50));
+                    break;
+                } else {
+                    period_mqtt_pub_count++;
+                    period_mqtt_obj_count++;
+                    z_log(pdLOG_DEBUG, "MQTT", "Published: %s = %s\n", topic, pubJob.value_string);
+                }
+                vTaskDelay(pdMS_TO_TICKS(5));
             }
 
-                // 3. Status Gateway périodique
-                if (millis() - last_status_pub > (sysCfg.mqtt_poll_interval * 1000)) {
+            // 4. Status Gateway périodique
+            if (millis() - last_status_pub > (sysCfg.mqtt_poll_interval * 1000)) {
                 last_status_pub = millis();
                 auto pub_b2m = [&](const char* key, String val) {
                     char t[128]; snprintf(t, sizeof(t), "%s/B2M/%s/state", sysCfg.mqtt_prefix, key);
@@ -350,8 +313,8 @@ void setup_mqtt() {
         
         static bool task_created = false;
         if (!task_created) {
-            // Migration vers Core 0 (Priorité 5) pour libérer le Core 1 pour le temps-réel BACnet
-            xTaskCreatePinnedToCore(mqtt_gatekeeper_task, "MQTT_GK", 8192, NULL, 5, NULL, 0);
+            // Migration vers Core 0 (Priorité 5). Pile augmentée à 16KB pour HA Discovery complexe.
+            xTaskCreatePinnedToCore(mqtt_gatekeeper_task, "MQTT_GK", 16384, NULL, 5, NULL, 0);
             task_created = true;
         }
     }
@@ -363,19 +326,15 @@ void trigger_ha_discovery(uint32_t did, uint32_t inst, uint16_t type) {
     if (!sysCfg.ha_discover) return;
     
     // Stratégie de Coalescence (v6.4.2)
-    // Si une demande est déjà en attente :
     if (pending_discovery.load()) {
         if (target_did != did) {
-            // Changement de device -> On passe en global pour tout republier proprement
             target_did = 0;
             target_inst = 0xFFFFFFFF;
         } else if (target_inst != inst || target_type != type) {
-            // Même device mais objet différent -> On passe en mode "tout le device"
             target_inst = 0xFFFFFFFF;
             target_type = 0xFFFF;
         }
     } else {
-        // Nouvelle demande fraîche
         target_did = did;
         target_inst = inst;
         target_type = type;
@@ -407,10 +366,13 @@ void handle_mqtt() {
 void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) {
     if (!mqtt_is_connected || circuit_breaker_active || !sysCfg.ha_discover) return;
 
-    // Détermination si c'est une requête ciblée (v6.8.13: Toujours ciblée via le Gatekeeper)
     bool is_single_object = (t_did != 0 && t_inst != 0xFFFFFFFF);
     
-    // Étape 0 : Discovery de la Gateway elle-même (Diagnostics)
+    if (!is_single_object) {
+        z_log(pdLOG_INFO, "MQTT", "Starting HA Auto-Discovery%s...\n", (t_did != 0) ? " (Single Device)" : "");
+    }
+
+    // Étape 0 : Discovery de la Gateway
     if (!is_single_object && t_did == 0) {
         char base_b2m[128];
         snprintf(base_b2m, sizeof(base_b2m), "%s/B2M", sysCfg.mqtt_prefix);
@@ -446,7 +408,6 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
             String payload;
             serializeJson(doc, payload);
             esp_mqtt_client_publish(mqtt_client, topic, payload.c_str(), 0, 1, 1);
-            z_log(pdLOG_DEBUG, "MQTT", "HA Discovery: %s\n", uniq);
         };
 
         pub_gw_sensor("ver", "Gateway Version", NULL, NULL, "mdi:information-outline");
@@ -457,121 +418,163 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
         pub_gw_sensor("temp", "Gateway Chip Temp", "temperature", "°C");
         pub_gw_sensor("nb_dev", "Gateway Devices Count", NULL, "dev", "mdi:counter");
         pub_gw_sensor("mstp", "Gateway MS/TP Network", "connectivity", NULL, NULL, true);
-        return;
+
+        vTaskDelay(pdMS_TO_TICKS(100)); 
     }
 
-    // Étape 1 : Objets des Devices (Un seul objet à la fois pour ne pas bloquer)
-    if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
-        for (auto& dev : bacnet_network_cache) {
-            if (dev.ulDeviceId != t_did) continue;
-            
-            for (auto& obj : dev.objects) {
-                if (obj.ulInstance != t_inst || obj.usType != t_type) continue;
-
-                if (obj.usType != 65535) {
-                    const char* t_str = "OBJ";
-                    const char* ha_component = "sensor";
-                    bool is_command = obj.xIsCommandable;
-            
-                    switch(obj.usType) {
-                        case OBJ_ANALOG_INPUT: t_str = "AI"; ha_component = "sensor"; break;
-                        case OBJ_BINARY_INPUT: t_str = "BI"; ha_component = "binary_sensor"; break;
-                        case OBJ_BINARY_OUTPUT: 
-                        case OBJ_BINARY_VALUE: 
-                            t_str = (obj.usType == OBJ_BINARY_OUTPUT) ? "BO" : "BV"; 
-                            ha_component = (is_command || obj.usType == OBJ_BINARY_OUTPUT) ? "switch" : "binary_sensor"; 
-                            break;
-                        case OBJ_ANALOG_OUTPUT:
-                        case OBJ_ANALOG_VALUE: 
-                            t_str = (obj.usType == OBJ_ANALOG_OUTPUT) ? "AO" : "AV"; 
-                            ha_component = (is_command || obj.usType == OBJ_ANALOG_OUTPUT) ? "number" : "sensor"; 
-                            break;
-                        case OBJ_MULTI_STATE_INPUT: t_str = "MSI"; ha_component = "sensor"; break;
-                        case OBJ_MULTI_STATE_OUTPUT:
-                        case OBJ_MULTI_STATE_VALUE: 
-                            t_str = (obj.usType == OBJ_MULTI_STATE_OUTPUT) ? "MSO" : "MSV"; 
-                            if (obj.state_texts.empty()) ha_component = (is_command || obj.usType == OBJ_MULTI_STATE_OUTPUT) ? "number" : "sensor";
-                            else ha_component = "select";
-                            break;
-                    }
-
-                    char uniq_id[64];
-                    snprintf(uniq_id, sizeof(uniq_id), "bacnet_%lu_%s_%lu", (unsigned long)dev.ulDeviceId, t_str, (unsigned long)obj.ulInstance);
-                    char topic[128];
-                    snprintf(topic, sizeof(topic), "homeassistant/%s/%s/config", ha_component, uniq_id);
-
-                    if (dev.xEnabled && obj.xEnabled && strcmp(obj.cName, "Unknown") != 0) {
-                        JsonDocument doc; 
-                        char base_topic[128];
-                        snprintf(base_topic, sizeof(base_topic), "%s/%lu/%s/%lu", sysCfg.mqtt_prefix, (unsigned long)dev.ulDeviceId, t_str, (unsigned long)obj.ulInstance);
-                        
-                        doc["~"] = String(base_topic);
-                        doc["uniq_id"] = String(uniq_id);
-                        doc["name"] = String(obj.cName); 
-                        doc["stat_t"] = "~/state";
-                        doc["avty_t"] = String(lwt_topic);
-                        doc["pl_avail"] = "online";
-                        doc["pl_not_avail"] = "offline";
-
-                        if (strcmp(ha_component, "sensor") != 0 && strcmp(ha_component, "binary_sensor") != 0) {
-                            doc["cmd_t"] = "~/set";
-                        }
-
-                        if (obj.usType == OBJ_BINARY_INPUT || obj.usType == OBJ_BINARY_OUTPUT || obj.usType == OBJ_BINARY_VALUE) {
-                            doc["pl_on"] = "1.00"; doc["pl_off"] = "0.00";
-                        }
-
-                        if (strcmp(ha_component, "number") == 0) {
-                            doc["min"] = isnan(obj.fMinValue) ? sysCfg.default_number_min : obj.fMinValue;
-                            doc["max"] = isnan(obj.fMaxValue) ? sysCfg.default_number_max : obj.fMaxValue;
-                            doc["step"] = sysCfg.default_number_step;
-                        }
-
-                        if (obj.usType == OBJ_ANALOG_INPUT || obj.usType == OBJ_ANALOG_VALUE || obj.usType == OBJ_ANALOG_OUTPUT) {
-                            String unit = String(obj.cUnitText);
-                            if (unit == "Unknown" || unit.length() == 0 || unit == "none") unit = get_unit_text(obj.usUnits);
-                            if (unit != "no-usUnits" && unit.length() > 0) {
-                                doc["unit_of_meas"] = unit;
-                                if (unit == "°C" || unit == "°F" || unit == "°K") doc["dev_cla"] = "temperature";
-                                else if (unit == "%" || unit == "%RH") doc["dev_cla"] = "humidity";
-                                else if (unit == "Pa" || unit == "kPa" || unit == "bar" || unit == "psi") doc["dev_cla"] = "pressure";
-                                else if (unit == "kW" || unit == "W" || unit == "MW") doc["dev_cla"] = "power";
-                                else if (unit == "kWh" || unit == "Wh" || unit == "MWh") doc["dev_cla"] = "energy";
-                                else if (unit == "V" || unit == "mV") doc["dev_cla"] = "voltage";
-                                else if (unit == "A" || unit == "mA") doc["dev_cla"] = "current";
-                            }
-                        }
-
-                        if (obj.usType == OBJ_MULTI_STATE_INPUT || obj.usType == OBJ_MULTI_STATE_OUTPUT || obj.usType == OBJ_MULTI_STATE_VALUE) {
-                            if (!obj.state_texts.empty()) {
-                                JsonArray opts = doc["options"].to<JsonArray>();
-                                for (auto& s : obj.state_texts) opts.add(s);
-                                if (strcmp(ha_component, "sensor") == 0) doc["dev_cla"] = "enum";
-                            } else {
-                                if (strcmp(ha_component, "sensor") == 0) doc["icon"] = "mdi:numeric";
-                            }
-                        }
-
-                        JsonObject device = doc["dev"].to<JsonObject>();
-                        JsonArray ids = device["ids"].to<JsonArray>();
-                        char dev_id_str[32]; snprintf(dev_id_str, sizeof(dev_id_str), "bacnet_dev_%lu", (unsigned long)dev.ulDeviceId);
-                        ids.add(String(dev_id_str));
-                        device["name"] = dev.name.length() > 0 ? String(dev.name) : String(dev_id_str);
-                        device["mf"] = dev.vendor.length() > 0 ? String(dev.vendor) : "BACnet Manufacturer";
-                        device["sw"] = configVERSION_GLOBAL;
-
-                        String payload; serializeJson(doc, payload);
-                        esp_mqtt_client_publish(mqtt_client, topic, payload.c_str(), payload.length(), 1, 1);
-                    } else {
-                        esp_mqtt_client_publish(mqtt_client, topic, "", 0, 1, 1);
-                    }
-                }
-                break; // On a trouvé l'objet ciblé
-            }
-            break; // On a trouvé le device ciblé
-        }
+    // Étape 1 : Parcours sécurisé (Séquentiel par Mutex court)
+    size_t nb_devices = 0;
+    if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(1000))) {
+        nb_devices = bacnet_network_cache.size();
         xSemaphoreGive(cache_mutex);
     }
+
+    int total_published = 0;
+
+    for (size_t d_idx = 0; d_idx < nb_devices; d_idx++) {
+        size_t nb_objects = 0;
+        uint32_t current_did = 0;
+        String dev_name, dev_vendor;
+        bool dev_enabled = false, dev_discovery_done = false;
+
+        // Snapshot du device
+        if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(200))) {
+            if (d_idx < bacnet_network_cache.size()) {
+                auto& dev = bacnet_network_cache[d_idx];
+                if (t_did != 0 && dev.ulDeviceId != t_did) { xSemaphoreGive(cache_mutex); continue; }
+                current_did = dev.ulDeviceId;
+                dev_name = dev.name;
+                dev_vendor = dev.vendor;
+                dev_enabled = dev.xEnabled;
+                dev_discovery_done = dev.xDiscoveryDone;
+                nb_objects = dev.objects.size();
+            }
+            xSemaphoreGive(cache_mutex);
+        } else continue;
+
+        if (current_did == 0) continue;
+
+        for (size_t o_idx = 0; o_idx < nb_objects; o_idx++) {
+            // Snapshot de l'objet
+            uint16_t obj_type = 65535;
+            uint32_t obj_inst = 0;
+            char obj_name[64] = {0};
+            char obj_unit_text[32] = {0};
+            uint16_t obj_units = 0;
+            float obj_min = NAN, obj_max = NAN;
+            bool obj_enabled = false, obj_commandable = false;
+            std::vector<String> obj_states;
+
+            if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(200))) {
+                if (d_idx < bacnet_network_cache.size() && o_idx < bacnet_network_cache[d_idx].objects.size()) {
+                    auto& obj = bacnet_network_cache[d_idx].objects[o_idx];
+                    if (is_single_object && (obj.ulInstance != t_inst || obj.usType != t_type)) { xSemaphoreGive(cache_mutex); continue; }
+                    obj_type = obj.usType;
+                    obj_inst = obj.ulInstance;
+                    strlcpy(obj_name, obj.cName, sizeof(obj_name));
+                    strlcpy(obj_unit_text, obj.cUnitText, sizeof(obj_unit_text));
+                    obj_units = obj.usUnits;
+                    obj_min = obj.fMinValue;
+                    obj_max = obj.fMaxValue;
+                    obj_enabled = obj.xEnabled;
+                    obj_commandable = obj.xIsCommandable;
+                    obj_states = obj.state_texts; 
+                }
+                xSemaphoreGive(cache_mutex);
+            } else continue;
+
+            if (obj_type == 65535) continue;
+
+            const char* t_str = "OBJ";
+            const char* ha_component = "sensor";
+
+            switch(obj_type) {
+                case OBJ_ANALOG_INPUT:       t_str = "AI"; ha_component = "sensor"; break;
+                case OBJ_ANALOG_OUTPUT:      t_str = "AO"; ha_component = (obj_commandable) ? "number" : "sensor"; break;
+                case OBJ_ANALOG_VALUE:       t_str = "AV"; ha_component = (obj_commandable) ? "number" : "sensor"; break;
+                case OBJ_BINARY_INPUT:       t_str = "BI"; ha_component = "binary_sensor"; break;
+                case OBJ_BINARY_OUTPUT:      t_str = "BO"; ha_component = (obj_commandable) ? "switch" : "binary_sensor"; break;
+                case OBJ_BINARY_VALUE:       t_str = "BV"; ha_component = (obj_commandable) ? "switch" : "binary_sensor"; break;
+                case OBJ_MULTI_STATE_INPUT:  t_str = "MSI"; ha_component = "sensor"; break;
+                case OBJ_MULTI_STATE_OUTPUT: t_str = "MSO"; ha_component = (obj_states.empty()) ? ((obj_commandable) ? "number" : "sensor") : "select"; break;
+                case OBJ_MULTI_STATE_VALUE:  t_str = "MSV"; ha_component = (obj_states.empty()) ? ((obj_commandable) ? "number" : "sensor") : "select"; break;
+            }
+
+            char uniq_id[64];
+            snprintf(uniq_id, sizeof(uniq_id), "bacnet_%lu_%s_%lu", (unsigned long)current_did, t_str, (unsigned long)obj_inst);
+            char topic[128];
+            snprintf(topic, sizeof(topic), "homeassistant/%s/%s/config", ha_component, uniq_id);
+
+            if (dev_enabled && obj_enabled && strcmp(obj_name, "Unknown") != 0 && dev_discovery_done) {
+                JsonDocument doc; 
+                char base_topic[128];
+                snprintf(base_topic, sizeof(base_topic), "%s/%lu/%s/%lu", sysCfg.mqtt_prefix, (unsigned long)current_did, t_str, (unsigned long)obj_inst);
+                
+                doc["~"] = String(base_topic);
+                doc["uniq_id"] = String(uniq_id);
+                doc["name"] = String(obj_name); 
+                doc["stat_t"] = "~/state";
+                doc["avty_t"] = String(lwt_topic);
+                doc["pl_avail"] = "online";
+                doc["pl_not_avail"] = "offline";
+
+                if (strcmp(ha_component, "sensor") != 0 && strcmp(ha_component, "binary_sensor") != 0) {
+                    doc["cmd_t"] = "~/set";
+                }
+
+                if (strcmp(ha_component, "binary_sensor") == 0 || strcmp(ha_component, "switch") == 0) {
+                    doc["pl_on"] = "1.00"; doc["pl_off"] = "0.00";
+                }
+
+                if (strcmp(ha_component, "number") == 0) {
+                    doc["min"] = isnan(obj_min) ? sysCfg.default_number_min : obj_min;
+                    doc["max"] = isnan(obj_max) ? sysCfg.default_number_max : obj_max;
+                    doc["step"] = sysCfg.default_number_step;
+                }
+
+                if (obj_type <= 2) { // AI, AO, AV
+                    String unit = String(obj_unit_text);
+                    if (unit == "Unknown" || unit.length() == 0 || unit == "none") unit = get_unit_text(obj_units);
+                    if (unit != "no-usUnits" && unit.length() > 0) {
+                        doc["unit_of_meas"] = unit;
+                        if (unit == "°C" || unit == "°F") doc["dev_cla"] = "temperature";
+                        else if (unit == "%" || unit == "%RH") doc["dev_cla"] = "humidity";
+                        else if (unit == "kW" || unit == "W") doc["dev_cla"] = "power";
+                        else if (unit == "kWh") doc["dev_cla"] = "energy";
+                    }
+                }
+
+                if (strcmp(ha_component, "select") == 0) {
+                    JsonArray opts = doc["options"].to<JsonArray>();
+                    for (auto& s : obj_states) opts.add(s);
+                }
+
+                JsonObject device = doc["dev"].to<JsonObject>();
+                JsonArray ids = device["ids"].to<JsonArray>();
+                char dev_id_str[32]; snprintf(dev_id_str, sizeof(dev_id_str), "bacnet_dev_%lu", (unsigned long)current_did);
+                ids.add(String(dev_id_str));
+                device["name"] = dev_name.length() > 0 ? String(dev_name) : String(dev_id_str);
+                device["mf"] = dev_vendor.length() > 0 ? String(dev_vendor) : "BACnet Manufacturer";
+                device["sw"] = configVERSION_GLOBAL;
+
+                String payload; serializeJson(doc, payload);
+                if (esp_mqtt_client_publish(mqtt_client, topic, payload.c_str(), payload.length(), 1, 1) < 0) {
+                    z_log(pdLOG_WARN, "MQTT", "Discovery publish failed for %s. Outbox full?\n", uniq_id);
+                    vTaskDelay(pdMS_TO_TICKS(100)); // Pause si erreur
+                } else {
+                    total_published++;
+                }
+            } else if (!dev_enabled || !obj_enabled) {
+                esp_mqtt_client_publish(mqtt_client, topic, "", 0, 1, 1);
+            }
+
+            if (total_published % 10 == 0 && total_published > 0) {
+                z_log(pdLOG_INFO, "MQTT", "Discovery progress: %d objects sent...\n", total_published);
+            }
+            vTaskDelay(pdMS_TO_TICKS(100)); // Pacing stable
+        }
+    }
+    z_log(pdLOG_INFO, "MQTT", "HA Auto-Discovery payload sent (%d objects).\n", total_published);
 }
 
 void publish_mqtt_topic(uint32_t ulDeviceId, BACnetObject& obj, uint8_t prop_id, bool retain) {
@@ -587,15 +590,20 @@ void publish_mqtt_topic(uint32_t ulDeviceId, BACnetObject& obj, uint8_t prop_id,
         if (strlen(obj.cName) == 0) return;
         strlcpy(pub.value_string, obj.cName, sizeof(pub.value_string));
     } else if (prop_id == 85) {
-        if ((obj.usType == OBJ_MULTI_STATE_INPUT || obj.usType == OBJ_MULTI_STATE_OUTPUT || obj.usType == OBJ_MULTI_STATE_VALUE) && !obj.state_texts.empty()) {
-            int idx = (int)obj.fPresentValue - 1;
-            if (idx >= 0 && idx < (int)obj.state_texts.size()) {
-                strlcpy(pub.value_string, obj.state_texts[idx].c_str(), sizeof(pub.value_string));
-            } else {
-                snprintf(pub.value_string, sizeof(pub.value_string), "%.0f", obj.fPresentValue);
-            }
-        } else {
-            snprintf(pub.value_string, sizeof(pub.value_string), "%.2f", obj.fPresentValue);
+        switch(obj.usType) {
+            case OBJ_MULTI_STATE_INPUT:
+            case OBJ_MULTI_STATE_OUTPUT:
+            case OBJ_MULTI_STATE_VALUE:
+                if (!obj.state_texts.empty()) {
+                    int idx = (int)obj.fPresentValue - 1;
+                    if (idx >= 0 && idx < (int)obj.state_texts.size()) {
+                        strlcpy(pub.value_string, obj.state_texts[idx].c_str(), sizeof(pub.value_string));
+                    } else snprintf(pub.value_string, sizeof(pub.value_string), "%.0f", obj.fPresentValue);
+                } else snprintf(pub.value_string, sizeof(pub.value_string), "%.0f", obj.fPresentValue);
+                break;
+            default:
+                snprintf(pub.value_string, sizeof(pub.value_string), "%.2f", obj.fPresentValue);
+                break;
         }
     } else return;
 
@@ -607,19 +615,17 @@ void unpublish_ha_discovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type, co
     const char* prefix = old_prefix ? old_prefix : sysCfg.mqtt_prefix;
     z_log(pdLOG_INFO, "MQTT", "Cleaning up HA Discovery (Prefix: %s)...\n", prefix);
 
-    // 1. Diagnostics Gateway
-    auto unpub_gw = [&](const char* key, bool is_binary = false) {
-        char topic[128], uniq[64];
-        snprintf(uniq, sizeof(uniq), "b2m_gw_%s", key);
-        snprintf(topic, sizeof(topic), "homeassistant/%s/%s/config", is_binary ? "binary_sensor" : "sensor", uniq);
-        esp_mqtt_client_publish(mqtt_client, topic, "", 0, 1, 1);
-    };
     if (t_did == 0) {
+        auto unpub_gw = [&](const char* key, bool is_binary = false) {
+            char topic[128], uniq[64];
+            snprintf(uniq, sizeof(uniq), "b2m_gw_%s", key);
+            snprintf(topic, sizeof(topic), "homeassistant/%s/%s/config", is_binary ? "binary_sensor" : "sensor", uniq);
+            esp_mqtt_client_publish(mqtt_client, topic, "", 0, 1, 1);
+        };
         unpub_gw("ver"); unpub_gw("uptime"); unpub_gw("rssi"); unpub_gw("heap");
         unpub_gw("min_heap"); unpub_gw("temp"); unpub_gw("nb_dev"); unpub_gw("mstp", true);
     }
 
-    // 2. Objets BACnet
     if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
         for (auto& dev : bacnet_network_cache) {
             if (t_did != 0 && dev.ulDeviceId != t_did) continue;
@@ -629,27 +635,26 @@ void unpublish_ha_discovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type, co
 
                 const char* t_str = "OBJ";
                 switch(obj.usType) {
-                    case 0: t_str="AI"; break;
-                    case 1: t_str="AO"; break;
-                    case 2: t_str="AV"; break;
-                    case 3: t_str="BI"; break;
-                    case 4: t_str="BO"; break;
-                    case 5: t_str="BV"; break;
-                    case 13: t_str="MSI"; break;
-                    case 14: t_str="MSO"; break;
-                    case 19: t_str="MSV"; break;
+                    case OBJ_ANALOG_INPUT:       t_str = "AI"; break;
+                    case OBJ_ANALOG_OUTPUT:      t_str = "AO"; break;
+                    case OBJ_ANALOG_VALUE:       t_str = "AV"; break;
+                    case OBJ_BINARY_INPUT:       t_str = "BI"; break;
+                    case OBJ_BINARY_OUTPUT:      t_str = "BO"; break;
+                    case OBJ_BINARY_VALUE:       t_str = "BV"; break;
+                    case OBJ_MULTI_STATE_INPUT:  t_str = "MSI"; break;
+                    case OBJ_MULTI_STATE_OUTPUT: t_str = "MSO"; break;
+                    case OBJ_MULTI_STATE_VALUE:  t_str = "MSV"; break;
                 }
                 char uniq_id[64];
                 snprintf(uniq_id, sizeof(uniq_id), "bacnet_%lu_%s_%lu", (unsigned long)dev.ulDeviceId, t_str, (unsigned long)obj.ulInstance);
                 
-                // Balayage de TOUS les composants possibles pour cet ID unique (v6.4.1 Hardened)
                 const char* components[] = {"sensor", "binary_sensor", "switch", "number", "select"};
                 for (const char* comp : components) {
                     char topic[128];
                     snprintf(topic, sizeof(topic), "homeassistant/%s/%s/config", comp, uniq_id);
                     esp_mqtt_client_publish(mqtt_client, topic, "", 0, 1, 1);
                 }
-                vTaskDelay(pdMS_TO_TICKS(10)); // Petit pacing pour le cleanup
+                vTaskDelay(pdMS_TO_TICKS(10));
             }
         }
         xSemaphoreGive(cache_mutex);
