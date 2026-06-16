@@ -27,6 +27,7 @@ enum StorageType {
     STORE_OBJ_UNITS, 
     STORE_OBJ_REAL, 
     STORE_OBJ_STATES,
+    STORE_OBJ_STATUS_FLAGS,
     STORE_OBJ_VALUE 
 };
 
@@ -51,6 +52,7 @@ static const DiscoveryStepConfig DISCOVERY_STEPS[] = {
     {65, -1, STORE_OBJ_REAL},   // DISC_OBJ_MAX
     {110, 0, STORE_OBJ_STATES}, // DISC_OBJ_STATES
     {87, -1, STORE_NONE},       // DISC_OBJ_COMMANDABLE
+    {111, -1, STORE_OBJ_STATUS_FLAGS}, // DISC_OBJ_STATUS_FLAGS
     {85, -1, STORE_OBJ_VALUE}   // DISC_OBJ_VALUE
 };
 
@@ -372,8 +374,11 @@ static void handle_error_pdu(BACnetDevice &dev, uint8_t type) {
             case DISC_OBJ_STATES:  dev.ucDiscStep = DISC_OBJ_COMMANDABLE; break;
             case DISC_OBJ_COMMANDABLE:
                 o.xIsCommandable = (o.usType==13||o.usType==14||o.usType==19||o.usType<=5);
-                if(o.xEnabled || dev.xReloadSingle) dev.ucDiscStep = DISC_OBJ_VALUE;
+                if(o.xEnabled || dev.xReloadSingle) dev.ucDiscStep = DISC_OBJ_STATUS_FLAGS;
                 else { if(!dev.xReloadSingle) dev.usDiscObjIdx++; dev.ucDiscStep = DISC_OBJ_OID; }
+                break;
+            case DISC_OBJ_STATUS_FLAGS:
+                dev.ucDiscStep = DISC_OBJ_VALUE;
                 break;
             case DISC_OBJ_VALUE:
                 if(!dev.xReloadSingle) dev.usDiscObjIdx++;
@@ -565,11 +570,28 @@ static void handle_complex_ack_discovery(BACnetDevice &dev, const uint8_t *apdu,
             break;
         }
 
+        case STORE_OBJ_STATUS_FLAGS: {
+            if (dev.usDiscObjIdx < dev.objects.size()) {
+                auto& o = dev.objects[dev.usDiscObjIdx];
+                if (vt.number == 8 && vt.len >= 2) {
+                    uint8_t ucFlags = 0;
+                    uint8_t ucFirstByte = apdu[ap + 1];
+                    if (ucFirstByte & 0x80) ucFlags |= BACNET_STATUS_IN_ALARM;       // Bit 0
+                    if (ucFirstByte & 0x40) ucFlags |= BACNET_STATUS_FAULT;          // Bit 1
+                    if (ucFirstByte & 0x20) ucFlags |= BACNET_STATUS_OVERRIDDEN;     // Bit 2
+                    if (ucFirstByte & 0x10) ucFlags |= BACNET_STATUS_OUT_OF_SERVICE; // Bit 3
+                    o.ucStatusFlags = ucFlags;
+                }
+                dev.ucDiscStep = DISC_OBJ_VALUE;
+            }
+            break;
+        }
+
         case STORE_NONE:
             if (dev.ucDiscStep == DISC_OBJ_COMMANDABLE) {
                 if (dev.usDiscObjIdx < dev.objects.size()) {
                     auto& o = dev.objects[dev.usDiscObjIdx]; o.xIsCommandable = true;
-                    if(o.xEnabled||dev.xReloadSingle) dev.ucDiscStep = DISC_OBJ_VALUE;
+                    if(o.xEnabled||dev.xReloadSingle) dev.ucDiscStep = DISC_OBJ_STATUS_FLAGS;
                     else { if(!dev.xReloadSingle) dev.usDiscObjIdx++; dev.ucDiscStep = DISC_OBJ_OID; if(dev.xReloadSingle){dev.xDiscoveryDone=true; dev.xReloadSingle=false;} }
                 }
                 ap = al; 
@@ -965,6 +987,10 @@ void execute_bacnet_work() {
                 if (j.prop_id == 77) { // Object_Name
                     l = build_write_property_name_apdu(b, next_invoke_id++, j.obj_type, j.obj_instance, j.name);
                     z_log(pdLOG_INFO, "BACNET", "WRITE obj: %u:%lu (Name) -> %s\n", j.obj_type, (unsigned long)j.obj_instance, j.name);
+                } else if (j.prop_id == 96) { // Out_Of_Service
+                    bool xIsOos = (j.write_value > 0.5f);
+                    l = build_write_property_outofservice_apdu(b, next_invoke_id++, j.obj_type, j.obj_instance, xIsOos);
+                    z_log(pdLOG_INFO, "BACNET", "WRITE obj: %u:%lu (Out_Of_Service) -> %d\n", j.obj_type, (unsigned long)j.obj_instance, xIsOos);
                 } else { // Present_Value (85) ou autre numérique
                     l = build_write_property_value_apdu(b, next_invoke_id++, j.obj_type, j.obj_instance, j.prop_id, j.write_value);
                     z_log(pdLOG_INFO, "BACNET", "WRITE obj: %u:%lu (Prop %u) -> %.2f\n", j.obj_type, (unsigned long)j.obj_instance, j.prop_id, j.write_value);
@@ -1077,6 +1103,16 @@ void execute_discovery_logic(BACnetDevice &dev) {
                 } else {
                     type = o.usType;
                     inst = o.ulInstance;
+
+                    // AJOUT : Bypass de sécurité. Si on doit lire la valeur mais que la sonde est en panne (Fault=1)
+                    if (dev.ucDiscStep == DISC_OBJ_VALUE && o.isFault()) {
+                        o.fPresentValue = NAN; // On invalide la valeur
+                        if(!dev.xReloadSingle) dev.usDiscObjIdx++;
+                        dev.ucDiscStep = DISC_OBJ_OID;
+                        prop = 0;
+                        break;
+                    }
+
                     if (dev.ucDiscStep == DISC_OBJ_STATES) {
                         if (o.ucExpectedStatesCount > 0 && o.state_texts.empty()) index = -1;
                         else if (!o.state_texts.empty()) {

@@ -532,3 +532,12 @@
 - **Phase 3** : Implémentation du moteur de Polling par Lot (ReadPropertyMultiple - RPM) pour optimiser les performances du bus.
 - **Phase 4** : Découverte dynamique BACnet (lecture adaptative des limites réseaux distantes via la FSM MS/TP).
 - Mise à jour stricte de `GEMINI.md` pour imposer les normes de codage et le workflow de compilation.
+
+## [v7.0.0] - 2026-06-16
+### Ajout
+- **Support Status_Flags (Prop 111)** : Décodage du tag BitString BACnet pour les drapeaux Alarm, Fault, Overridden et Out_Of_Service lors de la phase de découverte.
+- **Bypass de sécurité si Fault=1** : Saut automatique de la phase de lecture de la Present_Value et attribution de `NAN` si la sonde est marquée en panne (Fault), afin d'éviter de perturber le bus MS/TP.
+- **Écriture Out_Of_Service (Prop 96)** : Intégration de la fonction d'écriture APDU dédiée et routage approprié du job `JOB_WRITE_PROP`.
+- **Correction d'erreur de compilation** : Remplacement du point-virgule par une virgule à la ligne 140 de `src/z_bacnet.h`.
+- **Validation** : Compilation locale réussie et flashage via OTA sur 192.168.1.50 validé.
+
