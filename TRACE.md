@@ -541,3 +541,19 @@
 - **Correction d'erreur de compilation** : Remplacement du point-virgule par une virgule à la ligne 140 de `src/z_bacnet.h`.
 - **Validation** : Compilation locale réussie et flashage via OTA sur 192.168.1.50 validé.
 
+## [v7.0.1] - 2026-06-16
+### Ajout
+- **Hack Climatisation Complet** :
+  - Souscription aux commandes MQTT de contournement `/outofservice/set` et décodage de `"ON"` / `"OFF"`.
+  - Routage dynamique des publications MQTT vers le topic `/outofservice` pour la propriété 96.
+  - Déclaration automatique (Autodiscovery) dans Home Assistant d'un commutateur d'isolation (`switch`) et d'un curseur de forçage de valeur (`number`) pour toutes les Analog Inputs (AI).
+  - Blocage de la publication de la Present_Value physique si la sonde est hors-service (`Out_Of_Service`) et synchronisation immédiate de l'état du commutateur lors des mises à jour.
+- **Gestion de la Priorité de Commande** :
+  - Ajout du paramètre `ucPriority` à la fonction d'écriture APDU [build_write_property_value_apdu](file:///home/dev/bacnet_2_mqtt/src/z_bacnet.cpp#L776) avec injection du Tag contextuel 4.
+  - Ajout de la route HTTP POST `/api/writevalue` acceptant le paramètre optionnel `priority` pour les jobs d'écriture.
+  - Ajout de la route HTTP POST `/api/outofservice` pour forcer le débrayage manuel d'un objet (Priorité 8).
+- **Persistance NVS** :
+  - Sauvegarde et restauration des drapeaux `ucStatusFlags` (comprenant l'Out_Of_Service) en mémoire flash.
+- **Validation** : Compilation locale réussie et déploiement OTA sur 192.168.1.50 validé.
+
+

@@ -67,6 +67,10 @@ void load_device_objects(uint32_t ulDeviceId) {
                                 obj.fMinValue = page.objects[i].fMinValue;
                                 obj.fMaxValue = page.objects[i].fMaxValue;
                                 obj.fStepValue = page.objects[i].fStepValue;
+                                
+                                // AJOUT CHIRURGICAL : Restauration des Status_Flags depuis la flash
+                                obj.ucStatusFlags = page.objects[i].ucStatusFlags;
+                                
                                 strlcpy(obj.cMinRef, page.objects[i].cMinRef, sizeof(obj.cMinRef));
                                 strlcpy(obj.cMaxRef, page.objects[i].cMaxRef, sizeof(obj.cMaxRef));
                                 
@@ -330,6 +334,10 @@ void save_device_objects_locked(uint32_t ulDeviceId) {
                     page.objects[i].fMinValue = o.fMinValue;
                     page.objects[i].fMaxValue = o.fMaxValue;
                     page.objects[i].fStepValue = o.fStepValue;
+                    
+                    // AJOUT CHIRURGICAL : Sauvegarde des Status_Flags en mémoire non volatile
+                    page.objects[i].ucStatusFlags = o.ucStatusFlags;
+                    
                     strlcpy(page.objects[i].cMinRef, o.cMinRef, sizeof(page.objects[i].cMinRef));
                     strlcpy(page.objects[i].cMaxRef, o.cMaxRef, sizeof(page.objects[i].cMaxRef));
                     strlcpy(page.objects[i].cName, o.cName, 32);

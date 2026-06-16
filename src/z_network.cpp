@@ -547,6 +547,113 @@ void setup_web_routes() {
         } else request->send(400, "text/plain", "Missing id");
     });
 
+    // =========================================================================
+    // AJOUT CHIRURGICAL 1/2 : Route API pour forcer l'état OutOfService d'un objet (Hack Clim)
+    // Paramètres attendus : did (Device ID), inst (Instance ID), state (1/0, true/false, ON/OFF)
+    // =========================================================================
+    webServer.on("/api/outofservice", HTTP_POST, [](AsyncWebServerRequest *request){
+        if(!is_authenticated(request)) return;
+        
+        if (request->hasParam("did", true) && request->hasParam("inst", true) && request->hasParam("state", true)) {
+            uint32_t ulDid = request->getParam("did", true)->value().toInt();
+            uint32_t ulInst = request->getParam("inst", true)->value().toInt();
+            
+            String state_str = request->getParam("state", true)->value();
+            bool xState = (state_str == "1" || state_str.equalsIgnoreCase("true") || state_str.equalsIgnoreCase("on"));
+            
+            uint16_t usType = request->hasParam("type", true) ? request->getParam("type", true)->value().toInt() : 0; 
+            
+            bool xDeviceFound = false;
+            BACnetJob xJob;
+            memset(&xJob, 0, sizeof(BACnetJob)); // Purge la mémoire pour éviter les valeurs parasites
+            
+            xJob.type = JOB_WRITE_PROP; 
+            xJob.obj_type = usType;
+            xJob.obj_instance = ulInst;
+            xJob.prop_id = 96; // PROP_OUT_OF_SERVICE
+            xJob.write_value = xState ? 1.0f : 0.0f;
+            xJob.priority = 8; // Priorité 8 (Manuel) par défaut pour le débrayage
+            xJob.target_mac = 255;
+            
+            if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
+                for (auto& dev : bacnet_network_cache) {
+                    if (dev.ulDeviceId == ulDid) {
+                        xJob.target_mac = dev.ucMacAddress;
+                        xDeviceFound = true;
+                        break;
+                    }
+                }
+                xSemaphoreGive(cache_mutex);
+            }
+            
+            if (xDeviceFound) {
+                enqueue_bacnet_job(xJob);
+                z_log(pdLOG_INFO, "API", "OutOfService %s ENQUEUED for %u:%lu\n", xState ? "ON" : "OFF", usType, (unsigned long)ulInst);
+                request->send(200, "text/plain", "OUT_OF_SERVICE ENQUEUED");
+            } else {
+                request->send(404, "text/plain", "Device not found");
+            }
+        } else {
+            request->send(400, "text/plain", "Missing params (requires: did, inst, state)");
+        }
+    });
+
+    // =========================================================================
+    // AJOUT CHIRURGICAL 2/2 : Route API pour écrire une valeur générique (Present_Value ou autre)
+    // Paramètres attendus : did, type, inst, prop, val, [priority] (Optionnel, ex: 8)
+    // =========================================================================
+    webServer.on("/api/writevalue", HTTP_POST, [](AsyncWebServerRequest *request){
+        if(!is_authenticated(request)) return;
+        
+        if (request->hasParam("did", true) && request->hasParam("type", true) && 
+            request->hasParam("inst", true) && request->hasParam("prop", true) && 
+            request->hasParam("val", true)) {
+            
+            uint32_t ulDid = request->getParam("did", true)->value().toInt();
+            uint16_t usType = request->getParam("type", true)->value().toInt();
+            uint32_t ulInst = request->getParam("inst", true)->value().toInt();
+            uint8_t ucProp = request->getParam("prop", true)->value().toInt();
+            float fVal = request->getParam("val", true)->value().toFloat();
+            
+            uint8_t ucPriority = request->hasParam("priority", true) ? request->getParam("priority", true)->value().toInt() : 0;
+            
+            bool xDeviceFound = false;
+            BACnetJob xJob;
+            memset(&xJob, 0, sizeof(BACnetJob)); // Initialisation propre à 0
+            
+            xJob.type = JOB_WRITE_PROP; 
+            xJob.obj_type = usType;
+            xJob.obj_instance = ulInst;
+            xJob.prop_id = ucProp;
+            xJob.write_value = fVal;
+            xJob.priority = ucPriority; // L'API transmet la priorité au moteur BACnet
+            xJob.target_mac = 255;
+            
+            // Recherche de l'adresse MAC cible
+            if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
+                for (auto& dev : bacnet_network_cache) {
+                    if (dev.ulDeviceId == ulDid) {
+                        xJob.target_mac = dev.ucMacAddress;
+                        xDeviceFound = true;
+                        break;
+                    }
+                }
+                xSemaphoreGive(cache_mutex);
+            }
+            
+            // Envoi dans la file d'attente
+            if (xDeviceFound) {
+                enqueue_bacnet_job(xJob);
+                z_log(pdLOG_INFO, "API", "WriteValue %.2f ENQUEUED for %u:%lu (Prop: %u, Prio: %u)\n", fVal, usType, (unsigned long)ulInst, ucProp, ucPriority);
+                request->send(200, "text/plain", "WRITE_VALUE ENQUEUED");
+            } else {
+                request->send(404, "text/plain", "Device not found");
+            }
+        } else {
+            request->send(400, "text/plain", "Missing params (requires: did, type, inst, prop, val)");
+        }
+    });
+
     // Route API principale pour la sauvegarde des paramètres système (NVS).
     // v6.9.3: Implémentation du filtre 'dirty' pour éviter de sur-solliciter la NVS et geler le bus SPI.
     // Valide et enregistre les données des différents onglets de configuration (WiFi, MQTT, BACnet, Polling, Security).

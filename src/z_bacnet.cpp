@@ -773,7 +773,7 @@ uint16_t build_write_property_name_apdu(uint8_t* buffer, uint8_t invoke_id, uint
     return len;
 }
 
-uint16_t build_write_property_value_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, uint8_t prop_id, float value) {
+uint16_t build_write_property_value_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, uint8_t prop_id, float value, uint8_t ucPriority) {
     uint16_t len = 0;
     buffer[len++] = 0x01; buffer[len++] = 0x04; buffer[len++] = 0x02; buffer[len++] = 0x03;
     buffer[len++] = invoke_id; buffer[len++] = 0x0F; buffer[len++] = 0x0C;
@@ -792,6 +792,10 @@ uint16_t build_write_property_value_apdu(uint8_t* buffer, uint8_t invoke_id, uin
         memcpy(&buffer[len], &tmp, 4); len += 4;
     }
     buffer[len++] = 0x3F;
+    if (ucPriority > 0 && ucPriority <= 16) {
+        buffer[len++] = 0x49;
+        buffer[len++] = ucPriority;
+    }
     return len;
 }
 
@@ -992,8 +996,8 @@ void execute_bacnet_work() {
                     l = build_write_property_outofservice_apdu(b, next_invoke_id++, j.obj_type, j.obj_instance, xIsOos);
                     z_log(pdLOG_INFO, "BACNET", "WRITE obj: %u:%lu (Out_Of_Service) -> %d\n", j.obj_type, (unsigned long)j.obj_instance, xIsOos);
                 } else { // Present_Value (85) ou autre numérique
-                    l = build_write_property_value_apdu(b, next_invoke_id++, j.obj_type, j.obj_instance, j.prop_id, j.write_value);
-                    z_log(pdLOG_INFO, "BACNET", "WRITE obj: %u:%lu (Prop %u) -> %.2f\n", j.obj_type, (unsigned long)j.obj_instance, j.prop_id, j.write_value);
+                    l = build_write_property_value_apdu(b, next_invoke_id++, j.obj_type, j.obj_instance, j.prop_id, j.write_value, j.priority);
+                    z_log(pdLOG_INFO, "BACNET", "WRITE obj: %u:%lu (Prop %u) -> %.2f (Prio: %u)\n", j.obj_type, (unsigned long)j.obj_instance, j.prop_id, j.write_value, j.priority);
                 }
                 
                 // Préparation du suivi de réponse pour la FSM MS/TP

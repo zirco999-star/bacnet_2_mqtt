@@ -40,6 +40,11 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                 snprintf(sub_topic, sizeof(sub_topic), "%s/+/+/+/set", sysCfg.mqtt_prefix);
                 esp_mqtt_client_subscribe(mqtt_client, sub_topic, 0);
                 
+                // AJOUT CHIRURGICAL : Souscription aux commandes de contournement OutOfService (AI uniquement)
+                char sub_topic_oos[128];
+                snprintf(sub_topic_oos, sizeof(sub_topic_oos), "%s/+/+/+/outofservice/set", sysCfg.mqtt_prefix);
+                esp_mqtt_client_subscribe(mqtt_client, sub_topic_oos, 0);
+                
                 // Signal pour la découverte HA complète suite à reconnexion
                 force_full_discovery = true; 
                 pending_discovery = true;
@@ -112,16 +117,27 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                                     job.type = JOB_WRITE_PROP;
                                     job.target_mac = target_mac;
                                     job.obj_instance = t.substring(p3 + 1, p4).toInt();
-                                    job.prop_id = 85;
+                                    
+                                    // AJOUT CHIRURGICAL : Détermination de l'action de forçage OutOfService
+                                    int p5 = t.indexOf('/', p4 + 1);
+                                    if (p5 > 0 && t.substring(p4 + 1, p5) == "outofservice") {
+                                        job.prop_id = 96;
+                                    } else {
+                                        job.prop_id = 85;
+                                    }
+                                    
                                     String type_str = t.substring(p2 + 1, p3);
                                     
                                     if (type_str == "AO" || type_str == "AV") job.obj_type = (type_str == "AO") ? 1 : 2;
                                     else if (type_str == "BO" || type_str == "BV") job.obj_type = (type_str == "BO") ? 4 : 5;
                                     else if (type_str == "MSO" || type_str == "MSV") job.obj_type = (type_str == "MSO") ? 14 : 19;
+                                    else if (type_str == "AI") job.obj_type = 0;
                                     else { job.type = JOB_WHO_IS; found = false; }
-
+                                    
                                     if (found) {
-                                        if (job.obj_type == 14 || job.obj_type == 19) {
+                                        if (job.prop_id == 96) {
+                                            job.write_value = (String(payload_buf) == "ON") ? 1.0f : 0.0f;
+                                        } else if (job.obj_type == 14 || job.obj_type == 19) {
                                             // Conversion Texte -> Index pour Multi-State
                                             bool text_found = false;
                                             for (auto& o : d.objects) {
@@ -219,7 +235,9 @@ static void mqtt_gatekeeper_task(void *pv) {
                     case OBJ_MULTI_STATE_OUTPUT: t_str = "MSO"; break;
                     case OBJ_MULTI_STATE_VALUE:  t_str = "MSV"; break;
                 }
-                const char* subtopic = (pubJob.prop_id == 77) ? "name" : "state";
+                const char* subtopic = "state";
+                if (pubJob.prop_id == 77) subtopic = "name";
+                else if (pubJob.prop_id == 96) subtopic = "outofservice";
                 snprintf(topic, sizeof(topic), "%s/%lu/%s/%lu/%s", sysCfg.mqtt_prefix, (unsigned long)pubJob.ulDeviceId, t_str, (unsigned long)pubJob.obj_instance, subtopic);
                 
                 if (esp_mqtt_client_publish(mqtt_client, topic, pubJob.value_string, 0, 1, pubJob.retain) < 0) {
@@ -617,6 +635,94 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                 } else {
                     total_published++;
                 }
+
+                // AJOUT CHIRURGICAL : Déclaration des entités de contournement (hack) pour les Analog Inputs (AI)
+                if (obj_type == OBJ_ANALOG_INPUT) {
+                    // --- 1. Création de l'entité SWITCH pour "Out of Service" ---
+                    {
+                        JsonDocument sw_doc;
+                        char sw_uniq_id[128];
+                        snprintf(sw_uniq_id, sizeof(sw_uniq_id), "bacnet_%lu_AI_%lu_outofservice", (unsigned long)current_did, (unsigned long)obj_inst);
+                        char sw_config_topic[128];
+                        snprintf(sw_config_topic, sizeof(sw_config_topic), "homeassistant/switch/%s/config", sw_uniq_id);
+
+                        sw_doc["uniq_id"] = String(sw_uniq_id);
+                        sw_doc["name"] = String(obj_name) + " Out of Service";
+                        sw_doc["icon"] = "mdi:sensor-off";
+                        sw_doc["avty_t"] = String(lwt_topic);
+                        sw_doc["pl_avail"] = "online";
+                        sw_doc["pl_not_avail"] = "offline";
+                        
+                        char sw_state_topic[128];
+                        snprintf(sw_state_topic, sizeof(sw_state_topic), "%s/outofservice", base_topic);
+                        sw_doc["stat_t"] = String(sw_state_topic);
+
+                        char sw_cmd_topic[128];
+                        snprintf(sw_cmd_topic, sizeof(sw_cmd_topic), "%s/outofservice/set", base_topic);
+                        sw_doc["cmd_t"] = String(sw_cmd_topic);
+
+                        sw_doc["pl_on"] = "ON";
+                        sw_doc["pl_off"] = "OFF";
+
+                        // Raccordement au même Device HA
+                        JsonObject sw_device = sw_doc["dev"].to<JsonObject>();
+                        JsonArray sw_ids = sw_device["ids"].to<JsonArray>();
+                        sw_ids.add(String(dev_id_str));
+                        sw_device["name"] = dev_name.length() > 0 ? String(dev_name) : String(dev_id_str);
+                        sw_device["mf"] = dev_vendor.length() > 0 ? String(dev_vendor) : "BACnet Manufacturer";
+                        sw_device["sw"] = configVERSION_GLOBAL;
+
+                        String sw_payload;
+                        serializeJson(sw_doc, sw_payload);
+                        esp_mqtt_client_publish(mqtt_client, sw_config_topic, sw_payload.c_str(), sw_payload.length(), 1, 1);
+                        total_published++;
+                    }
+
+                    // --- 2. Création de l'entité NUMBER pour "Forcing Value" ---
+                    {
+                        JsonDocument num_doc;
+                        char num_uniq_id[128];
+                        snprintf(num_uniq_id, sizeof(num_uniq_id), "bacnet_%lu_AI_%lu_forcing", (unsigned long)current_did, (unsigned long)obj_inst);
+                        char num_config_topic[128];
+                        snprintf(num_config_topic, sizeof(num_config_topic), "homeassistant/number/%s/config", num_uniq_id);
+
+                        num_doc["uniq_id"] = String(num_uniq_id);
+                        num_doc["name"] = String(obj_name) + " Forcing Value";
+                        num_doc["icon"] = "mdi:thermometer-cog";
+                        num_doc["avty_t"] = String(lwt_topic);
+                        num_doc["pl_avail"] = "online";
+                        num_doc["pl_not_avail"] = "offline";
+                        
+                        num_doc["stat_t"] = "~/state"; 
+                        num_doc["cmd_t"] = "~/set";
+
+                        float final_min = isnan(obj_min) ? sysCfg.default_number_min : obj_min;
+                        float final_max = isnan(obj_max) ? sysCfg.default_number_max : obj_max;
+                        num_doc["min"] = final_min;
+                        num_doc["max"] = final_max;
+                        num_doc["step"] = obj_step;
+
+                        String unit = String(obj_unit_text);
+                        if (unit == "Unknown" || unit.length() == 0 || unit == "none") unit = get_unit_text(obj_units);
+                        if (unit != "no-units" && unit.length() > 0) {
+                            if (unit == "%RH") unit = "%";
+                            num_doc["unit_of_meas"] = unit;
+                        }
+
+                        // Raccordement au même Device HA
+                        JsonObject num_device = num_doc["dev"].to<JsonObject>();
+                        JsonArray num_ids = num_device["ids"].to<JsonArray>();
+                        num_ids.add(String(dev_id_str));
+                        num_device["name"] = dev_name.length() > 0 ? String(dev_name) : String(dev_id_str);
+                        num_device["mf"] = dev_vendor.length() > 0 ? String(dev_vendor) : "BACnet Manufacturer";
+                        num_device["sw"] = configVERSION_GLOBAL;
+
+                        String num_payload;
+                        serializeJson(num_doc, num_payload);
+                        esp_mqtt_client_publish(mqtt_client, num_config_topic, num_payload.c_str(), num_payload.length(), 1, 1);
+                        total_published++;
+                    }
+                }
                 
             } else if ((!dev_enabled || !obj_enabled) && dev_discovery_done) {
                 esp_mqtt_client_publish(mqtt_client, topic, "", 0, 1, 1);
@@ -635,6 +741,12 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
 
 void publish_mqtt_topic(uint32_t ulDeviceId, BACnetObject& obj, uint8_t prop_id, bool retain) {
     if (!obj.xEnabled) return;
+
+    // MODIFICATION CHIRURGICALE : Blocage de la publication de la Present_Value physique pour les sondes isolées
+    if (prop_id == 85 && obj.usType == OBJ_ANALOG_INPUT && obj.isOutOfService()) {
+        return; 
+    }
+
     MQTTPublishJob pub;
     pub.ulDeviceId = ulDeviceId;
     pub.obj_type = obj.usType;
@@ -661,9 +773,18 @@ void publish_mqtt_topic(uint32_t ulDeviceId, BACnetObject& obj, uint8_t prop_id,
                 snprintf(pub.value_string, sizeof(pub.value_string), "%.2f", obj.fPresentValue);
                 break;
         }
+    } 
+    // MODIFICATION CHIRURGICALE : Formater la payload pour la propriété 96 (OutOfService)
+    else if (prop_id == 96) {
+        strlcpy(pub.value_string, obj.isOutOfService() ? "ON" : "OFF", sizeof(pub.value_string));
     } else return;
 
     enqueue_mqtt_publish(pub);
+
+    // AJOUT CHIRURGICAL : Synchronisation de publication automatique du statut du switch
+    if (prop_id == 85 && obj.usType == OBJ_ANALOG_INPUT) {
+        publish_mqtt_topic(ulDeviceId, obj, 96, retain);
+    }
 }
 
 void unpublish_ha_discovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type, const char* old_prefix) {
