@@ -1,3 +1,58 @@
+/**
+ * @file z_mqtt.cpp
+ * @brief Module MQTT complet : connexion broker, Gatekeeper, publication BACnet,
+ *        Auto-Discovery Home Assistant, réception des commandes /set et Circuit Breaker.
+ *
+ * ## Rôle
+ * Ce fichier implémente toute la couche MQTT de la passerelle BACnet2MQTT :
+ * - Connexion/reconnexion au broker MQTT via ESP-IDF mqtt_client (TCP, QoS 1)
+ * - Pattern Circuit Breaker : après 3 échecs consécutifs, arrêt total des tentatives
+ *   pour éviter de surcharger le broker ou le réseau
+ * - Tâche Gatekeeper FreeRTOS dédiée sur Core 0 (priorité 5) qui consomme la queue
+ *   de publication, publie les statuts Gateway et orchestre la HA Discovery
+ * - Auto-Discovery Home Assistant conforme (payloads JSON retained sur homeassistant/...)
+ * - Réception des commandes /set et /outofservice/set pour piloter les écritures BACnet
+ * - Publication LWT (Last Will and Testament) pour signaler online/offline à HA
+ * - Lazy Save NVS : la sauvegarde des devices modifiés est différée et exécutée
+ *   sur Core 0 pour ne pas bloquer la FSM MS/TP temps réel sur Core 1
+ *
+ * ## Architecture
+ * - Le handler d'événements mqtt_event_handler() s'exécute dans le contexte de la
+ *   tâche ESP-MQTT (Core 0). Il ne fait que positionner des flags atomiques et traiter
+ *   les messages reçus (MQTT_EVENT_DATA).
+ * - La tâche mqtt_gatekeeper_task() boucle toutes les 10ms et assure :
+ *   1. Les logs différés (flags atomiques → z_log)
+ *   2. La HA Discovery (coalescée pour éviter les rafales)
+ *   3. La consommation de la queue de publication (MQTTPublishJob)
+ *   4. La télémétrie périodique de la Gateway (version, RSSI, heap, uptime, etc.)
+ *   5. Le Lazy Save NVS des devices dirty
+ * - Les producteurs (BACnet polling, API web) enfilent des MQTTPublishJob via
+ *   enqueue_mqtt_publish() depuis n'importe quel core.
+ *
+ * ## Dépendances
+ * - z_mqtt.h   : Déclaration de MQTTPublishJob et prototypes publics
+ * - z_config.h : Structure Config (sysCfg), handle mqtt_client, constantes globales
+ * - z_bacnet.h : Structures BACnetDevice/BACnetObject, cache réseau, mutex, énumérations
+ * - z_network.h : z_log() (logging centralisé vers WebSocket + Serial)
+ * - z_nvs.h    : save_device_objects_locked() (persistance NVS paginée)
+ * - ArduinoJson : Sérialisation des payloads HA Discovery
+ *
+ * ## Hiérarchie des topics MQTT
+ * ```
+ * {prefix}/{deviceId}/{typeAbbr}/{objInstance}/state     ← valeurs BACnet
+ * {prefix}/{deviceId}/{typeAbbr}/{objInstance}/name      ← noms d'objets (retained)
+ * {prefix}/{deviceId}/{typeAbbr}/{objInstance}/set       ← commandes écriture
+ * {prefix}/{deviceId}/{typeAbbr}/{objInstance}/outofservice       ← état OoS
+ * {prefix}/{deviceId}/{typeAbbr}/{objInstance}/outofservice/set   ← commande OoS
+ * {prefix}/B2M/{key}/state                              ← télémétrie Gateway
+ * tele/{prefix}/LWT                                     ← Last Will and Testament
+ * homeassistant/{component}/{uniq_id}/config             ← HA Auto-Discovery
+ * ```
+ *
+ * @note Matériel cible : Waveshare ESP32-S3-RS485-CAN (8MB Flash, 8MB OPI PSRAM)
+ * @note La tâche Gatekeeper utilise 16KB de pile pour supporter les payloads JSON
+ *       volumineux de la HA Discovery (sérialisation ArduinoJson sur la pile).
+ */
 #include "z_mqtt.h"
 #include "z_bacnet.h"
 #include <string.h>
@@ -7,26 +62,68 @@
 #include "z_network.h"
 #include "z_nvs.h"
 
-uint32_t period_mqtt_pub_count = 0;
-uint32_t period_mqtt_obj_count = 0;
-uint32_t period_mqtt_b2m_count = 0;
-uint32_t period_mqtt_tele_count = 0;
+/* ─────────────────────────────────────────────────────────────────────────────
+ *  COMPTEURS DE TÉLÉMÉTRIE
+ *  Réinitialisés à chaque cycle de publication périodique (mqtt_poll_interval).
+ *  Permettent d'afficher dans les logs le débit de messages par période.
+ * ───────────────────────────────────────────────────────────────────────────── */
+uint32_t period_mqtt_pub_count = 0;     ///< Total messages publiés toutes catégories
+uint32_t period_mqtt_obj_count = 0;     ///< Messages de valeurs BACnet (state/name)
+uint32_t period_mqtt_b2m_count = 0;     ///< Messages de télémétrie Gateway (B2M)
+uint32_t period_mqtt_tele_count = 0;    ///< Messages de télémétrie système (LWT, etc.)
 
-static int mqtt_fail_count = 0;
-static std::atomic<bool> circuit_breaker_active{false};
-static std::atomic<bool> pending_discovery{false};
-static std::atomic<uint32_t> target_did{0};
-static std::atomic<uint32_t> target_inst{0};
-static std::atomic<uint16_t> target_type{0xFFFF};
-static bool mqtt_is_connected = false;
-static bool force_full_discovery = false; 
-static std::atomic<bool> mqtt_pending_connected_log{false};
-static std::atomic<bool> mqtt_pending_disconnected_log{false};
-static std::atomic<bool> mqtt_pending_auth_error_log{false};
-static std::atomic<bool> mqtt_pending_breaker_log{false};
-static std::atomic<bool> mqtt_pending_wifi_loss_log{false};
-static char lwt_topic[128] = {0};
+/* ─────────────────────────────────────────────────────────────────────────────
+ *  CIRCUIT BREAKER ET FLAGS D'ÉTAT
+ *  Le Circuit Breaker protège le système contre les boucles de reconnexion
+ *  infinies (broker injoignable, credentials invalides).
+ *  Après 3 échecs consécutifs, le client MQTT est détruit et aucune
+ *  tentative n'est faite jusqu'au prochain redémarrage ou reconfiguration.
+ *
+ *  Les flags atomiques pending_*_log permettent de déporter les appels z_log()
+ *  hors du contexte du handler d'événements ESP-MQTT (qui tourne dans une
+ *  tâche système à pile réduite). Le Gatekeeper les consomme à chaque cycle.
+ * ───────────────────────────────────────────────────────────────────────────── */
+static int mqtt_fail_count = 0;                              ///< Compteur d'échecs consécutifs (0..3)
+static std::atomic<bool> circuit_breaker_active{false};      ///< Vrai si le disjoncteur est déclenché
+static std::atomic<bool> pending_discovery{false};           ///< Demande de HA Discovery en attente
+static std::atomic<uint32_t> target_did{0};                  ///< Device ID cible pour discovery (0 = global)
+static std::atomic<uint32_t> target_inst{0};                 ///< Instance cible (0xFFFFFFFF = toutes)
+static std::atomic<uint16_t> target_type{0xFFFF};            ///< Type cible (0xFFFF = tous)
+static bool mqtt_is_connected = false;                       ///< État de connexion au broker
+static bool force_full_discovery = false;                    ///< Force une discovery complète à la reconnexion
+static std::atomic<bool> mqtt_pending_connected_log{false};     ///< Flag différé : log "Connected"
+static std::atomic<bool> mqtt_pending_disconnected_log{false};  ///< Flag différé : log "Disconnected"
+static std::atomic<bool> mqtt_pending_auth_error_log{false};    ///< Flag différé : log "Auth Error"
+static std::atomic<bool> mqtt_pending_breaker_log{false};       ///< Flag différé : log "Circuit Breaker"
+static std::atomic<bool> mqtt_pending_wifi_loss_log{false};     ///< Flag différé : log "WiFi Loss"
+static char lwt_topic[128] = {0};   ///< Topic LWT construit au setup (tele/{prefix}/LWT)
 
+/* ═══════════════════════════════════════════════════════════════════════════════
+ *  HANDLER D'ÉVÉNEMENTS MQTT (ESP-IDF)
+ * ═══════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * @brief Callback d'événements du client MQTT ESP-IDF.
+ *
+ * Exécuté dans le contexte de la tâche interne esp-mqtt (Core 0, pile ~4KB).
+ * Pour cette raison, toute opération lourde (log, JSON, NVS) est interdite ici.
+ * Seuls des flags atomiques sont positionnés pour traitement différé par le Gatekeeper.
+ *
+ * Gère trois types d'événements :
+ * - MQTT_EVENT_CONNECTED : souscription aux topics /set et /outofservice/set,
+ *   publication du statut "online" sur le topic LWT, déclenchement de la
+ *   HA Discovery complète.
+ * - MQTT_EVENT_DISCONNECTED / MQTT_EVENT_ERROR : incrémentation du compteur
+ *   d'échecs, détection des erreurs d'authentification (déclenchement immédiat
+ *   du Circuit Breaker), gestion de la perte WiFi.
+ * - MQTT_EVENT_DATA : parsing des messages reçus sur les topics /set et
+ *   /outofservice/set pour créer des BACnetJob d'écriture.
+ *
+ * @param handler_args  Non utilisé (NULL).
+ * @param base          Base d'événement ESP-IDF (MQTT).
+ * @param event_id      ID de l'événement (esp_mqtt_event_id_t).
+ * @param event_data    Pointeur vers la structure esp_mqtt_event_t.
+ */
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
     esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
     switch ((esp_mqtt_event_id_t)event_id) {
@@ -36,20 +133,34 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             circuit_breaker_active = false;
             mqtt_is_connected = true;
             {
+                /*
+                 * Souscription aux commandes d'écriture de Present_Value.
+                 * Format du topic : {prefix}/{deviceId}/{typeAbbr}/{objInstance}/set
+                 * Le wildcard '+' capture chaque segment variable.
+                 */
                 char sub_topic[128];
                 snprintf(sub_topic, sizeof(sub_topic), "%s/+/+/+/set", sysCfg.mqtt_prefix);
                 esp_mqtt_client_subscribe(mqtt_client, sub_topic, 0);
                 
-                // AJOUT CHIRURGICAL : Souscription aux commandes de contournement OutOfService (AI uniquement)
+                /*
+                 * Souscription aux commandes de contournement OutOfService (AI uniquement).
+                 * Permet à Home Assistant de forcer/libérer une sonde via un switch dédié.
+                 * Format : {prefix}/{deviceId}/AI/{instance}/outofservice/set
+                 */
                 char sub_topic_oos[128];
                 snprintf(sub_topic_oos, sizeof(sub_topic_oos), "%s/+/+/+/outofservice/set", sysCfg.mqtt_prefix);
                 esp_mqtt_client_subscribe(mqtt_client, sub_topic_oos, 0);
                 
-                // Signal pour la découverte HA complète suite à reconnexion
+                /*
+                 * Après reconnexion, on force une discovery HA complète pour
+                 * resynchroniser toutes les entités (le broker a pu perdre
+                 * les messages retained si redémarré entre-temps).
+                 */
                 force_full_discovery = true; 
                 pending_discovery = true;
                 
-                // Publication du statut Online
+                /* Publication du statut "online" sur le topic LWT (retained, QoS 1).
+                 * Le broker publie automatiquement "offline" si la connexion est perdue. */
                 if (lwt_topic[0] != 0) {
                     esp_mqtt_client_publish(mqtt_client, lwt_topic, "online", 0, 1, 1);
                     z_log(pdLOG_INFO, "MQTT", "Published: %s = %s\n", lwt_topic, "online");
@@ -61,13 +172,21 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         case MQTT_EVENT_ERROR:
         case MQTT_EVENT_DISCONNECTED:
             mqtt_is_connected = false;
+            /* Si le Circuit Breaker est déjà actif, on ignore les événements
+             * supplémentaires pour éviter des logs redondants. */
             if (circuit_breaker_active) break;
 
+            /* Distinction entre perte WiFi et erreur MQTT pure.
+             * En cas de perte WiFi, on ne compte pas comme échec MQTT
+             * car la reconnexion sera gérée par handle_mqtt(). */
             if (WiFi.status() != WL_CONNECTED) {
                 mqtt_pending_wifi_loss_log = true;
                 break;
             }
 
+            /* Détection d'erreur d'authentification : si le broker refuse
+             * les credentials, on saute directement à 3 échecs pour
+             * déclencher le Circuit Breaker immédiatement (pas de retry inutile). */
             if (event->error_handle != NULL) {
                 if (event->error_handle->error_type == MQTT_ERROR_TYPE_CONNECTION_REFUSED) {
                     if (event->error_handle->connect_return_code == MQTT_CONNECTION_REFUSE_BAD_USERNAME ||
@@ -81,12 +200,27 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             mqtt_fail_count++;
             mqtt_pending_disconnected_log = true;
 
+            /* Seuil du Circuit Breaker : 3 échecs consécutifs.
+             * Au-delà, le client sera détruit par handle_mqtt(). */
             if (mqtt_fail_count >= 3) {
                 mqtt_pending_breaker_log = true;
                 circuit_breaker_active = true;
             }
             break;
 
+        /**
+         * Traitement des messages reçus sur les topics de commande.
+         *
+         * Parsing du topic pour extraire deviceId, type, instance et action :
+         *   {prefix}/{deviceId}/{typeAbbr}/{objInstance}/set
+         *   {prefix}/{deviceId}/{typeAbbr}/{objInstance}/outofservice/set
+         *
+         * Le parsing utilise indexOf('/') séquentiel sur la String du topic.
+         * Positions : p1=après prefix, p2=après deviceId, p3=après type, p4=après instance.
+         *
+         * Pour les Multi-State (MSO, MSV), le payload texte est converti en index
+         * numérique BACnet (1-based) via les state_texts de l'objet en cache.
+         */
         case MQTT_EVENT_DATA:
             {
                 char topic_buf[128];
@@ -108,6 +242,11 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                         uint8_t target_mac = 0;
                         bool found = false;
 
+                        /* Section critique : accès au cache BACnet pour :
+                         * 1. Résoudre le deviceId en adresse MAC MS/TP
+                         * 2. Construire le BACnetJob d'écriture
+                         * 3. Pour les MSO/MSV, convertir le texte en index numérique
+                         * Timeout court (100ms) pour ne pas bloquer les autres tâches. */
                         if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
                             for (auto& d : bacnet_network_cache) {
                                 if (d.ulDeviceId == ulDeviceId) { 
@@ -119,7 +258,9 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                                     job.target_mac = target_mac;
                                     job.obj_instance = t.substring(p3 + 1, p4).toInt();
                                     
-                                    // AJOUT CHIRURGICAL : Détermination de l'action de forçage OutOfService
+                                    /* Distinction entre écriture Present_Value (prop 85) et
+                                     * commande OutOfService (prop 81) selon la structure du topic.
+                                     * Un 5e segment "outofservice" avant "/set" indique une commande OoS. */
                                     int p5 = t.indexOf('/', p4 + 1);
                                     if (p5 > 0 && t.substring(p4 + 1, p5) == "outofservice") {
                                         job.prop_id = 81;
@@ -127,6 +268,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                                         job.prop_id = 85;
                                     }
                                     
+                                    /* Décodage de l'abréviation du type d'objet BACnet.
+                                     * Mapping : AI=0, AO=1, AV=2, BI=3, BO=4, BV=5, MSI=13, MSO=14, MSV=19 */
                                     String type_str = t.substring(p2 + 1, p3);
                                     
                                     if (type_str == "AO" || type_str == "AV") job.obj_type = (type_str == "AO") ? 1 : 2;
@@ -137,10 +280,15 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                                     
                                     if (found) {
                                         if (job.prop_id == 81) {
+                                            /* Commande OutOfService : payload "ON"/"OFF".
+                                             * Mise à jour locale immédiate du statusFlags en cache
+                                             * + publication MQTT du nouvel état pour feedback HA instantané. */
                                             bool xState = (String(payload_buf) == "ON");
                                             job.write_value = xState ? 1.0f : 0.0f;
                                             
-                                            // Emulation OutOfService locale comme dans l'API
+                                            /* Émulation locale : on met à jour le bit OutOfService
+                                             * dans le cache avant même l'écriture BACnet, pour que
+                                             * l'entité HA reflète immédiatement le changement. */
                                             for (auto& o : d.objects) {
                                                 if (o.usType == job.obj_type && o.ulInstance == job.obj_instance) {
                                                     if (xState) {
@@ -149,12 +297,15 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                                                         o.ucStatusFlags &= ~BACNET_STATUS_OUT_OF_SERVICE;
                                                     }
                                                     o.ulLastUpdate = millis();
-                                                    publish_mqtt_topic(d.ulDeviceId, o, 96, false);
+                                                    publish_mqtt_topic(d.ulDeviceId, o, 81, false);
                                                     break;
                                                 }
                                             }
                                         } else if (job.obj_type == 14 || job.obj_type == 19) {
-                                            // Conversion Texte -> Index pour Multi-State
+                                            /* Multi-State Output/Value : conversion texte → index.
+                                             * BACnet utilise des index 1-based pour les états.
+                                             * Si le texte ne correspond à aucun state_text connu,
+                                             * on tente un fallback en conversion numérique directe. */
                                             bool text_found = false;
                                             for (auto& o : d.objects) {
                                                 if (o.usType == job.obj_type && o.ulInstance == job.obj_instance) {
@@ -170,6 +321,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                                             }
                                             if (!text_found) job.write_value = String(payload_buf).toFloat();
                                         } else {
+                                            /* Types analogiques et binaires : conversion directe float. */
                                             job.write_value = String(payload_buf).toFloat();
                                         }
                                         enqueue_bacnet_job(job);
@@ -187,16 +339,53 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════════
+ *  TÂCHE GATEKEEPER MQTT (FreeRTOS)
+ * ═══════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * @brief Tâche FreeRTOS dédiée à l'orchestration de toutes les opérations MQTT.
+ *
+ * Épinglée sur Core 0 (priorité 5), cette tâche est le point central de
+ * sérialisation des publications MQTT. Elle assure cinq responsabilités :
+ *
+ * 1. **Lazy Save NVS** : Parcours des devices marqués "dirty" dans le cache.
+ *    Si un device a été modifié il y a plus de 2 secondes, sa sauvegarde NVS
+ *    est déclenchée ici (Core 0) plutôt que depuis la FSM MS/TP (Core 1)
+ *    pour éviter de bloquer le temps réel BACnet.
+ *
+ * 2. **Logs différés** : Consommation des flags atomiques positionnés par le
+ *    handler d'événements. Garantit que z_log() est appelé dans un contexte
+ *    avec suffisamment de pile (16KB vs ~4KB du handler ESP-MQTT).
+ *
+ * 3. **HA Discovery** : Déclenchement de publish_ha_autodiscovery() avec
+ *    rate-limiting (30s global, 5s par device) et coalescence des demandes.
+ *
+ * 4. **Queue de publication** : Consommation non-bloquante de mqtt_publish_queue.
+ *    Chaque MQTTPublishJob est traduit en topic MQTT et publié. Un délai de 5ms
+ *    entre chaque publication évite de saturer l'outbox ESP-MQTT.
+ *
+ * 5. **Télémétrie Gateway** : Publication périodique (mqtt_poll_interval) des
+ *    métriques système (version, RSSI, heap, température, état MS/TP, etc.)
+ *    sur les topics {prefix}/B2M/{key}/state.
+ *
+ * @param pv  Paramètre utilisateur (non utilisé).
+ */
 static void mqtt_gatekeeper_task(void *pv) {
     z_log(pdLOG_INFO, "MQTT", "Gatekeeper Task Operational.\n");
-    uint32_t last_status_pub = 0;
-    uint32_t last_global_disc = 0;
-    uint32_t last_single_disc = 0;
+    uint32_t last_status_pub = 0;     ///< Timestamp de la dernière publication de statut Gateway
+    uint32_t last_global_disc = 0;    ///< Timestamp de la dernière HA Discovery globale
+    uint32_t last_single_disc = 0;    ///< Timestamp de la dernière HA Discovery ciblée
 
     while (1) {
         uint32_t now = millis();
 
-        // Gestion du Lazy Save NVS (déporté sur Core 0 pour éviter de geler la FSM MS/TP sur Core 1)
+        /* ── 0. Lazy Save NVS ──────────────────────────────────────────────
+         * Les devices modifiés (xDirty=true) sont sauvegardés en NVS
+         * avec un délai de 2 secondes (anti-rebond) pour regrouper les
+         * modifications rapides consécutives (ex: discovery de 20 objets).
+         * Le snapshot des DIDs à sauvegarder est pris sous mutex court,
+         * puis la sauvegarde NVS (lente, ~50ms par page) est faite hors mutex. */
         std::vector<uint32_t> dirty_dids;
         if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
             for (auto& dev : bacnet_network_cache) {
@@ -212,7 +401,8 @@ static void mqtt_gatekeeper_task(void *pv) {
             save_device_objects_locked(did);
         }
 
-        // 1. Logs d'événements déportés
+        /* ── 1. Logs d'événements déportés ─────────────────────────────────
+         * exchange(false) lit et reset atomiquement le flag en une opération. */
         if (mqtt_pending_connected_log.exchange(false)) z_log(pdLOG_INFO, "MQTT", "Connected to Broker.\n");
         if (mqtt_pending_disconnected_log.exchange(false)) z_log(pdLOG_WARN, "MQTT", "Disconnected from Broker (%d/3).\n", mqtt_fail_count);
         if (mqtt_pending_auth_error_log.exchange(false)) z_log(pdLOG_ERROR, "MQTT", "FATAL: Invalid Broker Credentials.\n");
@@ -221,7 +411,11 @@ static void mqtt_gatekeeper_task(void *pv) {
 
         if (mqtt_is_connected && !circuit_breaker_active) {
             
-            // 2. Déclenchement Découverte HA (Synchrone v6.8.15)
+            /* ── 2. Déclenchement Découverte HA (Synchrone v6.8.15) ────────
+             * Rate-limiting : 30s entre deux discoveries globales, 5s entre
+             * deux discoveries ciblées (un seul device/objet).
+             * La coalescence (trigger_ha_discovery) fusionne les demandes
+             * rapides en une seule discovery plus large. */
             if (pending_discovery.load(std::memory_order_acquire)) {
                 uint32_t t_did = target_did.load();
                 bool is_global = (t_did == 0 || force_full_discovery);
@@ -235,7 +429,13 @@ static void mqtt_gatekeeper_task(void *pv) {
                 }
             }
 
-            // 3. Traitement de la queue de publication
+            /* ── 3. Consommation de la queue de publication ─────────────────
+             * Boucle non-bloquante (timeout 0) qui vide la queue.
+             * Chaque message est traduit en topic MQTT via le mapping
+             * type → abréviation (AI, AO, AV, BI, BO, BV, MSI, MSO, MSV).
+             * La propriété détermine le sous-topic : 85→state, 77→name, 81→outofservice.
+             * En cas d'échec de publication (outbox plein), on pause 50ms
+             * et on sort de la boucle pour laisser l'outbox se vider. */
             MQTTPublishJob pubJob;
             while (xQueueReceive(mqtt_publish_queue, &pubJob, 0) == pdTRUE) {
                 char topic[128];
@@ -265,10 +465,15 @@ static void mqtt_gatekeeper_task(void *pv) {
                     period_mqtt_obj_count++;
                     z_log(pdLOG_DEBUG, "MQTT", "Published: %s = %s\n", topic, pubJob.value_string);
                 }
+                /* Délai inter-message de 5ms pour éviter de saturer le buffer
+                 * d'envoi TCP et permettre au stack WiFi de traiter les ACK. */
                 vTaskDelay(pdMS_TO_TICKS(5));
             }
 
-            // 4. Status Gateway périodique
+            /* ── 4. Télémétrie Gateway périodique ──────────────────────────
+             * Publie les métriques système sur {prefix}/B2M/{key}/state
+             * à intervalle configurable (sysCfg.mqtt_poll_interval en secondes).
+             * Lambda pub_b2m encapsule le pattern répétitif de publication. */
             if (millis() - last_status_pub > (sysCfg.mqtt_poll_interval * 1000)) {
                 last_status_pub = millis();
                 auto pub_b2m = [&](const char* key, String val) {
@@ -291,10 +496,12 @@ static void mqtt_gatekeeper_task(void *pv) {
                 }
                 pub_b2m("nb_dev", String(n_dev));
 
-                // Température interne ESP32-S3
+                /* Température interne du SoC ESP32-S3 (capteur intégré). */
                 pub_b2m("temp", String(temperatureRead(), 1));
 
-                // Santé du réseau MS/TP (basé sur le mouvement des jetons)
+                /* Détection de l'activité du réseau MS/TP : on compare le compteur
+                 * de jetons vus entre deux cycles. Si le compteur a changé, le bus
+                 * est actif. Publié comme binary_sensor "ON"/"OFF" dans HA. */
                 static uint32_t last_token_count = 0;
                 bool mstp_active = (bacnetStats.ulTokensSeen != last_token_count);
                 last_token_count = bacnetStats.ulTokensSeen;
@@ -306,20 +513,47 @@ static void mqtt_gatekeeper_task(void *pv) {
                       sysCfg.mqtt_prefix, (unsigned long)period_mqtt_b2m_count,
                       sysCfg.mqtt_prefix, (unsigned long)period_mqtt_tele_count);
 
+                /* Remise à zéro des compteurs de période. */
                 period_mqtt_pub_count = 0;
                 period_mqtt_obj_count = 0;
                 period_mqtt_b2m_count = 0;
                 period_mqtt_tele_count = 0;
                 }
         }
+        /* Cadence de la boucle principale : 10ms (100 Hz).
+         * Compromis entre réactivité de publication et charge CPU. */
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════════
+ *  QUEUE DE PUBLICATION MQTT
+ * ═══════════════════════════════════════════════════════════════════════════════ */
+
+/// Handle global de la queue FreeRTOS pour les jobs de publication MQTT
 QueueHandle_t mqtt_publish_queue = NULL;
 
+/**
+ * @brief Enfile un job de publication MQTT dans la queue inter-tâches.
+ *
+ * Appelable depuis n'importe quel core/tâche (thread-safe via FreeRTOS queue).
+ * L'envoi est non-bloquant (timeout 0) : si la queue est pleine, le message
+ * est silencieusement abandonné (retour false).
+ *
+ * @param pubJob  Structure MQTTPublishJob contenant deviceId, type, instance,
+ *                propriété, valeur formatée et flag retain.
+ * @return true si le job a été enfilé, false si la queue est pleine ou non initialisée.
+ */
 bool enqueue_mqtt_publish(MQTTPublishJob pubJob) { if (mqtt_publish_queue == NULL) return false; return xQueueSend(mqtt_publish_queue, &pubJob, 0) == pdTRUE; }
 
+/**
+ * @brief Initialise la queue FreeRTOS de publication MQTT.
+ *
+ * Crée une queue de 100 éléments MQTTPublishJob (~8.4KB avec 84 octets/job).
+ * Appelée une seule fois au démarrage via setup_mqtt().
+ * La profondeur de 100 permet d'absorber les rafales de polling BACnet
+ * sans perte, tout en restant dans les limites mémoire de l'ESP32-S3.
+ */
 void init_mqtt_queue() {
     if (mqtt_publish_queue == NULL) {
         mqtt_publish_queue = xQueueCreate(100, sizeof(MQTTPublishJob));
@@ -327,6 +561,32 @@ void init_mqtt_queue() {
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════════
+ *  INITIALISATION DU CLIENT MQTT
+ * ═══════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * @brief Configure et démarre le client MQTT ESP-IDF + la tâche Gatekeeper.
+ *
+ * Séquence d'initialisation :
+ * 1. Initialisation de la queue de publication (si pas déjà fait)
+ * 2. Destruction propre du client existant (si reconfiguration à chaud)
+ * 3. Construction de la configuration esp_mqtt_client_config_t :
+ *    - Broker : hostname + port TCP
+ *    - Credentials : username/password optionnels
+ *    - LWT : topic "tele/{prefix}/LWT", message "offline", QoS 1, retained
+ *    - Auto-reconnexion désactivée (gérée manuellement par handle_mqtt)
+ *    - Outbox limité à 20KB, buffer de sortie 4KB
+ * 4. Enregistrement du handler d'événements sur ESP_EVENT_ANY_ID
+ * 5. Démarrage du client
+ * 6. Création unique de la tâche Gatekeeper sur Core 0 (16KB de pile)
+ *
+ * @note La pile de 16KB est nécessaire car la tâche Gatekeeper sérialise
+ *       des payloads JSON ArduinoJson (HA Discovery) qui peuvent être volumineux
+ *       (~1.5KB par entité avec toutes les métadonnées device).
+ * @note La tâche n'est créée qu'une seule fois (flag statique task_created)
+ *       pour survivre aux reconfigurations à chaud sans fuite de tâche.
+ */
 void setup_mqtt() {
     init_mqtt_queue();
     if (mqtt_client != NULL) {
@@ -346,16 +606,22 @@ void setup_mqtt() {
     mqtt_cfg.credentials.username = strlen(sysCfg.mqtt_user) > 0 ? sysCfg.mqtt_user : NULL;
     mqtt_cfg.credentials.authentication.password = strlen(sysCfg.mqtt_pass) > 0 ? sysCfg.mqtt_pass : NULL;
 
-    // Configuration LWT
+    /* Configuration du Last Will and Testament (LWT).
+     * Le broker publiera automatiquement "offline" sur ce topic si le client
+     * se déconnecte de manière non-gracieuse (crash, perte réseau).
+     * Topic format : tele/{prefix}/LWT */
     snprintf(lwt_topic, sizeof(lwt_topic), "tele/%s/LWT", sysCfg.mqtt_prefix);
     mqtt_cfg.session.last_will.topic = lwt_topic;
     mqtt_cfg.session.last_will.msg = "offline";
     mqtt_cfg.session.last_will.qos = 1;
     mqtt_cfg.session.last_will.retain = 1;
 
+    /* Auto-reconnexion désactivée : la logique de reconnexion est gérée
+     * manuellement dans handle_mqtt() pour intégrer le Circuit Breaker
+     * et la détection de perte WiFi. */
     mqtt_cfg.network.disable_auto_reconnect = true;
-    mqtt_cfg.outbox.limit = 20480; 
-    mqtt_cfg.buffer.out_size = 4096;
+    mqtt_cfg.outbox.limit = 20480;   ///< Limite outbox 20KB (buffer de messages en attente d'envoi)
+    mqtt_cfg.buffer.out_size = 4096; ///< Buffer de sérialisation TCP 4KB (suffisant pour HA Discovery)
 
     mqtt_client = esp_mqtt_client_init(&mqtt_cfg);
     if (mqtt_client) {
@@ -364,15 +630,42 @@ void setup_mqtt() {
         
         static bool task_created = false;
         if (!task_created) {
-            // Migration vers Core 0 (Priorité 5). Pile augmentée à 16KB pour HA Discovery complexe.
+            /* Core 0 : partagé avec WiFi, Web et OTA.
+             * Priorité 5 : en dessous de la FSM MS/TP (Core 1, priorité élevée)
+             * mais au-dessus du serveur web (priorité 1). */
             xTaskCreatePinnedToCore(mqtt_gatekeeper_task, "MQTT_GK", 16384, NULL, 5, NULL, 0);
             task_created = true;
         }
     }
 }
 
+/**
+ * @brief Retourne l'état de connexion MQTT actuel.
+ * @return true si le client est connecté au broker.
+ */
 bool is_mqtt_connected() { return mqtt_is_connected; }
 
+/* ═══════════════════════════════════════════════════════════════════════════════
+ *  DÉCLENCHEMENT DE LA HA DISCOVERY
+ * ═══════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * @brief Demande une publication HA Auto-Discovery avec coalescence.
+ *
+ * Implémente une stratégie de coalescence (v6.4.2) pour fusionner les
+ * demandes de discovery rapides en une seule opération :
+ * - Si aucune discovery n'est en attente : enregistre la cible exacte
+ * - Si une discovery est déjà en attente pour un autre device :
+ *   élargit à une discovery globale (did=0)
+ * - Si même device mais objet différent : élargit à tous les objets du device
+ *
+ * Ce mécanisme évite les rafales de discovery lors de la découverte BACnet
+ * (chaque objet découvert déclenche un trigger_ha_discovery individuel).
+ *
+ * @param did   Device ID cible (0 = tous les devices).
+ * @param inst  Instance cible (0xFFFFFFFF = toutes les instances).
+ * @param type  Type d'objet cible (0xFFFF = tous les types).
+ */
 void trigger_ha_discovery(uint32_t did, uint32_t inst, uint16_t type) {
     if (!sysCfg.ha_discover) return;
     
@@ -394,10 +687,30 @@ void trigger_ha_discovery(uint32_t did, uint32_t inst, uint16_t type) {
     pending_discovery = true;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════════
+ *  BOUCLE PRINCIPALE MQTT (appelée depuis loop() sur Core 0)
+ * ═══════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * @brief Gère la reconnexion MQTT et le Circuit Breaker.
+ *
+ * Appelée périodiquement depuis la boucle principale Arduino (Core 0).
+ * Responsabilités :
+ * - Détecte la restauration du WiFi et relance la connexion MQTT
+ * - Gère la transition WiFi connecté → déconnecté
+ * - Détruit le client MQTT si le Circuit Breaker est actif
+ *
+ * La reconnexion est conditionnée :
+ * - Si mqtt_client == NULL : appel à setup_mqtt() (première connexion ou après CB)
+ * - Si mqtt_client existe : appel à esp_mqtt_client_reconnect() (reconnexion légère)
+ * - Dans les deux cas, le Circuit Breaker bloque la tentative
+ */
 void handle_mqtt() {
     static bool was_wifi_connected = false;
     bool is_wifi_connected = (WiFi.status() == WL_CONNECTED);
 
+    /* Détection de front montant WiFi : déclenche la (re)connexion MQTT.
+     * Le test mqtt_client == NULL distingue le premier setup de la reconnexion. */
     if (is_wifi_connected && !was_wifi_connected) {
         if (mqtt_client == NULL && !circuit_breaker_active) setup_mqtt(); 
         else if (mqtt_client != NULL && !circuit_breaker_active) esp_mqtt_client_reconnect(mqtt_client); 
@@ -406,6 +719,9 @@ void handle_mqtt() {
         was_wifi_connected = false;
     }
 
+    /* Destruction du client MQTT quand le Circuit Breaker est actif.
+     * Libère les ressources (socket TCP, tâche interne esp-mqtt, outbox).
+     * La recréation nécessitera un redémarrage ou une reconfiguration. */
     if (circuit_breaker_active && mqtt_client != NULL) {
         esp_mqtt_client_stop(mqtt_client);
         esp_mqtt_client_destroy(mqtt_client);
@@ -414,6 +730,62 @@ void handle_mqtt() {
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════════
+ *  AUTO-DISCOVERY HOME ASSISTANT
+ * ═══════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * @brief Publie les payloads JSON d'Auto-Discovery pour Home Assistant.
+ *
+ * Génère et publie les configurations MQTT Discovery conformes au standard
+ * Home Assistant sur les topics homeassistant/{component}/{unique_id}/config.
+ * Chaque payload JSON contient :
+ * - Identifiant unique (uniq_id), nom, topic d'état et de commande
+ * - Disponibilité liée au topic LWT
+ * - Rattachement au device HA (identifiants, fabricant, version)
+ * - Métadonnées spécifiques au composant (unité, classe, min/max/step, options)
+ *
+ * La fonction opère en deux étapes :
+ *
+ * **Étape 0 : Discovery de la Gateway** (si discovery globale)
+ * Publie 8 entités de monitoring système : version, uptime, RSSI, heap,
+ * min_heap, température, nombre de devices, état MS/TP.
+ *
+ * **Étape 1 : Discovery des objets BACnet**
+ * Parcourt chaque device/objet du cache avec un pattern snapshot-sous-mutex :
+ * - Prise du mutex courte (~200ms timeout) pour copier les champs nécessaires
+ * - Relâchement du mutex avant la sérialisation JSON et la publication MQTT
+ * - Ceci évite de bloquer la FSM MS/TP pendant les publications réseau
+ *
+ * Mapping type BACnet → composant HA :
+ * | Type BACnet | Commandable | Composant HA |
+ * |-------------|-------------|-------------|
+ * | AI          | non         | sensor      |
+ * | AO, AV      | oui         | number      |
+ * | AO, AV      | non         | sensor      |
+ * | BI          | non         | binary_sensor |
+ * | BO, BV      | oui         | switch      |
+ * | BO, BV      | non         | binary_sensor |
+ * | MSO, MSV    | + states    | select      |
+ * | MSO, MSV    | commandable | number      |
+ * | MSI         | non         | sensor      |
+ *
+ * Pour les Analog Inputs (AI), deux entités supplémentaires de contournement
+ * sont créées :
+ * - Un switch "Out of Service" pour isoler la sonde physique
+ * - Un number "Forcing Value" pour injecter une valeur de forçage
+ *
+ * Les références dynamiques min/max (cMinRef, cMaxRef) permettent de lier
+ * les bornes d'un number à la Present_Value d'un autre objet BACnet du même
+ * device (ex: "AI:3" lie le min à la valeur de l'Analog Input instance 3).
+ *
+ * @param t_did   Device ID cible (0 = tous les devices).
+ * @param t_inst  Instance cible (0xFFFFFFFF = toutes).
+ * @param t_type  Type d'objet cible (0xFFFF = tous).
+ *
+ * @note Le pacing de 100ms entre chaque objet publié évite de saturer
+ *       l'outbox ESP-MQTT (limité à 20KB).
+ */
 void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) {
     if (!mqtt_is_connected || circuit_breaker_active || !sysCfg.ha_discover) return;
 
@@ -423,11 +795,23 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
         z_log(pdLOG_INFO, "MQTT", "Starting HA Auto-Discovery%s...\n", (t_did != 0) ? " (Single Device)" : "");
     }
 
-    // Étape 0 : Discovery de la Gateway
+    /* ── Étape 0 : Discovery des entités Gateway ──────────────────────────
+     * Publiée uniquement lors d'une discovery globale (t_did == 0).
+     * Chaque entité est rattachée au device HA "b2m_gateway" avec
+     * modèle ESP32-S3 et version firmware courante. */
     if (!is_single_object && t_did == 0) {
         char base_b2m[128];
         snprintf(base_b2m, sizeof(base_b2m), "%s/B2M", sysCfg.mqtt_prefix);
         
+        /**
+         * @brief Lambda de publication d'une entité sensor/binary_sensor Gateway.
+         * @param key      Clé du sous-topic (ex: "rssi", "heap").
+         * @param name     Nom affiché dans Home Assistant.
+         * @param dev_cla  Device class HA (ex: "signal_strength", "temperature"). NULL si aucune.
+         * @param unit     Unité de mesure HA. NULL si aucune.
+         * @param icon     Icône MDI optionnelle.
+         * @param is_binary  true pour binary_sensor (payloads ON/OFF), false pour sensor numérique.
+         */
         auto pub_gw_sensor = [&](const char* key, const char* name, const char* dev_cla, const char* unit, const char* icon = NULL, bool is_binary = false) {
             JsonDocument doc;
             char topic[128], uniq[64];
@@ -473,7 +857,16 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
         vTaskDelay(pdMS_TO_TICKS(100)); 
     }
 
-    // Étape 1 : Parcours sécurisé (Séquentiel par Mutex court)
+    /* ── Étape 1 : Discovery des objets BACnet ────────────────────────────
+     * Pattern "snapshot sous mutex court" :
+     * 1. On prend le mutex pour lire nb_devices
+     * 2. Pour chaque device, on prend le mutex pour snapshot les champs
+     * 3. Pour chaque objet, on prend le mutex pour snapshot les champs
+     * 4. La sérialisation JSON et la publication se font HORS mutex
+     *
+     * Ce pattern est crucial car la sérialisation JSON + publication TCP
+     * peut prendre plusieurs dizaines de ms, pendant lesquelles la FSM
+     * MS/TP (Core 1) doit pouvoir accéder au cache. */
     size_t nb_devices = 0;
     if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(1000))) {
         nb_devices = bacnet_network_cache.size();
@@ -488,7 +881,7 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
         String dev_name, dev_vendor;
         bool dev_enabled = false, dev_discovery_done = false;
 
-        // Snapshot du device
+        /* Snapshot des métadonnées du device sous mutex court. */
         if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(200))) {
             if (d_idx < bacnet_network_cache.size()) {
                 auto& dev = bacnet_network_cache[d_idx];
@@ -506,7 +899,10 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
         if (current_did == 0) continue;
 
         for (size_t o_idx = 0; o_idx < nb_objects; o_idx++) {
-            // Snapshot de l'objet
+            /* Snapshot de chaque objet : copie locale de tous les champs
+             * nécessaires à la construction du payload JSON.
+             * Le vecteur state_texts est copié par valeur (deep copy)
+             * pour être utilisable hors mutex. */
             uint16_t obj_type = 65535;
             uint32_t obj_inst = 0;
             char obj_name[64] = {0};
@@ -540,6 +936,11 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
 
             if (obj_type == 65535) continue;
 
+            /* Mapping du type BACnet vers l'abréviation topic et le composant HA.
+             * La commandabilité (propriété 87 Priority_Array) détermine si l'objet
+             * est exposé comme entité de contrôle (number/switch/select) ou
+             * comme simple capteur (sensor/binary_sensor).
+             * Pour les Multi-State avec state_texts, on utilise "select" plutôt que "number". */
             const char* t_str = "OBJ";
             const char* ha_component = "sensor";
 
@@ -555,16 +956,25 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                 case OBJ_MULTI_STATE_VALUE:  t_str = "MSV"; ha_component = (obj_states.empty()) ? ((obj_commandable) ? "number" : "sensor") : "select"; break;
             }
 
+            /* Construction de l'identifiant unique HA et du topic de configuration.
+             * Format uniq_id : bacnet_{deviceId}_{typeAbbr}_{instance}
+             * Format topic   : homeassistant/{component}/{uniq_id}/config */
             char uniq_id[64];
             snprintf(uniq_id, sizeof(uniq_id), "bacnet_%lu_%s_%lu", (unsigned long)current_did, t_str, (unsigned long)obj_inst);
             char topic[128];
             snprintf(topic, sizeof(topic), "homeassistant/%s/%s/config", ha_component, uniq_id);
 
+            /* Conditions de publication :
+             * - Device et objet doivent être activés (xEnabled)
+             * - L'objet doit avoir un nom résolu (pas "Unknown")
+             * - La discovery du device doit être terminée (sauf mode single-object) */
             if (dev_enabled && obj_enabled && strcmp(obj_name, "Unknown") != 0 && (dev_discovery_done || is_single_object)) {
                 JsonDocument doc; 
                 char base_topic[128];
                 snprintf(base_topic, sizeof(base_topic), "%s/%lu/%s/%lu", sysCfg.mqtt_prefix, (unsigned long)current_did, t_str, (unsigned long)obj_inst);
                 
+                /* Le caractère "~" est une convention HA Discovery qui sert de
+                 * raccourci pour le base_topic dans les champs stat_t/cmd_t. */
                 doc["~"] = String(base_topic);
                 doc["uniq_id"] = String(uniq_id);
                 doc["name"] = String(obj_name); 
@@ -573,18 +983,32 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                 doc["pl_avail"] = "online";
                 doc["pl_not_avail"] = "offline";
 
+                /* Le topic de commande n'est ajouté que pour les entités contrôlables
+                 * (number, switch, select). Les sensor/binary_sensor sont read-only. */
                 if (strcmp(ha_component, "sensor") != 0 && strcmp(ha_component, "binary_sensor") != 0) {
                     doc["cmd_t"] = "~/set";
                 }
 
+                /* Payloads binaires : "1.00" et "0.00" correspondent au format
+                 * de publication de Present_Value pour les objets binaires BACnet. */
                 if (strcmp(ha_component, "binary_sensor") == 0 || strcmp(ha_component, "switch") == 0) {
                     doc["pl_on"] = "1.00"; doc["pl_off"] = "0.00";
                 }
 
+                /* Configuration spécifique aux entités "number" (AO, AV commandables).
+                 * Les bornes min/max proviennent de :
+                 * 1. Les propriétés BACnet 69 (Min_Pres_Value) et 65 (Max_Pres_Value)
+                 * 2. Les valeurs par défaut de la configuration système (sysCfg)
+                 * 3. Les références dynamiques (cMinRef/cMaxRef) vers d'autres objets
+                 *    du même device, permettant des bornes qui suivent une valeur live. */
                 if (strcmp(ha_component, "number") == 0) {
                     float final_min = isnan(obj_min) ? sysCfg.default_number_min : obj_min;
                     float final_max = isnan(obj_max) ? sysCfg.default_number_max : obj_max;
                     
+                    /* Résolution de la référence min dynamique.
+                     * Format : "AI:3" ou "AV:12" (type:instance).
+                     * On cherche l'objet référencé dans le même device et on utilise
+                     * sa Present_Value comme borne minimum du number HA. */
                     if (strlen(obj_min_ref) > 0) {
                         uint16_t ref_type = 65535; uint32_t ref_inst = 0;
                         if (strncmp(obj_min_ref, "AI:", 3) == 0) { ref_type = 0; ref_inst = atoi(obj_min_ref + 3); }
@@ -599,6 +1023,7 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                             }
                         }
                     }
+                    /* Résolution de la référence max dynamique (même logique que min). */
                     if (strlen(obj_max_ref) > 0) {
                         uint16_t ref_type = 65535; uint32_t ref_inst = 0;
                         if (strncmp(obj_max_ref, "AI:", 3) == 0) { ref_type = 0; ref_inst = atoi(obj_max_ref + 3); }
@@ -618,6 +1043,10 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                     doc["step"] = obj_step;
                 }
 
+                /* Déduction automatique de la device_class HA à partir de l'unité BACnet.
+                 * Uniquement pour les types analogiques (AI=0, AO=1, AV=2).
+                 * Le texte d'unité BACnet (ex: "degrees-celsius") est d'abord converti
+                 * en symbole court via get_unit_text(), puis mappé vers la device_class HA. */
                 if (obj_type <= 2) { // AI, AO, AV
                     String unit = String(obj_unit_text);
                     if (unit == "Unknown" || unit.length() == 0 || unit == "none") unit = get_unit_text(obj_units);
@@ -631,11 +1060,17 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                     }
                 }
 
+                /* Pour les "select" (MSO/MSV avec state_texts), on ajoute la liste
+                 * des options possibles. HA affichera un menu déroulant avec ces textes. */
                 if (strcmp(ha_component, "select") == 0) {
                     JsonArray opts = doc["options"].to<JsonArray>();
                     for (auto& s : obj_states) opts.add(s);
                 }
 
+                /* Rattachement de l'entité au device HA.
+                 * Tous les objets d'un même device BACnet sont regroupés sous un
+                 * seul device HA identifié par "bacnet_dev_{deviceId}".
+                 * Cela crée une page device dans l'interface HA avec toutes les entités. */
                 JsonObject device = doc["dev"].to<JsonObject>();
                 JsonArray ids = device["ids"].to<JsonArray>();
                 char dev_id_str[32]; snprintf(dev_id_str, sizeof(dev_id_str), "bacnet_dev_%lu", (unsigned long)current_did);
@@ -652,9 +1087,17 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                     total_published++;
                 }
 
-                // AJOUT CHIRURGICAL : Déclaration des entités de contournement (hack) pour les Analog Inputs (AI)
+                /* ── Entités de contournement (hack) pour Analog Input ─────────
+                 * Les AI BACnet sont normalement en lecture seule. Ces entités
+                 * supplémentaires permettent de :
+                 * 1. Isoler la sonde physique (switch OutOfService)
+                 * 2. Injecter une valeur de forçage (number Forcing Value)
+                 * Utile pour le commissionnement et les tests en production. */
                 if (obj_type == OBJ_ANALOG_INPUT) {
-                    // --- 1. Création de l'entité SWITCH pour "Out of Service" ---
+                    /* --- 1. Switch "Out of Service" ---
+                     * Permet d'activer/désactiver le flag OutOfService (propriété 81)
+                     * sur l'Analog Input. Quand actif, la valeur physique de la sonde
+                     * n'est plus publiée et l'opérateur peut injecter une valeur manuelle. */
                     {
                         JsonDocument sw_doc;
                         char sw_uniq_id[128];
@@ -680,7 +1123,8 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                         sw_doc["pl_on"] = "ON";
                         sw_doc["pl_off"] = "OFF";
 
-                        // Raccordement au même Device HA
+                        /* Rattachement au même device HA que l'entité principale.
+                         * L'entité OoS apparaîtra dans la même page device que le capteur AI. */
                         JsonObject sw_device = sw_doc["dev"].to<JsonObject>();
                         JsonArray sw_ids = sw_device["ids"].to<JsonArray>();
                         sw_ids.add(String(dev_id_str));
@@ -694,7 +1138,11 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                         total_published++;
                     }
 
-                    // --- 2. Création de l'entité NUMBER pour "Forcing Value" ---
+                    /* --- 2. Number "Forcing Value" ---
+                     * Permet d'écrire une valeur numérique sur la Present_Value de l'AI
+                     * quand OutOfService est actif. Partage le même topic state/set
+                     * que l'entité principale (le "~" pointe vers le même base_topic).
+                     * Les bornes min/max et le step sont repris de l'objet BACnet. */
                     {
                         JsonDocument num_doc;
                         char num_uniq_id[128];
@@ -725,7 +1173,7 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                             num_doc["unit_of_meas"] = unit;
                         }
 
-                        // Raccordement au même Device HA
+                        /* Rattachement au même device HA. */
                         JsonObject num_device = num_doc["dev"].to<JsonObject>();
                         JsonArray num_ids = num_device["ids"].to<JsonArray>();
                         num_ids.add(String(dev_id_str));
@@ -741,6 +1189,8 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                 }
                 
             } else if ((!dev_enabled || !obj_enabled) && dev_discovery_done) {
+                /* Suppression de l'entité HA : publication d'un payload vide (retained)
+                 * sur le topic de configuration. HA retire automatiquement l'entité. */
                 esp_mqtt_client_publish(mqtt_client, topic, "", 0, 1, 1);
             }
 
@@ -755,10 +1205,43 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
     z_log(pdLOG_INFO, "MQTT", "HA Auto-Discovery payload sent (%d objects).\n", total_published);
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════════
+ *  PUBLICATION DES VALEURS BACNET SUR MQTT
+ * ═══════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * @brief Prépare et enfile un message de publication MQTT pour un objet BACnet.
+ *
+ * Formate la valeur de l'objet selon le type et la propriété, puis l'enfile
+ * dans mqtt_publish_queue pour traitement asynchrone par le Gatekeeper.
+ *
+ * Propriétés supportées :
+ * - **77 (Object_Name)** : Publie le nom de l'objet sur le sous-topic "name" (retained).
+ *   Utilisé pour les tableaux de bord HA et le mapping des topics.
+ * - **85 (Present_Value)** : Publie la valeur courante sur le sous-topic "state".
+ *   Pour les Multi-State, convertit l'index numérique BACnet (1-based) en texte
+ *   via les state_texts si disponibles, sinon publie l'index brut.
+ *   Pour les analogiques, formate en "%.2f" (2 décimales).
+ *   **Blocage spécial** : si l'AI est OutOfService, la valeur physique n'est PAS
+ *   publiée pour éviter d'écraser la valeur de forçage dans HA.
+ * - **81 (Out_Of_Service)** : Publie l'état OoS sur le sous-topic "outofservice"
+ *   avec payload "ON"/"OFF" pour le switch HA.
+ *
+ * Synchronisation automatique : après chaque publication de Present_Value (85)
+ * d'une AI, le statut OutOfService (81) est automatiquement republié pour
+ * garantir la cohérence de l'affichage HA.
+ *
+ * @param ulDeviceId  Identifiant du device BACnet propriétaire.
+ * @param obj         Référence vers l'objet BACnet en cache.
+ * @param prop_id     Identifiant de la propriété BACnet à publier (77, 85 ou 81).
+ * @param retain      true pour un message MQTT retained (persiste sur le broker).
+ */
 void publish_mqtt_topic(uint32_t ulDeviceId, BACnetObject& obj, uint8_t prop_id, bool retain) {
     if (!obj.xEnabled) return;
 
-    // MODIFICATION CHIRURGICALE : Blocage de la publication de la Present_Value physique pour les sondes isolées
+    /* Blocage de la publication de la Present_Value physique pour les sondes
+     * en mode OutOfService. Empêche le polling BACnet d'écraser la valeur
+     * de forçage injectée par l'opérateur via HA. */
     if (prop_id == 85 && obj.usType == OBJ_ANALOG_INPUT && obj.isOutOfService()) {
         return; 
     }
@@ -771,13 +1254,19 @@ void publish_mqtt_topic(uint32_t ulDeviceId, BACnetObject& obj, uint8_t prop_id,
     pub.retain = retain;
 
     if (prop_id == 77) {
+        /* Propriété Object_Name : copie directe du nom en cache. */
         if (strlen(obj.cName) == 0) return;
         strlcpy(pub.value_string, obj.cName, sizeof(pub.value_string));
     } else if (prop_id == 85) {
+        /* Propriété Present_Value : formatage selon le type d'objet. */
         switch(obj.usType) {
             case OBJ_MULTI_STATE_INPUT:
             case OBJ_MULTI_STATE_OUTPUT:
             case OBJ_MULTI_STATE_VALUE:
+                /* Les Multi-State BACnet utilisent des index 1-based.
+                 * Si des state_texts existent, on publie le texte correspondant
+                 * (ex: "Auto", "Manuel", "Arrêt") plutôt que l'index numérique.
+                 * Cela permet à HA d'afficher directement le libellé dans l'UI. */
                 if (!obj.state_texts.empty()) {
                     int idx = (int)obj.fPresentValue - 1;
                     if (idx >= 0 && idx < (int)obj.state_texts.size()) {
@@ -790,24 +1279,56 @@ void publish_mqtt_topic(uint32_t ulDeviceId, BACnetObject& obj, uint8_t prop_id,
                 break;
         }
     } 
-    // MODIFICATION CHIRURGICALE : Formater la payload pour la propriété 96 (OutOfService)
+    /* Propriété Out_Of_Service : formatage binaire "ON"/"OFF" pour le switch HA. */
     else if (prop_id == 81) {
         strlcpy(pub.value_string, obj.isOutOfService() ? "ON" : "OFF", sizeof(pub.value_string));
     } else return;
 
     enqueue_mqtt_publish(pub);
 
-    // AJOUT CHIRURGICAL : Synchronisation de publication automatique du statut du switch
+    /* Synchronisation automatique : chaque publication de Present_Value d'une AI
+     * est suivie d'une publication de son statut OutOfService pour garantir
+     * que le switch HA reflète toujours l'état correct. */
     if (prop_id == 85 && obj.usType == OBJ_ANALOG_INPUT) {
-        publish_mqtt_topic(ulDeviceId, obj, 96, retain);
+        publish_mqtt_topic(ulDeviceId, obj, 81, retain);
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════════
+ *  NETTOYAGE DES ENTITÉS HA DISCOVERY
+ * ═══════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * @brief Supprime les entités HA Discovery en publiant des payloads vides.
+ *
+ * Utilisée lors de :
+ * - Changement de préfixe MQTT (old_prefix permet de nettoyer les anciens topics)
+ * - Désactivation d'un device ou d'un objet
+ * - Suppression d'un device du cache
+ *
+ * Pour chaque objet ciblé, un payload vide est publié sur les topics de
+ * configuration de TOUS les composants possibles (sensor, binary_sensor,
+ * switch, number, select). Cette approche "brute force" garantit qu'aucune
+ * entité fantôme ne subsiste, quelle que soit la transition de type
+ * (ex: un objet qui passe de sensor à number après découverte de la
+ * commandabilité).
+ *
+ * Si t_did == 0 (cleanup global), les entités Gateway (B2M) sont aussi supprimées.
+ *
+ * @param t_did       Device ID cible (0 = tous, incluant la Gateway).
+ * @param t_inst      Instance cible (0xFFFFFFFF = toutes).
+ * @param t_type      Type cible (0xFFFF = tous).
+ * @param old_prefix  Préfixe MQTT à utiliser pour le nettoyage (NULL = préfixe courant).
+ *
+ * @note Le mutex est maintenu pendant tout le parcours car les publications
+ *       de payloads vides sont très rapides (pas de sérialisation JSON).
+ */
 void unpublish_ha_discovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type, const char* old_prefix) {
     if (!mqtt_is_connected || circuit_breaker_active) return;
     const char* prefix = old_prefix ? old_prefix : sysCfg.mqtt_prefix;
     z_log(pdLOG_INFO, "MQTT", "Cleaning up HA Discovery (Prefix: %s)...\n", prefix);
 
+    /* Nettoyage des entités Gateway si cleanup global. */
     if (t_did == 0) {
         auto unpub_gw = [&](const char* key, bool is_binary = false) {
             char topic[128], uniq[64];
@@ -819,6 +1340,9 @@ void unpublish_ha_discovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type, co
         unpub_gw("min_heap"); unpub_gw("temp"); unpub_gw("nb_dev"); unpub_gw("mstp", true);
     }
 
+    /* Parcours de tous les objets sous mutex pour publier des payloads vides
+     * sur les 5 composants HA possibles par objet. Le délai de 10ms entre
+     * chaque objet évite de saturer l'outbox ESP-MQTT. */
     if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
         for (auto& dev : bacnet_network_cache) {
             if (t_did != 0 && dev.ulDeviceId != t_did) continue;
@@ -841,6 +1365,9 @@ void unpublish_ha_discovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type, co
                 char uniq_id[64];
                 snprintf(uniq_id, sizeof(uniq_id), "bacnet_%lu_%s_%lu", (unsigned long)dev.ulDeviceId, t_str, (unsigned long)obj.ulInstance);
                 
+                /* Publication d'un payload vide sur chaque composant HA possible.
+                 * C'est la méthode recommandée par HA pour retirer une entité :
+                 * un message retained vide sur le topic de config la supprime. */
                 const char* components[] = {"sensor", "binary_sensor", "switch", "number", "select"};
                 for (const char* comp : components) {
                     char topic[128];

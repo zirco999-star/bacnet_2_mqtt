@@ -1,10 +1,41 @@
 /**
  * @file z_network.cpp
  * @brief Implémentation de l'infrastructure réseau, du serveur web et du système de journalisation.
- * 
- * @details Ce module gère la connexion WiFi (STA avec fallback AP), le serveur web asynchrone,
- *          les API REST, les mises à jour OTA, et un système de logging asynchrone et thread-safe
- *          via WebSockets. Il s'exécute principalement sur le Cœur 0.
+ *
+ * @details Ce module constitue le cœur de la couche réseau de la passerelle BACnet2MQTT.
+ *          Il orchestre les composants suivants, tous exécutés sur le Cœur 0 de l'ESP32-S3 :
+ *
+ *          - **WiFi** : Connexion STA avec IP statique ou DHCP, fallback automatique en
+ *            Point d'Accès (AP) si la connexion échoue après 30 secondes.
+ *          - **Serveur Web Asynchrone** : ESPAsyncWebServer servant une SPA (Single Page Application)
+ *            embarquée depuis z_ui.h, avec authentification HTTP Basic sur toutes les routes.
+ *          - **API REST** : Ensemble de routes POST/GET pour piloter le système (configuration,
+ *            découverte BACnet, lecture/écriture de propriétés, gestion du cache NVS).
+ *          - **WebSockets** : Canal de diffusion des logs temps réel vers l'interface web,
+ *            alimenté par une file d'attente FreeRTOS depuis n'importe quel cœur.
+ *          - **OTA** : Mises à jour firmware Over-The-Air via ArduinoOTA.
+ *          - **Sérialisation JSON** : Utilisation d'ArduinoJson v7 avec un allocateur PSRAM
+ *            dédié (PSRAM_Allocator) pour éviter la fragmentation de la heap interne.
+ *
+ *          Architecture de sécurité inter-tâches :
+ *          - `api_mutex`   : Protège la sérialisation JSON des routes API contre les accès
+ *                            concurrents (une seule requête API lourde à la fois).
+ *          - `ws_mutex`    : Protège l'accès au client WebSocket actif lors de l'envoi des logs.
+ *          - `cache_mutex` : Protège le vecteur `bacnet_network_cache` partagé entre le
+ *                            Core 0 (API/MQTT) et le Core 1 (FSM MS/TP).
+ *
+ * @note    Ce fichier ne doit PAS contenir de logique BACnet ou MQTT. Ces responsabilités
+ *          sont déléguées à z_bacnet.cpp et z_mqtt.cpp respectivement.
+ *
+ * @see     z_network.h   - Déclarations publiques (prototypes, allocateur PSRAM, mutex).
+ * @see     z_config.h    - Structure Config (sysCfg) et constantes globales.
+ * @see     z_bacnet.h    - Structures BACnetDevice/BACnetObject et file de jobs BACnet.
+ * @see     z_mqtt.h      - Interface MQTT (publication, découverte Home Assistant).
+ * @see     z_nvs.h       - Persistance NVS (sauvegarde/chargement configuration et objets).
+ * @see     z_ui.h        - Interface utilisateur HTML embarquée (INDEX_HTML, favicons).
+ *
+ * @version v7.0.7
+ * @date    2026
  */
 
 #include "z_network.h"
@@ -32,26 +63,62 @@ typedef struct {
     char message[256];
 } LogMessage;
 
-// File d'attente et sémaphores pour la communication inter-tâches et la protection des ressources.
+// ============================================================================
+// Variables globales inter-tâches
+// ============================================================================
+
+/**
+ * File d'attente FreeRTOS pour le transport asynchrone des messages de log.
+ * Capacité : 20 messages de 256 octets. Le producteur (z_log) n'attend jamais
+ * (xQueueSend avec timeout=0), les messages sont simplement perdus si la file est pleine.
+ */
 QueueHandle_t log_queue = NULL;
+
+/**
+ * Mutex protégeant les routes API qui sérialisent du JSON volumineux.
+ * Empêche les collisions entre une requête /api/status et /api/objects simultanées,
+ * et sert aussi de "verrou de courtoisie" pour la tâche WebSocket (qui n'envoie pas
+ * de logs pendant qu'une réponse API est en cours de construction).
+ */
 SemaphoreHandle_t api_mutex = NULL;
+
+/**
+ * Mutex protégeant l'envoi unitaire de messages vers le client WebSocket.
+ * Nécessaire car la tâche de log (Core 0, priorité 2) et le callback onEvent
+ * peuvent accéder au client WS depuis des contextes différents.
+ */
 SemaphoreHandle_t ws_mutex = NULL;
+
+/** Instance globale de l'allocateur PSRAM pour ArduinoJson (déclarée dans z_network.h). */
 PSRAM_Allocator psram_alloc;
 
 // Variables statiques pour la gestion de la session WebSocket.
+/** Timestamp du dernier événement WS (connexion/déconnexion). Sert de garde temporelle. */
 static uint32_t last_ws_event = 0;
+/** ID du client WebSocket actuellement connecté. 0 = aucun client actif.
+ *  Seul un client est supporté simultanément pour éviter la saturation AsyncTCP. */
 static uint32_t active_ws_id = 0;
+
+// ============================================================================
+// WebSocket : Gestion des événements et tâche d'envoi des logs
+// ============================================================================
 
 /**
  * @brief Callback pour les événements du serveur WebSocket.
  * @details Gère la connexion et la déconnexion des clients. Mémorise l'ID du client actif
  *          pour ne diffuser les logs qu'à une seule session, évitant les crashs lors de rafraîchissements rapides.
+ *
+ *          Stratégie mono-client (v6.6.0) :
+ *          - À chaque nouvelle connexion, on remplace `active_ws_id` par le nouveau client.
+ *          - À la déconnexion, on ne remet `active_ws_id` à 0 que si c'est le client actif qui part.
+ *          - Les callbacks sont volontairement atomiques (pas de mutex) pour ne jamais bloquer la pile TCP.
+ *
  * @param server Pointeur vers le serveur WebSocket.
  * @param client Pointeur vers le client WebSocket concerné.
- * @param type Type d'événement (connexion, déconnexion, données, etc.).
- * @param arg Données d'argument (non utilisé).
- * @param data Pointeur vers les données reçues (non utilisé).
- * @param len Longueur des données reçues (non utilisé).
+ * @param type   Type d'événement (WS_EVT_CONNECT, WS_EVT_DISCONNECT, WS_EVT_DATA, etc.).
+ * @param arg    Données d'argument spécifiques à l'événement (non utilisé ici).
+ * @param data   Pointeur vers les données reçues du client (non utilisé ici).
+ * @param len    Longueur des données reçues (non utilisé ici).
  */
 void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type,
              void *arg, uint8_t *data, size_t len) {
@@ -74,7 +141,18 @@ void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType 
  * @details Cette tâche attend en permanence des messages dans `log_queue`. Lorsqu'un message est reçu,
  *          elle l'envoie de manière sécurisée au client WebSocket actif. Elle inclut des gardes-fous
  *          pour éviter de saturer la pile réseau ou de causer des corruptions de mémoire.
- * @param pvParameters Paramètres de la tâche (non utilisés).
+ *
+ *          Protections multicouches contre les crashs réseau :
+ *          1. **Silence au démarrage** (10s) : Laisse le WiFi et le MQTT s'établir avant tout envoi.
+ *          2. **Garde temporelle** (5s) : Après un événement WS (connect/disconnect), les logs
+ *             sont jetés pour éviter les collisions lors d'un rafraîchissement de page.
+ *          3. **Vérification du mutex API** : Si une route API est en cours de sérialisation JSON,
+ *             on jette le log plutôt que de risquer un crash mémoire (erreur 0x30 historique).
+ *          4. **Seuil de heap** (50 Ko) : Pas d'envoi si la mémoire libre est trop basse.
+ *          5. **Mutex WS** (20ms timeout) : Accès exclusif au client WS avec abandon rapide.
+ *          6. **Délai inter-messages** (50ms) : Empêche la saturation du buffer AsyncTCP.
+ *
+ * @param pvParameters Paramètres de la tâche FreeRTOS (non utilisés).
  */
 static void websocket_log_task(void *pvParameters) {
     LogMessage received_log;
@@ -107,16 +185,30 @@ static void websocket_log_task(void *pvParameters) {
     }
 }
 
+// ============================================================================
+// Système de journalisation unifié (z_log)
+// ============================================================================
+
 // Safe logging function that adds messages to the queue without blocking the program
 /**
  * @brief Système de journalisation unifié, thread-safe et multi-destination.
  * @details Formate un message et l'envoie à la fois sur le port Série (UART) et
  *          vers une file d'attente pour une transmission asynchrone via WebSocket.
  *          Filtre les messages en fonction du niveau de log global (`sysCfg.log_level`).
- * @param level Niveau de sévérité du log (pdLOG_ERROR, pdLOG_WARN, pdLOG_INFO, pdLOG_DEBUG).
- * @param tag Un court identifiant de module (ex: "WIFI", "MQTT", "BACNET").
+ *
+ *          Format de sortie UART :  [core][LVL][TAG] message
+ *          Format de sortie WS   :  core|[HH:MM:SS,mmm][LVL][TAG] message
+ *
+ *          Le format WS inclut un timestamp car le moniteur série ESP-IDF en ajoute
+ *          automatiquement un, mais pas le navigateur web.
+ *
+ *          Cette fonction est appelable depuis n'importe quel cœur et n'importe quelle
+ *          tâche FreeRTOS, y compris la FSM MS/TP du Core 1.
+ *
+ * @param level  Niveau de sévérité du log (pdLOG_ERROR=1, pdLOG_WARN=2, pdLOG_INFO=3, pdLOG_DEBUG=4).
+ * @param tag    Un court identifiant de module (ex: "WIFI", "MQTT", "BACNET", "API").
  * @param format Chaîne de formatage de type `printf`.
- * @param ... Arguments variables pour la chaîne de formatage.
+ * @param ...    Arguments variables pour la chaîne de formatage.
  */
 void z_log(int level, const char* tag, const char* format, ...) {
     // 1. Filtrage temps réel : on ignore le log si sa priorité est trop faible
@@ -168,9 +260,26 @@ void z_log(int level, const char* tag, const char* format, ...) {
     }
 }
 
+// ============================================================================
+// Configuration des routes du serveur web
+// ============================================================================
 
 /**
  * @brief Configure toutes les routes (endpoints) du serveur web asynchrone.
+ * @details Enregistre l'ensemble des handlers pour :
+ *          - L'interface utilisateur web (SPA depuis PROGMEM/z_ui.h)
+ *          - Les favicons avec cache navigateur longue durée (1 an)
+ *          - Les API REST de lecture d'état (/api/status, /api/objects)
+ *          - Les API de commande BACnet (/api/whois, /api/iam, /api/writevalue, etc.)
+ *          - Les API de configuration (/save, /api/save_object, /api/toggle_device)
+ *          - Les API de maintenance (/api/reset_cache, /api/factory_reset, /api/reboot)
+ *          - Le canal WebSocket (/ws) pour la diffusion des logs
+ *
+ *          Toutes les routes nécessitant une authentification appellent `is_authenticated()`
+ *          en premier. Les routes lourdes (JSON) sont protégées par `api_mutex` et vérifient
+ *          un seuil de heap minimum (50 Ko) avant d'allouer.
+ *
+ * @note    Cette fonction est appelée une seule fois depuis `setup_network_infrastructure()`.
  */
 void setup_web_routes() {
     // -------------------------------------------------------------------------
@@ -217,10 +326,24 @@ void setup_web_routes() {
     // ROUTES API - LECTURE DES DONNÉES ET ÉTAT DU SYSTÈME
     // -------------------------------------------------------------------------
 
-    // Route API pour obtenir l'état global du système (Santé).
-    // Retourne un JSON contenant les infos WiFi, MQTT, paramètres globaux, statistiques MS/TP 
-    // et un résumé (sans le détail des objets) de l'avancement de la découverte BACnet.
-    // Très sollicité par l'interface web pour le dashboard principal.
+    /**
+     * @route   GET /api/status
+     * @brief   Retourne l'état global du système sous forme de JSON.
+     * @details Endpoint le plus sollicité par l'interface web (polling périodique pour le dashboard).
+     *          Construit un document JSON contenant :
+     *          - Informations WiFi (RSSI, IP courante, masque, passerelle)
+     *          - Configuration système complète (sysCfg)
+     *          - État MQTT (connecté/déconnecté)
+     *          - Statistiques MS/TP (ring actif, compteurs trames RX/TX, erreurs CRC)
+     *          - Résumé de chaque équipement BACnet (sans le détail des objets, pour la légèreté)
+     *          - Métriques système (heap libre en Ko, uptime en secondes)
+     *
+     *          Protection double-mutex : api_mutex (1s) puis cache_mutex (100ms) pour
+     *          l'accès au vecteur d'équipements. En cas de timeout, retourne 503.
+     *
+     *          Le header "Connection: close" force la fermeture TCP pour libérer les
+     *          ressources AsyncTCP immédiatement après l'envoi.
+     */
     webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request){
         if (!is_authenticated(request)) return;
 
@@ -310,9 +433,21 @@ void setup_web_routes() {
         }
     });
 
-    // Route API pour obtenir l'arborescence complète des équipements et de leurs objets BACnet.
-    // Cette route est utilisée pour peupler le tableau détaillé dans l'interface utilisateur.
-    // Elle extrait et sérialise la totalité du contenu de `bacnet_network_cache`.
+    /**
+     * @route   GET /api/objects
+     * @brief   Retourne l'arborescence complète des équipements et de leurs objets BACnet.
+     * @details Endpoint utilisé pour peupler le tableau détaillé dans l'interface web.
+     *          Sérialise l'intégralité de `bacnet_network_cache` incluant pour chaque objet :
+     *          type, instance, nom, valeur courante, état de polling, unité, limites min/max/step,
+     *          références croisées (cMinRef/cMaxRef), status_flags et état OutOfService.
+     *
+     *          C'est la route la plus coûteuse en mémoire car elle peut générer plusieurs dizaines
+     *          de Ko de JSON pour un réseau BACnet conséquent. L'allocation se fait en PSRAM
+     *          via `psram_alloc` pour préserver la heap interne SRAM (320 Ko).
+     *
+     *          Les champs min/max ne sont inclus que s'ils sont définis (différents de NAN) afin
+     *          de réduire la taille de la réponse JSON.
+     */
     webServer.on("/api/objects", HTTP_GET, [](AsyncWebServerRequest *request){
         if (!is_authenticated(request)) return;
 
@@ -366,7 +501,21 @@ void setup_web_routes() {
         }
     });
 
-    // Route API pour déclencher une requête de découverte globale "Who-Is".
+    // -------------------------------------------------------------------------
+    // ROUTES API - COMMANDES BACNET (Jobs asynchrones vers le Core 1)
+    // -------------------------------------------------------------------------
+    // Ces routes créent des BACnetJob et les enfilent dans `bacnet_job_queue`.
+    // Le moteur MS/TP du Core 1 les défile et les exécute lors de la possession
+    // du jeton (état MSTP_USE_TOKEN).
+    // -------------------------------------------------------------------------
+
+    /**
+     * @route   POST /api/whois
+     * @brief   Déclenche un broadcast "Who-Is" sur le bus MS/TP.
+     * @details Envoie une requête de découverte globale pour identifier tous les
+     *          équipements BACnet présents sur le réseau. Les réponses "I-Am" sont
+     *          traitées par le Core 1 et ajoutées au `bacnet_network_cache`.
+     */
     webServer.on("/api/whois", HTTP_POST, [](AsyncWebServerRequest *request){
         if(!is_authenticated(request)) return;
         BACnetJob job; job.type = JOB_WHO_IS;
@@ -374,7 +523,12 @@ void setup_web_routes() {
         request->send(200, "text/plain", "WHO-IS ENQUEUED");
     });
 
-    // Route API pour forcer l'envoi d'une réponse "I-Am".
+    /**
+     * @route   POST /api/iam
+     * @brief   Force l'envoi d'une réponse "I-Am" de notre propre passerelle.
+     * @details Annonce notre présence sur le bus MS/TP. Utile pour que des superviseurs
+     *          (YABE, Desigo, etc.) détectent la passerelle sans attendre un Who-Is.
+     */
     webServer.on("/api/iam", HTTP_POST, [](AsyncWebServerRequest *request){
         if(!is_authenticated(request)) return;
         BACnetJob job; job.type = JOB_I_AM;
@@ -384,7 +538,14 @@ void setup_web_routes() {
     });
 
 
-    // Route API pour recharger tous les objets d'un appareil.
+    /**
+     * @route   POST /api/reload_device
+     * @brief   Relance la découverte complète d'un équipement BACnet spécifique.
+     * @details Remet l'automate de découverte à l'étape initiale (DISC_DEV_ID) et
+     *          sauvegarde l'état en NVS. L'équipement sera redécouvert lors du
+     *          prochain cycle de polling.
+     * @param   id  (POST) Device ID de l'équipement à redécouvrir.
+     */
     webServer.on("/api/reload_device", HTTP_POST, [](AsyncWebServerRequest *request){
         if(!is_authenticated(request)) return;
         if (request->hasParam("id", true)) {
@@ -406,8 +567,16 @@ void setup_web_routes() {
         } else request->send(400, "text/plain", "Missing id");
     });
 
-    // Route API pour forcer le rafraîchissement immédiat de la valeur (`Present_Value`) d'un objet BACnet.
-    // Ajoute une requête de lecture asynchrone à la file des tâches BACnet du Core 1.
+    /**
+     * @route   POST /api/reload_object
+     * @brief   Force la relecture immédiate de la valeur (Present_Value) d'un objet BACnet.
+     * @details Crée un job JOB_READ_PROP ciblant la propriété 85 (Present_Value) et
+     *          l'enfile pour exécution par le Core 1. Résout l'adresse MAC du device
+     *          cible en parcourant le cache.
+     * @param   did  (POST) Device ID de l'équipement parent.
+     * @param   inst (POST) Instance de l'objet à relire.
+     * @param   type (POST) Type d'objet BACnet (enum BACnetObjectType).
+     */
     webServer.on("/api/reload_object", HTTP_POST, [](AsyncWebServerRequest *request){
         if(!is_authenticated(request)) return;
         if (request->hasParam("did", true) && request->hasParam("inst", true) && request->hasParam("type", true)) {
@@ -448,9 +617,36 @@ void setup_web_routes() {
     // ROUTES API - CONFIGURATION ET SAUVEGARDE
     // -------------------------------------------------------------------------
 
-    // Route API pour mettre à jour les propriétés modifiables par l'utilisateur d'un objet BACnet.
-    // Gère le renommage, les unités, l'activation/désactivation du polling MQTT, ainsi que les limites numériques.
-    // Ces informations sont appliquées en RAM puis signalées pour être sauvées en Flash.
+    /**
+     * @route   POST /api/save_object
+     * @brief   Met à jour les propriétés éditables d'un objet BACnet (nom, unité, polling, limites).
+     * @details Endpoint central de l'interface de configuration par objet. Gère :
+     *
+     *          - **Renommage** : Si le nom change, un WriteProperty(Object_Name, prop_id=77)
+     *            est enfilé vers le Core 1 pour propager le nouveau nom vers l'automate BACnet
+     *            physique. L'ancien nom est conservé pour le log de traçabilité.
+     *
+     *          - **Références croisées min/max** : Si la valeur min ou max contient le
+     *            caractère ':', elle est interprétée comme une référence vers un autre objet
+     *            (format "type:instance"). Le système enregistre une dépendance dans
+     *            `ha_dependencies` pour la mise à jour dynamique dans Home Assistant.
+     *            Sinon, la valeur est interprétée comme un flottant statique.
+     *
+     *          - **Contrainte step** : Le pas minimum est contraint à 0.1 pour éviter les
+     *            boucles infinies dans les sliders HA.
+     *
+     *          Après modification, sauvegarde en NVS et déclenche la re-publication HA.
+     *
+     * @param   did  (POST) Device ID du parent.
+     * @param   inst (POST) Instance de l'objet.
+     * @param   type (POST) Type d'objet BACnet.
+     * @param   name (POST, opt) Nouveau nom de l'objet.
+     * @param   unit (POST, opt) Nouveau texte d'unité.
+     * @param   poll (POST, opt) "1" pour activer le polling MQTT, "0" pour désactiver.
+     * @param   min  (POST, opt) Valeur min ou référence croisée (format "type:instance").
+     * @param   max  (POST, opt) Valeur max ou référence croisée.
+     * @param   step (POST, opt) Pas d'incrément (minimum 0.1).
+     */
     webServer.on("/api/save_object", HTTP_POST, [](AsyncWebServerRequest *request){
         if(!is_authenticated(request)) return;
         if (request->hasParam("did", true) && request->hasParam("inst", true) && request->hasParam("type", true)) {
@@ -551,8 +747,19 @@ void setup_web_routes() {
         } else request->send(400, "text/plain", "Missing params");
     });
 
-    // Route API pour activer ou désactiver un équipement entier.
-    // Un équipement désactivé n'est plus interrogé (pollé) sur le bus BACnet, ce qui libère de la bande passante.
+    /**
+     * @route   POST /api/toggle_device
+     * @brief   Active ou désactive le polling d'un équipement BACnet entier.
+     * @details Bascule le flag `xEnabled` de l'équipement. Un équipement désactivé
+     *          n'est plus interrogé sur le bus MS/TP, libérant de la bande passante
+     *          pour les autres équipements.
+     *
+     *          Cas particulier (v6.8.7-patch2) : Si l'on réactive un équipement qui
+     *          n'a aucun objet en cache, sa découverte est automatiquement relancée
+     *          depuis l'étape initiale.
+     *
+     * @param   id  (POST) Device ID de l'équipement à basculer.
+     */
     webServer.on("/api/toggle_device", HTTP_POST, [](AsyncWebServerRequest *request){
         if(!is_authenticated(request)) return;
         if (request->hasParam("id", true)) {
@@ -580,9 +787,29 @@ void setup_web_routes() {
     });
 
     // =========================================================================
-    // AJOUT CHIRURGICAL 1/2 : Route API pour forcer l'état OutOfService d'un objet (Hack Clim)
-    // Paramètres attendus : did (Device ID), inst (Instance ID), state (1/0, true/false, ON/OFF)
+    // Route API pour forcer l'état OutOfService d'un objet (mode "Hack Clim")
     // =========================================================================
+    /**
+     * @route   POST /api/outofservice
+     * @brief   Force ou relâche le flag Out_Of_Service (propriété 96) d'un objet BACnet.
+     * @details Implémente le pattern "Hack Clim" : permet de prendre le contrôle
+     *          local d'un capteur (typiquement un Analog Input) en le mettant hors-service
+     *          puis en écrivant directement sa Present_Value pour simuler une mesure.
+     *
+     *          Double action :
+     *          1. Mise à jour immédiate du flag `ucStatusFlags` dans le cache local RAM
+     *             + publication MQTT pour feedback instantané vers Home Assistant.
+     *          2. Envoi d'un WriteProperty(Out_Of_Service) vers l'automate BACnet
+     *             distant via la file de jobs (priorité 8 = Manuel).
+     *
+     *          Accepte les valeurs "1", "true", "on" (insensible à la casse) pour activer,
+     *          toute autre valeur pour désactiver.
+     *
+     * @param   did   (POST) Device ID.
+     * @param   inst  (POST) Instance de l'objet.
+     * @param   state (POST) État souhaité ("1"/"true"/"on" ou "0"/"false"/"off").
+     * @param   type  (POST, opt) Type d'objet (défaut : 0 = Analog Input).
+     */
     webServer.on("/api/outofservice", HTTP_POST, [](AsyncWebServerRequest *request){
         if(!is_authenticated(request)) return;
         
@@ -645,9 +872,28 @@ void setup_web_routes() {
     });
 
     // =========================================================================
-    // AJOUT CHIRURGICAL 2/2 : Route API pour écrire une valeur générique (Present_Value ou autre)
-    // Paramètres attendus : did, type, inst, prop, val, [priority] (Optionnel, ex: 8)
+    // Route API pour écrire une valeur générique (Present_Value ou autre)
     // =========================================================================
+    /**
+     * @route   POST /api/writevalue
+     * @brief   Écrit une valeur sur une propriété quelconque d'un objet BACnet.
+     * @details Endpoint générique de commande. Crée un WriteProperty BACnet et l'enfile
+     *          vers le Core 1 pour transmission sur le bus MS/TP.
+     *
+     *          Cas particulier d'émulation locale : si l'objet cible est un Analog Input
+     *          (type=0) en mode Out-Of-Service et que la propriété est Present_Value (85),
+     *          la valeur est directement appliquée dans le cache RAM et publiée via MQTT,
+     *          sans attendre la confirmation du bus. Cela garantit un retour instantané
+     *          pour le pattern "Hack Clim". La vérification de dépendances HA est aussi
+     *          déclenchée car la valeur d'un AI peut servir de min/max dynamique.
+     *
+     * @param   did      (POST) Device ID.
+     * @param   type     (POST) Type d'objet BACnet.
+     * @param   inst     (POST) Instance de l'objet.
+     * @param   prop     (POST) ID de propriété BACnet (ex: 85=Present_Value).
+     * @param   val      (POST) Valeur flottante à écrire.
+     * @param   priority (POST, opt) Priorité BACnet 1-16 (défaut: 0 = pas de priorité).
+     */
     webServer.on("/api/writevalue", HTTP_POST, [](AsyncWebServerRequest *request){
         if(!is_authenticated(request)) return;
         if (request->hasParam("did", true) && request->hasParam("type", true) && 
@@ -714,9 +960,22 @@ void setup_web_routes() {
     });
 
     // =========================================================================
-    // AJOUT CHIRURGICAL : Route API pour lire n'importe quelle propriété d'un objet (ReadProperty)
-    // Paramètres attendus : did, type, inst, prop, [array] (Optionnel, défaut -1)
+    // Route API pour lire n'importe quelle propriété d'un objet (ReadProperty)
     // =========================================================================
+    /**
+     * @route   POST /api/readproperty
+     * @brief   Enfile une requête de lecture d'une propriété quelconque d'un objet BACnet.
+     * @details Endpoint de diagnostic générique. Crée un ReadProperty BACnet pour
+     *          n'importe quelle combinaison type/instance/propriété/array_index.
+     *          La réponse ne revient pas dans la réponse HTTP (asynchrone) : elle est
+     *          traitée par le Core 1 et apparaîtra dans les logs et/ou le cache.
+     *
+     * @param   did   (POST) Device ID.
+     * @param   type  (POST) Type d'objet BACnet.
+     * @param   inst  (POST) Instance de l'objet.
+     * @param   prop  (POST) ID de propriété BACnet.
+     * @param   array (POST, opt) Index de tableau (défaut: -1 = pas de tableau).
+     */
     webServer.on("/api/readproperty", HTTP_POST, [](AsyncWebServerRequest *request){
         if(!is_authenticated(request)) return;
         
@@ -765,9 +1024,36 @@ void setup_web_routes() {
         }
     });
 
-    // Route API principale pour la sauvegarde des paramètres système (NVS).
-    // v6.9.3: Implémentation du filtre 'dirty' pour éviter de sur-solliciter la NVS et geler le bus SPI.
-    // Valide et enregistre les données des différents onglets de configuration (WiFi, MQTT, BACnet, Polling, Security).
+    // -------------------------------------------------------------------------
+    // ROUTE API - SAUVEGARDE DE LA CONFIGURATION SYSTÈME (NVS)
+    // -------------------------------------------------------------------------
+
+    /**
+     * @route   POST /save
+     * @brief   Sauvegarde les paramètres système en NVS (Flash SPI).
+     * @details Point d'entrée unique pour la sauvegarde de tous les onglets de configuration
+     *          de l'interface web. Le paramètre `form_type` détermine la section à traiter :
+     *
+     *          - **"wifi"** : SSID, mot de passe (ignore "******"), IP statique/DHCP,
+     *            adresse IP, passerelle, masque de sous-réseau.
+     *          - **"mqtt"** : Serveur, utilisateur, mot de passe, préfixe topic, découverte HA.
+     *          - **"bac"**  : MAC BACnet, Device ID, Max Master, retries, timeout APDU,
+     *            token skip, max info frames, intervalle heartbeat.
+     *          - **"poll"** : Intervalles de polling MQTT et BACnet (en secondes).
+     *          - **"sec"**  : Identifiants admin (utilisateur/mot de passe), niveau de log.
+     *
+     *          Optimisation NVS (v6.9.3) : chaque paramètre est comparé à sa valeur courante
+     *          avant modification. La NVS n'est écrite que si au moins un paramètre a réellement
+     *          changé, évitant l'usure inutile de la Flash SPI et le gel du bus.
+     *
+     *          Actions post-sauvegarde :
+     *          - WiFi modifié → redémarrage programmé (pending_reboot).
+     *          - MQTT modifié → reconnexion MQTT sans redémarrage (setup_mqtt()).
+     *          - Autres → la nouvelle config est effective immédiatement en RAM.
+     *
+     *          Les mots de passe masqués (valeur "******") dans le formulaire sont ignorés
+     *          pour éviter d'écraser le mot de passe réel stocké en NVS.
+     */
     webServer.on("/save", HTTP_POST, [](AsyncWebServerRequest *request){
         if (!is_authenticated(request)) return;
         String ft = "";
@@ -948,8 +1234,20 @@ void setup_web_routes() {
         }
     });
 
-    // Route API pour vider la mémoire de la passerelle.
-    // Supprime de la NVS (Flash) l'historique complet de tous les équipements BACnet et leurs objets, puis redémarre.
+    // -------------------------------------------------------------------------
+    // ROUTES API - MAINTENANCE ET RÉINITIALISATION
+    // -------------------------------------------------------------------------
+
+    /**
+     * @route   ANY /api/reset_cache
+     * @brief   Efface le cache NVS de tous les équipements BACnet et redémarre.
+     * @details Parcourt chaque équipement dans `bacnet_network_cache`, ouvre son
+     *          namespace NVS dédié ("dev_<device_id>") et le purge. Efface également
+     *          le registre global ("registry") qui liste les Device IDs connus.
+     *          Vide ensuite le vecteur en RAM et programme un redémarrage.
+     *
+     *          Utilise HTTP_ANY pour accepter GET et POST (commodité pour les scripts curl).
+     */
     webServer.on("/api/reset_cache", HTTP_ANY, [](AsyncWebServerRequest *request){
         if (!is_authenticated(request)) return;
         if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(1000))) {
@@ -965,7 +1263,16 @@ void setup_web_routes() {
         pending_reboot = true; reboot_timer = millis();
     });
 
-    // API pour un Factory Reset complet (effacement total de la NVS).
+    /**
+     * @route   ANY /api/factory_reset
+     * @brief   Effectue un Factory Reset complet (effacement total de la partition NVS).
+     * @details Appelle `nvs_flash_erase()` qui efface TOUTE la partition NVS, incluant
+     *          la configuration système, les équipements, et les calibrations.
+     *          Après redémarrage, le système repasse en mode AP avec les valeurs par défaut.
+     *
+     * @warning Cette opération est irréversible. Tous les paramètres et données
+     *          persistantes seront perdus.
+     */
     webServer.on("/api/factory_reset", HTTP_ANY, [](AsyncWebServerRequest *request){
         if (!is_authenticated(request)) return;
         nvs_flash_erase();
@@ -973,7 +1280,13 @@ void setup_web_routes() {
         pending_reboot = true; reboot_timer = millis();
     });
 
-    // API pour redémarrer la Gateway.
+    /**
+     * @route   ANY /api/reboot
+     * @brief   Redémarre la passerelle proprement.
+     * @details Programme un redémarrage différé d'environ 1 seconde (via `pending_reboot`
+     *          et `reboot_timer`). Le délai permet à la réponse HTTP d'être envoyée
+     *          au client avant le reset matériel.
+     */
     webServer.on("/api/reboot", HTTP_ANY, [](AsyncWebServerRequest *request){
         if (!is_authenticated(request)) return;
         request->send(200, "text/plain", "Rebooting...");
@@ -981,7 +1294,18 @@ void setup_web_routes() {
     });
 
 
-    // Route API de débogage pour forcer une redécouverte HA.
+    /**
+     * @route   GET /api/trigger_discovery
+     * @brief   Force une redécouverte complète de tous les équipements et leurs objets.
+     * @details Route de débogage qui :
+     *          1. Remet tous les équipements en état "non-découvert" (DISC_DEV_ID, index 0).
+     *          2. Efface les flags de publication des noms et les textes d'unité pour
+     *             forcer leur re-lecture depuis les automates BACnet.
+     *          3. Déclenche la re-publication de la découverte Home Assistant.
+     *
+     *          Utile après un changement de configuration sur les automates physiques
+     *          ou pour résoudre des incohérences de cache.
+     */
     webServer.on("/api/trigger_discovery", HTTP_GET, [](AsyncWebServerRequest *request){
         if (!is_authenticated(request)) return;
         
@@ -1004,10 +1328,37 @@ void setup_web_routes() {
     });
 }
 
+// ============================================================================
+// Initialisation de l'infrastructure réseau
+// ============================================================================
+
 /**
- * @brief Initialise toute l'infrastructure réseau.
- * @details Charge la configuration NVS, démarre le WiFi (STA ou AP), configure le serveur web,
- *          les WebSockets, les points d'API REST, et lance la tâche de journalisation.
+ * @brief Initialise toute l'infrastructure réseau de la passerelle.
+ * @details Fonction d'initialisation appelée une seule fois depuis `setup()` dans le .ino principal.
+ *          Séquence d'initialisation :
+ *
+ *          1. **Mutex** : Création des 3 sémaphores (cache, API, WS) en premier pour
+ *             éviter les conditions de course lors du chargement NVS.
+ *
+ *          2. **File de logs** : Création de la queue FreeRTOS (20 messages × 256 octets)
+ *             et lancement de la tâche `websocket_log_task` sur le Core 0 (8 Ko de pile,
+ *             priorité 2). La tâche n'est créée qu'une seule fois grâce à un flag statique.
+ *
+ *          3. **Configuration NVS** : Chargement de sysCfg depuis la Flash SPI.
+ *
+ *          4. **WiFi** :
+ *             - Si les identifiants sont vides → Mode AP ("ZIRCON-GW-CONFIG" / "admin1234").
+ *             - Sinon → Mode STA avec désactivation du Power Saving WiFi (WIFI_PS_NONE)
+ *               pour garantir la latence réseau, et configuration IP statique si activée.
+ *
+ *          5. **Routes web** : Enregistrement de toutes les routes via `setup_web_routes()`.
+ *
+ *          6. **OTA** : Configuration des callbacks ArduinoOTA (Start, End, Error).
+ *
+ *          7. **Démarrage des services** : webServer.begin() et ArduinoOTA.begin().
+ *
+ * @note    La désactivation du Power Saving WiFi (WIFI_PS_NONE) est critique pour
+ *          la réactivité des WebSockets et de l'API REST.
  */
 void setup_network_infrastructure() {
     // 1. Initialize core system mutexes first to avoid race conditions during NVS load
@@ -1064,11 +1415,25 @@ void setup_network_infrastructure() {
     // Log déplacé vers system_task (Core 0) pour cohérence visuelle
 }
 
+// ============================================================================
+// Boucle réseau récurrente (appelée depuis la boucle principale du Core 0)
+// ============================================================================
 
 /**
  * @brief Gère les tâches réseau récurrentes.
- * @details Appelé dans la boucle principale du Cœur 0, cette fonction gère les mises à jour OTA,
- *          les redémarrages différés et le mécanisme de fallback en mode Point d'Accès.
+ * @details Appelé dans la boucle principale du Cœur 0. Responsabilités :
+ *
+ *          1. **OTA** : Traitement des paquets de mise à jour firmware en attente.
+ *
+ *          2. **Redémarrage différé** : Si `pending_reboot` est vrai et que 1 seconde
+ *             s'est écoulée depuis l'armement du timer, exécute `ESP.restart()`.
+ *             Ce délai d'une seconde garantit que la réponse HTTP a eu le temps
+ *             d'être envoyée au client avant le reset matériel.
+ *
+ *          3. **Fallback AP** : Si le WiFi STA n'est pas connecté après 30 secondes,
+ *             bascule automatiquement en mode Point d'Accès pour permettre la
+ *             reconfiguration via le portail captif ("ZIRCON-GW-CONFIG").
+ *             Le flag `wifi_fallback_active` empêche de relancer le softAP en boucle.
  */
 void handle_network() {
     ArduinoOTA.handle();
@@ -1085,12 +1450,21 @@ void handle_network() {
     }
 }
 
+// ============================================================================
+// Authentification HTTP Basic
+// ============================================================================
+
 /**
- * @brief Vérifie si une requête web est authentifiée.
- * @details Utilise l'authentification HTTP Basic. Si l'utilisateur n'est pas authentifié,
- *          lui envoie une demande d'authentification (code 401).
- * @param request Pointeur vers l'objet de la requête web asynchrone.
- * @return `true` si l'utilisateur est authentifié, `false` sinon.
+ * @brief Vérifie si une requête web est authentifiée via HTTP Basic Auth.
+ * @details Compare les identifiants fournis dans l'en-tête Authorization de la requête
+ *          avec les valeurs stockées dans `sysCfg.admin_user` et `sysCfg.admin_pass`.
+ *          Si l'authentification échoue, envoie automatiquement une réponse 401
+ *          (Unauthorized) avec l'en-tête WWW-Authenticate pour déclencher la boîte
+ *          de dialogue de connexion du navigateur.
+ *
+ * @param  request Pointeur vers l'objet de la requête web asynchrone.
+ * @return `true` si l'utilisateur est authentifié et la route peut continuer.
+ * @return `false` si l'authentification a échoué (la réponse 401 est déjà envoyée).
  */
 bool is_authenticated(AsyncWebServerRequest *request) {
     if (!request->authenticate(sysCfg.admin_user, sysCfg.admin_pass)) {

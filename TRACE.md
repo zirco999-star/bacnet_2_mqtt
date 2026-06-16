@@ -589,7 +589,16 @@
   - Ajout du support de retour de valeur pour [readproperty.py](file:///home/dev/bacnet_2_mqtt/utils/readproperty.py).
 - **Validation** : Compilation locale réussie, déploiement OTA sur 192.168.1.50 validé, et validation du test complet de scénario de hack UTA avec succès.
 
+## [v7.0.7] - 2026-06-16
+### Ajout
+- **Documentation Doxygen de z_bacnet.cpp** :
+  - Ajout de commentaires Doxygen structurés en français pour l'intégralité des 40 fonctions et tâches clés constituant la FSM BACnet MS/TP.
+  - Explications détaillées sur les rôles, les paramètres et les détails d'implémentation (gestion des buffers APDU, validation des CRC8/16, orchestration de la machine à états MS/TP, auto-découverte MAC).
+- **Validation** : Compilation du projet avec succès avec le fichier de FSM commenté.
 
-
-
-
+## [v7.0.8] - 2026-06-16
+### Modification
+- **Documentation et commentaires Doxygen globaux** :
+  - Finalisation de la documentation complète en français des fichiers sources du projet (`.cpp`, `.h`, `.ino`, `index.html`) pour maximiser la maintenabilité et la clarté.
+  - Incrémentation de la version globale à `v7.0.8` dans `z_config.h`.
+- **Validation** : Compilation de l'intégralité du projet validée avec succès.

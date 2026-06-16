@@ -98,6 +98,13 @@ bool has_bacnet_work();
 void check_ha_dependencies(uint32_t did, uint16_t type, uint32_t inst);
 
 // --- TÂCHE DE RÉCEPTION DÉDIÉE (Priorité Critique) ---
+/**
+ * @brief Tâche FreeRTOS dédiée à la réception des octets sur le bus MS/TP.
+ * @details Lit en continu (bloquant via uart_read_bytes) et assemble les trames
+ *          MS/TP (préambule, en-tête, calculs de CRC, charge utile). Pousse les trames
+ *          valides dans mstp_rx_queue et effectue l'auto-découverte MAC asynchrone.
+ * @param pv Paramètre de tâche FreeRTOS (non utilisé).
+ */
 static void mstp_rx_task(void *pv) {
     uint8_t rx_byte; 
     uint8_t header[6]; uint8_t header_idx=0;
@@ -178,6 +185,13 @@ static void mstp_rx_task(void *pv) {
     }
 }
 
+/**
+ * @brief Calcule le CRC8 de l'en-tête d'une trame MS/TP.
+ * @details Algorithme spécifié par la norme ASHRAE 135.
+ * @param data Pointeur vers le tableau de données.
+ * @param len Longueur des données à traiter.
+ * @return Valeur du CRC8 calculé.
+ */
 static uint8_t calc_header_crc(uint8_t *data, size_t len) {
     uint8_t crc = 0xFF;
     for (size_t i = 0; i < len; i++) {
@@ -188,6 +202,13 @@ static uint8_t calc_header_crc(uint8_t *data, size_t len) {
     return (~crc) & 0xFF;
 }
 
+/**
+ * @brief Calcule le CRC16 de la charge utile d'une trame MS/TP.
+ * @details Algorithme CRC-CCITT inversé spécifié par la norme ASHRAE 135.
+ * @param data Pointeur vers le tableau de données de la charge utile.
+ * @param len Longueur des données à traiter.
+ * @return Valeur du CRC16 calculé.
+ */
 static uint16_t calc_data_crc(uint8_t *data, size_t len) {
     uint16_t crc = 0xFFFF;
     for (size_t i = 0; i < len; i++) {
@@ -197,6 +218,11 @@ static uint16_t calc_data_crc(uint8_t *data, size_t len) {
     return (~crc) & 0xFFFF;
 }
 
+/**
+ * @brief Valide le CRC8 de l'en-tête reçu.
+ * @param header Pointeur vers l'en-tête de 6 octets.
+ * @return true si le CRC est valide (correspondance avec la constante 0x55 après calcul), false sinon.
+ */
 static bool validate_rx_header_crc(const uint8_t *header) {
     uint8_t crc = 0xFF;
     for (size_t i = 0; i < 6; i++) { 
@@ -207,6 +233,12 @@ static bool validate_rx_header_crc(const uint8_t *header) {
     return (crc == 0x55);
 }
 
+/**
+ * @brief Valide le CRC16 des données reçues.
+ * @param data Pointeur vers le buffer contenant les données et le CRC final de 2 octets.
+ * @param len Longueur totale (données + 2 octets de CRC).
+ * @return true si le CRC est valide (valeur attendue 0xF0B8 après calcul), false sinon.
+ */
 static bool validate_rx_data_crc(const uint8_t *data, size_t len) {
     uint16_t crc = 0xFFFF;
     for (size_t i = 0; i < len; i++) {
@@ -224,6 +256,16 @@ struct BACnetTag {
     bool isClosing; 
 };
 
+/**
+ * @brief Décode le tag ASN.1 BACnet suivant dans un flux binaire.
+ * @details Extrait le numéro de tag, la classe (Application/Contextuel), la longueur ou le type de tag
+ *          (Opening/Closing tag) conformément à la spécification ASN.1 de BACnet.
+ * @param data Pointeur vers le flux binaire de l'APDU.
+ * @param pos Index de la position actuelle dans le flux (incrémenté lors du décodage).
+ * @param max Limite supérieure de taille du flux.
+ * @param tag Pointeur vers la structure BACnetTag qui recevra le résultat du décodage.
+ * @return true si le décodage a réussi, false si la fin du flux est atteinte.
+ */
 static bool decode_next_tag(const uint8_t *data, uint16_t *pos, uint16_t max, BACnetTag *tag) {
     if (*pos >= max) return false;
     uint8_t b = data[(*pos)++];
@@ -241,7 +283,10 @@ static bool decode_next_tag(const uint8_t *data, uint16_t *pos, uint16_t max, BA
 }
 
 /**
- * @brief Décode un flottant BACnet (REAL) sur 4 octets.
+ * @brief Décode un nombre flottant à virgule flottante simple précision (REAL) encodé selon BACnet.
+ * @details Convertit la représentation sur 4 octets gros-boutiste (Big Endian) vers le format local.
+ * @param buf Pointeur vers la zone mémoire contenant les 4 octets du flottant.
+ * @return Valeur flottante décodée.
  */
 static float decode_bacnet_real(const uint8_t *buf) {
     uint32_t tm;
@@ -253,7 +298,11 @@ static float decode_bacnet_real(const uint8_t *buf) {
 }
 
 /**
- * @brief Décode un entier non signé BACnet de longueur variable.
+ * @brief Décode un entier non signé de longueur variable encodé selon BACnet.
+ * @details Reconstruit l'entier à partir d'un nombre variable d'octets (1 à 4) en Big Endian.
+ * @param buf Pointeur vers la zone mémoire contenant les octets de l'entier.
+ * @param len Nombre d'octets à décoder.
+ * @return Entier non signé 32 bits résultant.
  */
 static uint32_t decode_bacnet_unsigned(const uint8_t *buf, uint32_t len) {
     uint32_t v = 0;
@@ -264,7 +313,11 @@ static uint32_t decode_bacnet_unsigned(const uint8_t *buf, uint32_t len) {
 }
 
 /**
- * @brief Décode un Object Identifier BACnet (Type + Instance).
+ * @brief Décode un identifiant d'objet BACnet (Object Identifier) sur 4 octets.
+ * @details Extrait le type d'objet (10 bits de poids fort) et l'instance de l'objet (22 bits de poids faible).
+ * @param buf Pointeur vers les 4 octets de l'identifiant.
+ * @param type Pointeur pour retourner le type d'objet (optionnel).
+ * @param instance Pointeur pour retourner le numéro d'instance (optionnel).
  */
 static void decode_bacnet_object_id(const uint8_t *buf, uint16_t *type, uint32_t *instance) {
     uint32_t oid = ((uint32_t)buf[0] << 24) | ((uint32_t)buf[1] << 16) | ((uint32_t)buf[2] << 8) | (uint32_t)buf[3];
@@ -273,7 +326,13 @@ static void decode_bacnet_object_id(const uint8_t *buf, uint16_t *type, uint32_t
 }
 
 /**
- * @brief Décode une chaîne de caractères BACnet selon son encodage.
+ * @brief Décode une chaîne de caractères encodée au format BACnet.
+ * @details Prend en charge l'encodage UTF-8/ASCII (code 0) et l'encodage UCS-2/UTF-16 (code alternatif).
+ * @param buf Pointeur vers les octets de la chaîne de caractères (incluant l'octet d'encodage en tête).
+ * @param len Longueur totale de la chaîne dans le flux APDU.
+ * @param out Pointeur vers le buffer de destination pour la chaîne décodée.
+ * @param max_out Capacité maximale du buffer de destination (caractère nul de fin compris).
+ * @return Nombre de caractères écrits dans le buffer de destination.
  */
 static int decode_bacnet_string(const uint8_t *buf, uint32_t len, char *out, size_t max_out) {
     if (len == 0 || out == NULL) return 0;
@@ -292,7 +351,13 @@ static int decode_bacnet_string(const uint8_t *buf, uint32_t len, char *out, siz
 }
 
 /**
- * @brief Gère la réponse I-Am d'un appareil BACnet.
+ * @brief Traite la réception d'une annonce BACnet I-Am.
+ * @details Analyse l'APDU I-Am pour en extraire l'identifiant du périphérique (Device ID)
+ *          et l'adresse MAC source, puis enregistre ou met à jour ce périphérique dans
+ *          la table de cache (bacnet_network_cache) de manière thread-safe.
+ * @param src_mac Adresse MAC de la station ayant émis l'annonce.
+ * @param apdu Pointeur vers le début de l'APDU I-Am.
+ * @param al Longueur de l'APDU.
  */
 static void handle_i_am_response(uint8_t src_mac, const uint8_t *apdu, uint16_t al) {
     if (al >= 6 && apdu[2] == 0xC4) {
@@ -324,7 +389,10 @@ static void handle_i_am_response(uint8_t src_mac, const uint8_t *apdu, uint16_t 
 }
 
 /**
- * @brief Gère un acquittement simple (Simple-ACK).
+ * @brief Gère un acquittement simple (Simple-ACK) reçu d'un équipement.
+ * @details Confirme le succès d'une opération d'écriture en attente, met à jour la valeur correspondante
+ *          dans le cache d'objets, publie la nouvelle valeur sur MQTT et vérifie les dépendances Home Assistant.
+ * @param src_mac Adresse MAC de l'équipement émetteur de l'ACK.
  */
 static void handle_simple_ack(uint8_t src_mac) {
     z_log(pdLOG_DEBUG, "BACNET", "Simple-ACK from MAC %d (Success)\n", src_mac);
@@ -361,7 +429,11 @@ static void handle_simple_ack(uint8_t src_mac) {
 }
 
 /**
- * @brief Gère les erreurs réseau (Error, Abort, Reject).
+ * @brief Traite les réponses de type Erreur, Rejet ou Abandon (Error/Reject/Abort PDU) reçues d'un équipement.
+ * @details Gère les transitions d'états de la phase de découverte pour ignorer ou passer à la propriété
+ *          suivante d'un objet en cas d'erreur de lecture. Désactive le mode RPM si rejeté par le périphérique.
+ * @param dev Référence vers la structure de l'appareil concerné dans le cache.
+ * @param type Type de PDU d'erreur (0x50 pour Error, 0x60 pour Reject, 0x70 pour Abort, ou 0 pour Timeout).
  */
 static void handle_error_pdu(BACnetDevice &dev, uint8_t type) {
     if (sysCfg.log_level >= pdLOG_DEBUG) {
@@ -425,7 +497,15 @@ static void handle_error_pdu(BACnetDevice &dev, uint8_t type) {
 }
 
 /**
- * @brief Gère la partie Découverte d'un Complex-ACK.
+ * @brief Gère le décodage d'un acquittement complexe (Complex-ACK) pendant la phase de découverte.
+ * @details Parse et stocke les métadonnées de l'appareil (Device ID, nom, vendeur, max APDU, timeout,
+ *          nombre d'objets) puis les propriétés des objets individuels (OID, nom, unités, valeurs, etc.)
+ *          dans le cache d'objets de l'appareil.
+ * @param dev Référence vers le périphérique BACnet en cours de découverte.
+ * @param apdu Pointeur vers l'APDU Complex-ACK.
+ * @param al Longueur totale de l'APDU.
+ * @param ap Référence vers l'index de lecture actuel au sein de l'APDU (mis à jour lors de l'analyse).
+ * @param vt Référence vers le tag BACnet courant à analyser.
  */
 static void handle_complex_ack_discovery(BACnetDevice &dev, const uint8_t *apdu, uint16_t al, uint16_t &ap, BACnetTag &vt) {
     const DiscoveryStepConfig &cfg = DISCOVERY_STEPS[dev.ucDiscStep];
@@ -613,6 +693,14 @@ static void handle_complex_ack_discovery(BACnetDevice &dev, const uint8_t *apdu,
     }
 }
 
+/**
+ * @brief Déclenche la redécouverte automatique dans Home Assistant pour les objets dépendants.
+ * @details Utilisé lorsqu'un objet dépendant d'un autre (par exemple une configuration d'unités ou de seuils)
+ *          est mis à jour afin que Home Assistant recrée ou mette à jour ses entités.
+ * @param did Identifiant de périphérique BACnet (Device ID).
+ * @param type Type d'objet BACnet.
+ * @param inst Instance de l'objet BACnet.
+ */
 void check_ha_dependencies(uint32_t did, uint16_t type, uint32_t inst) {
     String t_str = "";
     if (type == 0) t_str = "AI";
@@ -628,7 +716,15 @@ void check_ha_dependencies(uint32_t did, uint16_t type, uint32_t inst) {
 }
 
 /**
- * @brief Gère la partie Polling d'un Complex-ACK.
+ * @brief Gère le décodage d'un Complex-ACK reçu lors du polling de données régulier.
+ * @details Traite les réponses aux requêtes de lecture multiple (RPM) ou individuelles (RP).
+ *          Met à jour les valeurs mesurées (PresentValue, StatusFlags) dans le cache d'objets,
+ *          actualise la date de mise à jour, publie sur MQTT et met à jour les dépendances HA si besoin.
+ * @param dev Référence vers le périphérique BACnet d'où provient la réponse.
+ * @param apdu Pointeur vers le flux APDU.
+ * @param al Longueur totale de l'APDU.
+ * @param ap Référence vers l'index de lecture actuel (incrémenté pendant le décodage).
+ * @param vt Référence vers le tag BACnet initial décodé.
  */
 static void handle_complex_ack_polling(BACnetDevice &dev, const uint8_t *apdu, uint16_t al, uint16_t &ap, BACnetTag &vt) {
     if (apdu[2] == 0x0E) { // ReadPropertyMultiple
@@ -752,12 +848,28 @@ static void handle_complex_ack_polling(BACnetDevice &dev, const uint8_t *apdu, u
     }
 }
 
+/**
+ * @brief Transmet un buffer d'octets sur le port UART RS485.
+ * @details Utilise l'API d'ESP-IDF et attend que la transmission matérielle soit complètement terminée
+ *          avant de libérer le bus (détection de fin via uart_wait_tx_done), garantissant la gestion correcte du RTS/DE.
+ * @param buf Pointeur vers le buffer à transmettre.
+ * @param len Nombre d'octets à transmettre.
+ */
 static void uart_tx(const uint8_t *buf, uint16_t len) {
     uart_write_bytes(RS485_UART_PORT, (const char*)buf, len);
     uart_wait_tx_done(RS485_UART_PORT, pdMS_TO_TICKS(50));
     last_rx_time_us = (uint32_t)esp_timer_get_time();
 }
 
+/**
+ * @brief Construit et envoie une trame MS/TP complète sur le bus RS485.
+ * @details Encapsule la charge utile (APDU) en calculant les CRC d'en-tête (CRC8) et de données (CRC16),
+ *          en respectant le délai minimal de retournement (T_turnaround) spécifié par l'ASHRAE 135.
+ * @param target Adresse MAC de destination (0-127, ou 255 pour la diffusion globale).
+ * @param type Type de trame MS/TP (ex: Token, Poll For Master, Data).
+ * @param apdu Pointeur vers la charge utile APDU (ou NULL s'il n'y a pas de données).
+ * @param len Longueur de l'APDU (0 si pas de données).
+ */
 static void send_mstp_frame(uint8_t target, uint8_t type, const uint8_t* apdu, uint16_t len) {
     if (apdu && len > 4) last_sent_invoke_id = apdu[4]; else last_sent_invoke_id = 0xFF;
     if (apdu && len > 0) { memcpy(last_apdu, apdu, len); last_apdu_len = len; }
@@ -771,6 +883,16 @@ static void send_mstp_frame(uint8_t target, uint8_t type, const uint8_t* apdu, u
     if (type == 0x05 || type == 0x06) bacnetStats.ulMsMsgsTx++;
 }
 
+/**
+ * @brief Construit l'APDU d'une requête ReadPropertyMultiple (RPM).
+ * @details Crée la structure binaire pour demander simultanément la propriété Present_Value
+ *          pour une liste d'objets spécifiée.
+ * @param buffer Buffer de destination pour l'APDU construit.
+ * @param invoke_id Identifiant de transaction BACnet (Invoke ID).
+ * @param objects Vecteur de pointeurs vers les objets à inclure dans la requête.
+ * @param property_id Identifiant de la propriété à lire (généralement 85 pour Present_Value).
+ * @return Taille totale de l'APDU écrit dans le buffer.
+ */
 uint16_t build_read_property_multiple_apdu(uint8_t* buffer, uint8_t invoke_id, std::vector<BACnetObject*>& objects, uint8_t property_id) {
     uint16_t len = 0;
     buffer[len++] = 0x01; // Confirmed-REQ
@@ -796,6 +918,17 @@ uint16_t build_read_property_multiple_apdu(uint8_t* buffer, uint8_t invoke_id, s
     return len;
 }
 
+/**
+ * @brief Construit l'APDU d'une requête de lecture simple ReadProperty (RP).
+ * @details Prépare la structure binaire standard pour interroger la propriété d'un objet unique.
+ * @param buffer Buffer de destination pour l'APDU construit.
+ * @param invoke_id Identifiant de transaction BACnet (Invoke ID).
+ * @param obj_type Type de l'objet BACnet cible.
+ * @param obj_instance Instance de l'objet cible.
+ * @param property_id Propriété demandée (ex: Name, Present_Value, Status_Flags).
+ * @param array_index Index optionnel pour les propriétés de type tableau (-1 si non utilisé).
+ * @return Taille totale de l'APDU écrit dans le buffer.
+ */
 uint16_t build_read_property_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, uint8_t property_id, int32_t array_index) {
     uint16_t len = 0;
     buffer[len++] = 0x01; buffer[len++] = 0x04; buffer[len++] = 0x02; buffer[len++] = 0x73;
@@ -810,6 +943,15 @@ uint16_t build_read_property_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t o
     return len;
 }
 
+/**
+ * @brief Construit l'APDU pour une requête d'écriture de la propriété Object_Name.
+ * @param buffer Buffer de destination pour l'APDU construit.
+ * @param invoke_id Identifiant de transaction BACnet (Invoke ID).
+ * @param obj_type Type de l'objet cible.
+ * @param obj_instance Instance de l'objet cible.
+ * @param new_name Pointeur vers la nouvelle chaîne de caractères du nom.
+ * @return Taille totale de l'APDU écrit, ou 0 en cas d'erreur.
+ */
 uint16_t build_write_property_name_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, const char* new_name) {
     if (new_name == NULL) return 0;
     uint16_t len = 0;
@@ -826,6 +968,19 @@ uint16_t build_write_property_name_apdu(uint8_t* buffer, uint8_t invoke_id, uint
     return len;
 }
 
+/**
+ * @brief Construit l'APDU pour une requête d'écriture de valeur WriteProperty (WP).
+ * @details Prépare la trame d'écriture de la propriété Present_Value. Adapte le codage de la donnée
+ *          selon le type d'objet (Entier pour Binary, Flottant pour Analog, etc.) et gère la priorité d'écriture.
+ * @param buffer Buffer de destination pour l'APDU construit.
+ * @param invoke_id Identifiant de transaction BACnet (Invoke ID).
+ * @param obj_type Type de l'objet cible (ex: AO, AV, BO, BV).
+ * @param obj_instance Instance de l'objet cible.
+ * @param prop_id Identifiant de la propriété (85 pour Present_Value).
+ * @param value Valeur flottante à appliquer.
+ * @param ucPriority Niveau de priorité (1 à 16, 0 si pas de priorité spécifiée).
+ * @return Taille totale de l'APDU écrit dans le buffer.
+ */
 uint16_t build_write_property_value_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, uint8_t prop_id, float value, uint8_t ucPriority) {
     uint16_t len = 0;
     buffer[len++] = 0x01; buffer[len++] = 0x04; buffer[len++] = 0x02; buffer[len++] = 0x03;
@@ -852,7 +1007,16 @@ uint16_t build_write_property_value_apdu(uint8_t* buffer, uint8_t invoke_id, uin
     return len;
 }
 
-// AJOUT : Constructeur d'APDU pour écrire un booléen sur Out_Of_Service (96)
+/**
+ * @brief Construit l'APDU pour forcer ou désactiver la propriété Out_Of_Service (81) d'un objet.
+ * @details Indique au périphérique BACnet de détacher l'évaluation physique de l'objet pour forcer sa valeur logiciellement.
+ * @param buffer Buffer de destination pour l'APDU construit.
+ * @param invoke_id Identifiant de transaction BACnet.
+ * @param obj_type Type de l'objet BACnet.
+ * @param obj_instance Instance de l'objet BACnet.
+ * @param out_of_service true pour activer le mode Out of Service, false pour le désactiver.
+ * @return Taille totale de l'APDU écrit dans le buffer.
+ */
 uint16_t build_write_property_outofservice_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, bool out_of_service) {
     uint16_t len = 0;
     buffer[len++] = 0x01; buffer[len++] = 0x04; buffer[len++] = 0x02; buffer[len++] = 0x03;
@@ -861,7 +1025,7 @@ uint16_t build_write_property_outofservice_apdu(uint8_t* buffer, uint8_t invoke_
     uint32_t oid = ((uint32_t)obj_type << 22) | (obj_instance & 0x3FFFFF);
     buffer[len++] = (oid >> 24) & 0xFF; buffer[len++] = (oid >> 16) & 0xFF; buffer[len++] = (oid >> 8) & 0xFF; buffer[len++] = oid & 0xFF;
     
-    buffer[len++] = 0x19; buffer[len++] = 96; // 96 = PROP_OUT_OF_SERVICE
+    buffer[len++] = 0x19; buffer[len++] = 81; // 81 = PROP_OUT_OF_SERVICE
     buffer[len++] = 0x3E; // Open Tag 3
     
     // Tag BACnet Boolean (Tag Number 1). 0x11 = True, 0x10 = False.
@@ -871,7 +1035,15 @@ uint16_t build_write_property_outofservice_apdu(uint8_t* buffer, uint8_t invoke_
     return len;
 }
 
-
+/**
+ * @brief Construit l'APDU non confirmé de type I-Am pour s'annoncer sur le réseau BACnet.
+ * @details Spécifie notre propre Instance Device, notre capacité maximale d'APDU acceptée, et notre code vendeur.
+ * @param buffer Buffer de destination pour l'APDU construit.
+ * @param device_instance Instance unique de notre propre dispositif logique Device.
+ * @param max_apdu Taille maximale d'APDU que nous pouvons recevoir.
+ * @param vendor_id Identifiant unique du fabricant (Vendor ID).
+ * @return Taille totale de l'APDU écrit dans le buffer.
+ */
 uint16_t build_i_am_apdu(uint8_t* buffer, uint32_t device_instance, uint16_t max_apdu, uint16_t vendor_id) {
     uint16_t len = 0;
     buffer[len++] = 0x10; // PDU Type: Unconfirmed-Request
@@ -888,6 +1060,11 @@ uint16_t build_i_am_apdu(uint8_t* buffer, uint32_t device_instance, uint16_t max
     return len;
 }
 
+/**
+ * @brief Convertit l'identifiant d'unité de mesure BACnet en son symbole textuel compréhensible.
+ * @param usUnits Valeur numérique de l'unité spécifiée par la norme ASHRAE 135 (ex: 62 = °C).
+ * @return Objet String contenant le symbole de l'unité de mesure.
+ */
 String get_unit_text(uint16_t usUnits) {
     switch(usUnits) {
         case 62: return "°C"; case 63: return "°K"; case 64: return "°F";
@@ -906,6 +1083,10 @@ String get_unit_text(uint16_t usUnits) {
 
 
 static MSTP_MASTER_STATE last_mstp_log_state = MSTP_INITIALIZE;
+/**
+ * @brief Trace les changements d'états de la machine à états MS/TP dans les logs.
+ * @param new_state Nouvel état de l'automate maître MS/TP.
+ */
 static void log_mstp_state_change(MSTP_MASTER_STATE new_state) {
     if (new_state != last_mstp_log_state) {
         // z_log(pdLOG_DEBUG, "MSTP", "State: %d -> %d\n", (int)last_mstp_log_state, (int)new_state);
@@ -913,6 +1094,11 @@ static void log_mstp_state_change(MSTP_MASTER_STATE new_state) {
     }
 }
 
+/**
+ * @brief Gère le comportement de l'automate MS/TP à l'état IDLE (attente d'une trame ou timeout).
+ * @details Surveille le silence du bus pour détecter une perte de jeton (Silence Timeout),
+ *          détecte l'arrivée d'une trame valide et oriente l'automate vers l'état suivant (USE_TOKEN, ANSWER_DATA, etc.).
+ */
 void handle_mstp_idle() {
     uint32_t tnt = T_NO_TOKEN_US + (sysCfg.ucMacAddress * 10000);
     if (ReceivedValidFrame) {
@@ -942,6 +1128,11 @@ void handle_mstp_idle() {
     }
 }
 
+/**
+ * @brief Gère l'automate MS/TP lorsque la station détient le jeton de parole (USE_TOKEN).
+ * @details Permet d'exécuter des requêtes BACnet en attente (Who-Is, I-Am, Lectures/Écritures) ou
+ *          de passer le jeton si aucun travail n'est à effectuer ou si la limite de trames (max_info_frames) est atteinte.
+ */
 void handle_mstp_use_token() {
     if (frame_count == 0 && !has_bacnet_work()) { 
         mstp_state = MSTP_DONE_WITH_TOKEN; return; 
@@ -952,6 +1143,11 @@ void handle_mstp_use_token() {
     } else mstp_state = MSTP_DONE_WITH_TOKEN;
 }
 
+/**
+ * @brief Gère l'automate MS/TP dans l'attente d'une réponse à une requête émise (WAIT_FOR_REPLY).
+ * @details Si une trame valide est reçue, elle est traitée. Si le délai de silence de la réponse
+ *          expire (T_reply_timeout), gère les tentatives de retransmission ou passe à l'état DONE_WITH_TOKEN.
+ */
 void handle_mstp_wait_for_reply() {
     if (ReceivedValidFrame) {
         // v6.4.4: Réponse reçue = communication active
@@ -985,16 +1181,30 @@ void handle_mstp_wait_for_reply() {
     }
 }
 
+/**
+ * @brief Gère l'envoi du jeton à la station suivante (PASS_TOKEN).
+ * @details Transmet la trame Token (0x00) vers next_station et bascule dans l'état IDLE.
+ */
 void handle_mstp_pass_token() {
     send_mstp_frame(next_station, 0x00, NULL, 0); waiting_for_reply = false; mstp_state = MSTP_IDLE;
 }
 
+/**
+ * @brief Gère l'interrogation périodique de stations potentielles pour maintenir ou stabiliser l'anneau (POLL_FOR_MASTER).
+ * @details Envoie une trame Poll For Master (0x01) à la station désignée par poll_station et attend une réponse.
+ */
 void handle_mstp_poll_for_master() {
     if (timer_silence_us >= 50000) {
         send_mstp_frame(poll_station, 0x01, NULL, 0); waiting_for_reply = true; mstp_state = MSTP_WAIT_FOR_REPLY;
     }
 }
 
+/**
+ * @brief Vérifie s'il y a des requêtes ou des actions BACnet prêtes à être transmises.
+ * @details Regarde si la queue de jobs contient des éléments ou si des objets de périphériques
+ *          dans le cache nécessitent un rafraîchissement périodique (polling).
+ * @return true si des requêtes doivent être envoyées, false sinon.
+ */
 bool has_bacnet_work() {
     if (uxQueueMessagesWaiting(bacnet_job_queue) > 0) return true;
     bool w = false; if (xSemaphoreTake(cache_mutex, 0)) {
@@ -1007,8 +1217,9 @@ bool has_bacnet_work() {
 }
 
 /**
- * @brief Exécute les tâches BACnet en attente ou la logique de découverte.
- * @details Priorise les jobs (Who-Is, I-Am, Write) sur la découverte automatique.
+ * @brief Extrait et traite la première tâche BACnet prioritaire disponible.
+ * @details Traite les jobs de la queue bacnet_job_queue (Who-Is, I-Am, lecture/écriture explicite).
+ *          Si la queue est vide, lance ou poursuit la logique de découverte automatique pour les équipements connus.
  */
 void execute_bacnet_work() {
     BACnetJob j;
@@ -1021,6 +1232,10 @@ void execute_bacnet_work() {
     if (xQueueReceive(bacnet_job_queue, &j, 0)) {
         uint8_t b[256]; 
         uint16_t l = 0;
+        #define MAX_LOG_BYTES 32
+        char hex_buf[(MAX_LOG_BYTES*3)+1];     // Le buffer statique pré-alloué (la taille [101] est vitale pour 32 bytes !)
+        size_t bytes_to_print;
+        size_t offset;
 
         switch (j.type) {
             case JOB_WHO_IS:
@@ -1028,6 +1243,21 @@ void execute_bacnet_work() {
                 b[l++] = 0x01; b[l++] = 0x20; b[l++] = 0xFF; b[l++] = 0xFF; b[l++] = 0x00; b[l++] = 0xFF;
                 b[l++] = 0x10; b[l++] = 0x08;
                 send_mstp_frame(0xFF, 0x06, b, l);
+				/// --- GESTION LOG DEBUG TRAME ---
+                // 3. Remise à zéro HYPER RAPIDE du buffer pour ce passage
+                memset(hex_buf, 0, sizeof(hex_buf));
+                offset = 0;
+                // 4. Calcul de la limite avec la taille finale de 'l'
+                bytes_to_print = (l > MAX_LOG_BYTES) ? MAX_LOG_BYTES : l;
+                // 5. Formatage
+                for (size_t i = 0; i < bytes_to_print; i++) { offset += snprintf(hex_buf + offset, sizeof(hex_buf) - offset, "%02X ", b[i]); }
+                // 6. Troncature si nécessaire
+                if (l > MAX_LOG_BYTES) { snprintf(hex_buf + offset, sizeof(hex_buf) - offset, "..."); }
+                // 7. Affichage
+                z_log(pdLOG_DEBUG, "BACNET", "WHO-IS APDU hex : %s\n", hex_buf);
+                /// --- Fin GESTION LOG DEBUG TRAME 
+ 
+				
                 z_log(pdLOG_INFO, "BACNET", "WHO-IS send\n");
                 break;
 
@@ -1037,6 +1267,20 @@ void execute_bacnet_work() {
                 // APDU I-Am (Service 0x00, PDU 0x10)
                 l += build_i_am_apdu(&b[l], sysCfg.ulDeviceId, 480, 0); // segmentation 0 = non-supported
                 send_mstp_frame(0xFF, 0x06, b, l);
+                // gestion LOG DEBUG TRAME
+                hex_buf[6] = {0}; offset = 0;
+                for (size_t i = 0; i < bytes_to_print; i++) {
+                    offset += snprintf(hex_buf + offset, sizeof(hex_buf) - offset, "%02X ", b[i]);
+                }
+                // Si la trame est plus longue, on indique qu'elle a été tronquée pour le log
+                if (l > MAX_LOG_BYTES) {
+                    snprintf(hex_buf + offset, sizeof(hex_buf) - offset, "...");
+                }
+                z_log(pdLOG_DEBUG, "BACNET", "APDU hex : %s\n", hex_buf);
+                /// Fin log debug
+                z_log(pdLOG_INFO, "BACNET", "I-AM send%u:%lu (Prio: %u) = Hex: %s\n", 
+                    j.obj_type, (unsigned long)j.obj_instance, j.priority, hex_buf);
+
                 z_log(pdLOG_INFO, "BACNET", "I-AM send (Device %lu)\n", (unsigned long)sysCfg.ulDeviceId);
                 break;
 
@@ -1059,7 +1303,20 @@ void execute_bacnet_work() {
                 waiting_for_reply = true;
                 retry_count = 0;
                 send_mstp_frame(j.target_mac, 0x05, b, l);
-                z_log(pdLOG_INFO, "BACNET", "WRITE obj: %u:%lu (Prio: %u) = Hex: %02X %02X %02X %02X %02X %02X %02X %02X\n", j.obj_type, (unsigned long)j.obj_instance, j.priority, b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]);
+				/// --- GESTION LOG DEBUG TRAME ---
+                // 3. Remise à zéro HYPER RAPIDE du buffer pour ce passage
+                memset(hex_buf, 0, sizeof(hex_buf));
+                offset = 0;
+                // 4. Calcul de la limite avec la taille finale de 'l'
+                bytes_to_print = (l > MAX_LOG_BYTES) ? MAX_LOG_BYTES : l;
+                // 5. Formatage
+                for (size_t i = 0; i < bytes_to_print; i++) { offset += snprintf(hex_buf + offset, sizeof(hex_buf) - offset, "%02X ", b[i]); }
+                // 6. Troncature si nécessaire
+                if (l > MAX_LOG_BYTES) { snprintf(hex_buf + offset, sizeof(hex_buf) - offset, "..."); }
+                // 7. Affichage
+                z_log(pdLOG_DEBUG, "BACNET", "WriteProperty APDU hex : %s\n", hex_buf);
+                /// --- Fin GESTION LOG DEBUG TRAME 
+
                 mstp_state = MSTP_WAIT_FOR_REPLY;
                 break;
 
@@ -1074,7 +1331,19 @@ void execute_bacnet_work() {
                 waiting_for_reply = true;
                 retry_count = 0;
                 send_mstp_frame(j.target_mac, 0x05, b, l);
-                z_log(pdLOG_INFO, "BACNET", "READ obj: %u:%lu (Prio: %u) = Hex: %02X %02X %02X %02X %02X %02X %02X %02X\n", j.obj_type, (unsigned long)j.obj_instance, j.priority, b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]);
+				/// --- GESTION LOG DEBUG TRAME ---
+                // 3. Remise à zéro HYPER RAPIDE du buffer pour ce passage
+                memset(hex_buf, 0, sizeof(hex_buf));
+                offset = 0;
+                // 4. Calcul de la limite avec la taille finale de 'l'
+                bytes_to_print = (l > MAX_LOG_BYTES) ? MAX_LOG_BYTES : l;
+                // 5. Formatage
+                for (size_t i = 0; i < bytes_to_print; i++) { offset += snprintf(hex_buf + offset, sizeof(hex_buf) - offset, "%02X ", b[i]); }
+                // 6. Troncature si nécessaire
+                if (l > MAX_LOG_BYTES) { snprintf(hex_buf + offset, sizeof(hex_buf) - offset, "..."); }
+                // 7. Affichage
+                z_log(pdLOG_DEBUG, "BACNET", "ReadProperty APDU hex : %s\n", hex_buf);
+                /// --- Fin GESTION LOG DEBUG TRAME
 
                 mstp_state = MSTP_WAIT_FOR_REPLY;
                 break;
@@ -1094,20 +1363,9 @@ void execute_bacnet_work() {
 }
 
 /**
- * @brief Types de stockage pour les propriétés découvertes.
- */
-
-/**
- * @brief Structure de configuration pour une étape de découverte BACnet.
- */
-
-/**
- * @brief Table de correspondance entre les étapes de la FSM et les propriétés BACnet.
- */
-
-/**
  * @brief Exécute la logique de découverte pour un appareil spécifique.
  * @details Utilise une approche Data-Driven via DISCOVERY_STEPS pour minimiser le code.
+ * @param dev Référence vers l'appareil BACnet à découvrir.
  */
 void execute_discovery_logic(BACnetDevice &dev) {
     if (dev.xDiscoveryDone) {
@@ -1208,6 +1466,12 @@ void execute_discovery_logic(BACnetDevice &dev) {
     }
 }
 
+/**
+ * @brief Gère le polling régulier des données pour un périphérique découvert.
+ * @details Envoie des requêtes ReadPropertyMultiple (RPM) pour regrouper les lectures de valeurs,
+ *          ou repasse en lecture simple ReadProperty (RP) si l'équipement ne supporte pas le RPM.
+ * @param dev Référence vers le périphérique dont les objets activés doivent être lus.
+ */
 void execute_polling_logic(BACnetDevice &dev) {
     uint8_t a[512]; uint16_t al = 0; size_t c = dev.objects.size();
     std::vector<BACnetObject*> batch;
@@ -1256,6 +1520,9 @@ void execute_polling_logic(BACnetDevice &dev) {
 
 /**
  * @brief Traite une trame MS/TP entrante et délègue selon le type de PDU.
+ * @details Valide les en-têtes réseau NPDU, extrait l'APDU, identifie le type de PDU (Simple-ACK, Complex-ACK,
+ *          Erreurs) et appelle les gestionnaires associés pour mettre à jour le cache et publier sur MQTT.
+ * @param frame Référence vers la trame MS/TP reçue issue de la queue RX.
  */
 void process_incoming_frame(MSTP_Frame &frame) {
     if (frame.dest != 0xFF && frame.dest != sysCfg.ucMacAddress) return;
@@ -1350,6 +1617,13 @@ void process_incoming_frame(MSTP_Frame &frame) {
     }
 }
 
+/**
+ * @brief Tâche FreeRTOS principale de gestion de la FSM MS/TP et des tâches périodiques (Core 1).
+ * @details Effectue les actions périodiques de découverte réseau (envoi régulier de Who-Is),
+ *          exécute les cycles de surveillance, dépile les trames reçues de la tâche RX,
+ *          et pilote la machine à états de l'automate maître MS/TP.
+ * @param pv Paramètre de tâche FreeRTOS (non utilisé).
+ */
 static void bacnet_task(void *pv) {
     MSTP_Frame frame;
     z_log(pdLOG_INFO,"BACNET","Master FSM Task Started (Priority 15)\n");
@@ -1469,6 +1743,12 @@ static void bacnet_task(void *pv) {
     }
 }
 
+/**
+ * @brief Initialise le moteur et la pile protocolaire BACnet MS/TP.
+ * @details Crée les queues FreeRTOS de communication inter-tâches, configure les registres
+ *          du port UART pour la communication RS485 Half-Duplex, installe le pilote,
+ *          et démarre les tâches FreeRTOS de réception (mstp_rx_task) et d'orchestration (bacnet_task) sur le Core 1.
+ */
 void setup_bacnet_engine() {
     bacnet_job_queue = xQueueCreate(20, sizeof(BACnetJob));
     mac_discovery_queue = xQueueCreate(10, sizeof(uint8_t));
@@ -1494,8 +1774,17 @@ void setup_bacnet_engine() {
     z_log(pdLOG_INFO,"BACNET","BACnet Multi-Task Engine Initialized\n");
 }
 
+/**
+ * @brief Ajoute de manière thread-safe une tâche BACnet dans la file d'attente d'exécution.
+ * @param job Structure décrivant la tâche BACnet à insérer.
+ * @return true si le job a été ajouté avec succès, false en cas d'échec ou si le moteur n'est pas initialisé.
+ */
 bool enqueue_bacnet_job(BACnetJob job) { if (bacnet_job_queue == NULL) return false; return xQueueSend(bacnet_job_queue, &job, 0) == pdTRUE; }
 
+/**
+ * @brief Parcourt tous les objets découverts et publie leurs noms sur les topics MQTT.
+ * @details Détecte si un nom a été modifié ou n'a pas encore été publié pour émettre le message MQTT correspondant.
+ */
 void publish_all_names() {
     for (auto& dev : bacnet_network_cache) {
         for (auto& obj : dev.objects) {
