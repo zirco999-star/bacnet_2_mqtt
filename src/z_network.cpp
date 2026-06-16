@@ -465,12 +465,25 @@ void setup_web_routes() {
             String max_str = request->hasParam("max", true) ? request->getParam("max", true)->value() : "";
             String step_str = request->hasParam("step", true) ? request->getParam("step", true)->value() : "";
 
+            // Tracking du changement de nom pour WriteProperty(Object_Name) vers l'automate
+            bool xNameChanged = false;
+            uint8_t ucTargetMac = 255;
+            char pcOldName[50] = {};
+
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
                 for (auto& dev : bacnet_network_cache) {
                     if (dev.ulDeviceId == did) {
+                        ucTargetMac = dev.ucMacAddress;
                         for (auto& obj : dev.objects) {
                             if (obj.ulInstance == inst && obj.usType == type) {
-                                if (name.length() > 0) strlcpy(obj.cName, name.c_str(), sizeof(obj.cName));
+                                // Détection du changement de nom avant écrasement
+                                if (name.length() > 0 && strncmp(obj.cName, name.c_str(), sizeof(obj.cName)) != 0) {
+                                    strlcpy(pcOldName, obj.cName, sizeof(pcOldName));
+                                    xNameChanged = true;
+                                    strlcpy(obj.cName, name.c_str(), sizeof(obj.cName));
+                                } else if (name.length() > 0) {
+                                    strlcpy(obj.cName, name.c_str(), sizeof(obj.cName));
+                                }
                                 if (unit.length() > 0) strlcpy(obj.cUnitText, unit.c_str(), sizeof(obj.cUnitText));
                                 obj.xEnabled = poll;
                                 
@@ -515,6 +528,23 @@ void setup_web_routes() {
                 }
                 xSemaphoreGive(cache_mutex); 
             }
+
+            // Si le nom a changé, propager l'écriture vers l'automate BACnet via WriteProperty(Object_Name, prop_id=77)
+            if (xNameChanged && ucTargetMac != 255) {
+                BACnetJob xNameJob;
+                memset(&xNameJob, 0, sizeof(BACnetJob));
+                xNameJob.type       = JOB_WRITE_PROP;
+                xNameJob.target_mac = ucTargetMac;
+                xNameJob.obj_type   = type;
+                xNameJob.obj_instance = inst;
+                xNameJob.prop_id    = 77; // PROP_OBJECT_NAME
+                xNameJob.priority   = 0;  // Non-commandable, pas de priorité BACnet
+                strlcpy(xNameJob.name, name.c_str(), sizeof(xNameJob.name));
+                enqueue_bacnet_job(xNameJob);
+                z_log(pdLOG_INFO, "API", "WriteProperty(Name) ENQUEUED for %u:%lu : '%s' -> '%s'\n",
+                      type, (unsigned long)inst, pcOldName, name.c_str());
+            }
+
             save_device_objects(did);
             trigger_ha_discovery(did, inst, type);
             request->send(200, "text/plain", "OK");
@@ -620,7 +650,6 @@ void setup_web_routes() {
     // =========================================================================
     webServer.on("/api/writevalue", HTTP_POST, [](AsyncWebServerRequest *request){
         if(!is_authenticated(request)) return;
-        
         if (request->hasParam("did", true) && request->hasParam("type", true) && 
             request->hasParam("inst", true) && request->hasParam("prop", true) && 
             request->hasParam("val", true)) {

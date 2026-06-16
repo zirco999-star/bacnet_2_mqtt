@@ -1,5 +1,12 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 16 Juin 2026 (Fix WriteProperty(Object_Name) - v7.0.6) - DÉPLOYÉ
+- **Version** : v7.0.5 → v7.0.6
+- **Bug corrigé** : `/api/save_object` — Lors du changement de nom d'un objet BACnet depuis l'UI Web, le firmware mettait à jour le cache local (RAM + NVS) mais n'envoyait **aucun job BACnet** pour propager l'écriture vers l'automate physique. La propriété `Object_Name` (prop_id=77) restait donc inchangée sur le device, et le topic MQTT retained (`{prefix}/{did}/{type}/{inst}/name`) conservait l'ancienne valeur (ex: `AI:1005`).
+- **Fix** ([z_network.cpp](file:///home/dev/bacnet_2_mqtt/src/z_network.cpp)) : Détection du changement de nom avant écrasement (`strncmp`). Si le nom diffère, un `BACnetJob{JOB_WRITE_PROP, prop_id=77}` est enqueuté vers le MAC de l'automate cible, déclenchant un `WriteProperty(Object_Name)` conforme ASHRAE 135.
+- **Détecté par** : Script `utils/test_mqtt_topics.py` (FAIL sur 88/89 noms — AI:1005 avait `AI:1005` comme valeur retained au lieu de `Wireless Sensor 3 SetPoin`).
+- **Script de test MQTT** : Nouveau script [utils/test_mqtt_topics.py](file:///home/dev/bacnet_2_mqtt/utils/test_mqtt_topics.py) ajouté pour valider l'ensemble des topics MQTT (LWT, B2M gateway, noms retained, états objets, écriture `/set`).
+
 ## État au 15 Juin 2026 (Test d'Intégration Complet & Audit HA - v6.9.6) - VALIDÉ
 - **Objectif** : Exécution automatisée des phases 0 à 8 (sauvegarde config, reset cache, reboot, découverte de 98 objets, restauration config, et audit des entités Home Assistant avec rapport final).
 - **Script développé** : [run_complete_test.py](file:///home/dev/bacnet_2_mqtt/run_complete_test.py) qui orchestre l'ensemble du processus de manière déterministe avec gestion active de la stabilisation HA.
