@@ -52,6 +52,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                 // Publication du statut Online
                 if (lwt_topic[0] != 0) {
                     esp_mqtt_client_publish(mqtt_client, lwt_topic, "online", 0, 1, 1);
+                    z_log(pdLOG_INFO, "MQTT", "Published: %s = %s\n", lwt_topic, "online");
                     period_mqtt_tele_count++;
                 }
             }
@@ -121,7 +122,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                                     // AJOUT CHIRURGICAL : Détermination de l'action de forçage OutOfService
                                     int p5 = t.indexOf('/', p4 + 1);
                                     if (p5 > 0 && t.substring(p4 + 1, p5) == "outofservice") {
-                                        job.prop_id = 96;
+                                        job.prop_id = 81;
                                     } else {
                                         job.prop_id = 85;
                                     }
@@ -135,8 +136,23 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                                     else { job.type = JOB_WHO_IS; found = false; }
                                     
                                     if (found) {
-                                        if (job.prop_id == 96) {
-                                            job.write_value = (String(payload_buf) == "ON") ? 1.0f : 0.0f;
+                                        if (job.prop_id == 81) {
+                                            bool xState = (String(payload_buf) == "ON");
+                                            job.write_value = xState ? 1.0f : 0.0f;
+                                            
+                                            // Emulation OutOfService locale comme dans l'API
+                                            for (auto& o : d.objects) {
+                                                if (o.usType == job.obj_type && o.ulInstance == job.obj_instance) {
+                                                    if (xState) {
+                                                        o.ucStatusFlags |= BACNET_STATUS_OUT_OF_SERVICE;
+                                                    } else {
+                                                        o.ucStatusFlags &= ~BACNET_STATUS_OUT_OF_SERVICE;
+                                                    }
+                                                    o.ulLastUpdate = millis();
+                                                    publish_mqtt_topic(d.ulDeviceId, o, 96, false);
+                                                    break;
+                                                }
+                                            }
                                         } else if (job.obj_type == 14 || job.obj_type == 19) {
                                             // Conversion Texte -> Index pour Multi-State
                                             bool text_found = false;
@@ -237,7 +253,7 @@ static void mqtt_gatekeeper_task(void *pv) {
                 }
                 const char* subtopic = "state";
                 if (pubJob.prop_id == 77) subtopic = "name";
-                else if (pubJob.prop_id == 96) subtopic = "outofservice";
+                else if (pubJob.prop_id == 81) subtopic = "outofservice";
                 snprintf(topic, sizeof(topic), "%s/%lu/%s/%lu/%s", sysCfg.mqtt_prefix, (unsigned long)pubJob.ulDeviceId, t_str, (unsigned long)pubJob.obj_instance, subtopic);
                 
                 if (esp_mqtt_client_publish(mqtt_client, topic, pubJob.value_string, 0, 1, pubJob.retain) < 0) {
@@ -260,7 +276,7 @@ static void mqtt_gatekeeper_task(void *pv) {
                     esp_mqtt_client_publish(mqtt_client, t, val.c_str(), 0, 1, 0);
                     period_mqtt_pub_count++;
                     period_mqtt_b2m_count++;
-                    z_log(pdLOG_DEBUG, "MQTT", "Published: %s = %s\n", t, val.c_str());
+                    z_log(pdLOG_DEBUG, "MQTT", "Poll-Published: %s = %s\n", t, val.c_str());
                 };
                 pub_b2m("ver", configVERSION_GLOBAL);
                 pub_b2m("rssi", String(WiFi.RSSI()));
@@ -775,7 +791,7 @@ void publish_mqtt_topic(uint32_t ulDeviceId, BACnetObject& obj, uint8_t prop_id,
         }
     } 
     // MODIFICATION CHIRURGICALE : Formater la payload pour la propriété 96 (OutOfService)
-    else if (prop_id == 96) {
+    else if (prop_id == 81) {
         strlcpy(pub.value_string, obj.isOutOfService() ? "ON" : "OFF", sizeof(pub.value_string));
     } else return;
 

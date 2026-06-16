@@ -339,14 +339,14 @@ static void handle_simple_ack(uint8_t src_mac) {
                             check_ha_dependencies(d.ulDeviceId, o.usType, o.ulInstance);
                         } else if (pending_write_job.prop_id == 77) {
                             publish_mqtt_topic(d.ulDeviceId, o, 77, true);
-                        } else if (pending_write_job.prop_id == 96) {
+                        } else if (pending_write_job.prop_id == 81) {
                             bool xIsOos = (pending_write_job.write_value > 0.5f);
                             if (xIsOos) {
                                 o.ucStatusFlags |= BACNET_STATUS_OUT_OF_SERVICE;
                             } else {
                                 o.ucStatusFlags &= ~BACNET_STATUS_OUT_OF_SERVICE;
                             }
-                            publish_mqtt_topic(d.ulDeviceId, o, 96, false);
+                            publish_mqtt_topic(d.ulDeviceId, o, 81, false);
                         }
                         o.ulLastUpdate = millis();
                         break;
@@ -712,7 +712,7 @@ static void handle_complex_ack_polling(BACnetDevice &dev, const uint8_t *apdu, u
                     } else if (xPendingReadJob.prop_id == 111) {
                         o.ucStatusFlags = (uint8_t)v;
                         o.ulLastUpdate = millis();
-                        if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 96, false);
+                        if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 81, false);
                     }
                     break;
                 }
@@ -1044,9 +1044,10 @@ void execute_bacnet_work() {
                 if (j.prop_id == 77) { // Object_Name
                     l = build_write_property_name_apdu(b, next_invoke_id++, j.obj_type, j.obj_instance, j.name);
                     z_log(pdLOG_INFO, "BACNET", "WRITE obj: %u:%lu (Name) -> %s\n", j.obj_type, (unsigned long)j.obj_instance, j.name);
-                } else if (j.prop_id == 96) { // Out_Of_Service
+                } else if (j.prop_id == 81) { // Out_Of_Service
                     bool xIsOos = (j.write_value > 0.5f);
                     l = build_write_property_outofservice_apdu(b, next_invoke_id++, j.obj_type, j.obj_instance, xIsOos);
+                    z_log(pdLOG_DEBUG, "BACNET", "APDU hex : ");
                     z_log(pdLOG_INFO, "BACNET", "WRITE obj: %u:%lu (Out_Of_Service) -> %d\n", j.obj_type, (unsigned long)j.obj_instance, xIsOos);
                 } else { // Present_Value (85) ou autre numérique
                     l = build_write_property_value_apdu(b, next_invoke_id++, j.obj_type, j.obj_instance, j.prop_id, j.write_value, j.priority);
@@ -1058,6 +1059,7 @@ void execute_bacnet_work() {
                 waiting_for_reply = true;
                 retry_count = 0;
                 send_mstp_frame(j.target_mac, 0x05, b, l);
+                z_log(pdLOG_INFO, "BACNET", "WRITE obj: %u:%lu (Prio: %u) = Hex: %02X %02X %02X %02X %02X %02X %02X %02X\n", j.obj_type, (unsigned long)j.obj_instance, j.priority, b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]);
                 mstp_state = MSTP_WAIT_FOR_REPLY;
                 break;
 
@@ -1072,6 +1074,8 @@ void execute_bacnet_work() {
                 waiting_for_reply = true;
                 retry_count = 0;
                 send_mstp_frame(j.target_mac, 0x05, b, l);
+                z_log(pdLOG_INFO, "BACNET", "READ obj: %u:%lu (Prio: %u) = Hex: %02X %02X %02X %02X %02X %02X %02X %02X\n", j.obj_type, (unsigned long)j.obj_instance, j.priority, b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]);
+
                 mstp_state = MSTP_WAIT_FOR_REPLY;
                 break;
 

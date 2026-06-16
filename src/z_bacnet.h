@@ -277,7 +277,7 @@ struct BACnetJob {
     uint16_t obj_type;
     uint32_t obj_instance;
     uint8_t prop_id;
-    uint16_t array_index; // Gardé au cas où, mais n'est plus utilisé pour State_Text
+    int32_t array_index; // Gardé au cas où, mais n'est plus utilisé pour State_Text
     float write_value;
     uint8_t priority;
     char name[50]; 

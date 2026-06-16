@@ -92,12 +92,12 @@ def run_hack_scenario(ip, user, password, did, inst, force_val, no_cleanup):
         print("   Commande de valeur forcée enfilée avec succès.")
 
         # Attente d'une minute pour que le hack agisse sur l'UTA
-        print("\n[Attente] Pause de 60 secondes pour permettre le déclenchement de l'UTA...")
-        for i in range(60, 0, -1):
+        print("\n[Attente] Pause de 120 secondes pour permettre le déclenchement de l'UTA...")
+        for i in range(120, 0, -1):
             sys.stdout.write(f"\r   Temps restant avant vérification et restauration : {i} secondes... ")
             sys.stdout.flush()
             time.sleep(1)
-        print("\r   Pause de 60 secondes terminée.                                          ")
+        print("\r   Pause de 120 secondes terminée.                                          ")
 
         # 5. Attendre et vérifier la valeur en cache
         print("\n[Étape 5] Vérification de la prise en compte de la valeur forcée...")
