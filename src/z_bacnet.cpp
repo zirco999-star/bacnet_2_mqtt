@@ -64,6 +64,8 @@ static uint8_t last_sent_invoke_id = 0;
 static uint8_t next_invoke_id = 10;
 static uint8_t retry_count = 0;
 static BACnetJob pending_write_job;
+static BACnetJob xPendingReadJob;
+static bool xReadJobPending = false;
 
 static MSTP_MASTER_STATE mstp_state = MSTP_INITIALIZE;
 static uint32_t timer_silence_us = 0;
@@ -395,6 +397,9 @@ static void handle_error_pdu(BACnetDevice &dev, uint8_t type) {
         }
     } else {
         waiting_for_reply = false;
+        if (xReadJobPending) {
+            xReadJobPending = false;
+        }
         if (dev.xSupportsRpm) {
             z_log(pdLOG_WARN, "BACNET", "MAC %d RPM rejected/timeout (PDU 0x%02X). Fallback to single read.\n", dev.ucMacAddress, type);
             dev.xSupportsRpm = false;
@@ -674,25 +679,49 @@ static void handle_complex_ack_polling(BACnetDevice &dev, const uint8_t *apdu, u
         }
     } else {
         // Parse single ReadProperty ACK
-        if (vt.number == 4) {
-            float v = decode_bacnet_real(&apdu[ap]);
-            if (current_poll_idx < dev.objects.size()) {
-                auto& o = dev.objects[current_poll_idx]; 
-                if (o.fPresentValue != v) {
-                    o.fPresentValue = v; o.ulLastUpdate = millis();
-                    if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
-                    check_ha_dependencies(dev.ulDeviceId, o.usType, o.ulInstance);
-                } else o.ulLastUpdate = millis();
+        if (xReadJobPending) {
+            xReadJobPending = false;
+            float v = 0.0f;
+            if (vt.number == 4) v = decode_bacnet_real(&apdu[ap]);
+            else v = (float)decode_bacnet_unsigned(&apdu[ap], vt.len);
+            
+            for (auto& o : dev.objects) {
+                if (o.usType == xPendingReadJob.obj_type && o.ulInstance == xPendingReadJob.obj_instance) {
+                    if (xPendingReadJob.prop_id == 85) {
+                        if (o.fPresentValue != v) {
+                            o.fPresentValue = v; o.ulLastUpdate = millis();
+                            if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
+                            check_ha_dependencies(dev.ulDeviceId, o.usType, o.ulInstance);
+                        } else o.ulLastUpdate = millis();
+                    } else if (xPendingReadJob.prop_id == 111) {
+                        o.ucStatusFlags = (uint8_t)v;
+                        o.ulLastUpdate = millis();
+                        if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 96, false);
+                    }
+                    break;
+                }
             }
-        } else if (vt.number == 2 || vt.number == 9) {
-            uint32_t v = decode_bacnet_unsigned(&apdu[ap], vt.len);
-            if (current_poll_idx < dev.objects.size()) {
-                auto& o = dev.objects[current_poll_idx]; 
-                if (o.fPresentValue != (float)v) {
-                    o.fPresentValue = (float)v; o.ulLastUpdate = millis();
-                    if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
-                    check_ha_dependencies(dev.ulDeviceId, o.usType, o.ulInstance);
-                } else o.ulLastUpdate = millis();
+        } else {
+            if (vt.number == 4) {
+                float v = decode_bacnet_real(&apdu[ap]);
+                if (current_poll_idx < dev.objects.size()) {
+                    auto& o = dev.objects[current_poll_idx]; 
+                    if (o.fPresentValue != v) {
+                        o.fPresentValue = v; o.ulLastUpdate = millis();
+                        if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
+                        check_ha_dependencies(dev.ulDeviceId, o.usType, o.ulInstance);
+                    } else o.ulLastUpdate = millis();
+                }
+            } else if (vt.number == 2 || vt.number == 9) {
+                uint32_t v = decode_bacnet_unsigned(&apdu[ap], vt.len);
+                if (current_poll_idx < dev.objects.size()) {
+                    auto& o = dev.objects[current_poll_idx]; 
+                    if (o.fPresentValue != (float)v) {
+                        o.fPresentValue = (float)v; o.ulLastUpdate = millis();
+                        if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
+                        check_ha_dependencies(dev.ulDeviceId, o.usType, o.ulInstance);
+                    } else o.ulLastUpdate = millis();
+                }
             }
         }
         ap += vt.len;
@@ -1012,6 +1041,9 @@ void execute_bacnet_work() {
                 // Création et émission d'une trame ReadProperty (Service 0x0C)
                 l = build_read_property_apdu(b, next_invoke_id++, j.obj_type, j.obj_instance, j.prop_id, j.array_index);
                 z_log(pdLOG_INFO, "BACNET", "READ obj: %u:%lu (Prop %u) MAC %d\n", j.obj_type, (unsigned long)j.obj_instance, j.prop_id, j.target_mac);
+                
+                xPendingReadJob = j;
+                xReadJobPending = true;
                 
                 waiting_for_reply = true;
                 retry_count = 0;

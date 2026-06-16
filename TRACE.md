@@ -556,4 +556,17 @@
   - Sauvegarde et restauration des drapeaux `ucStatusFlags` (comprenant l'Out_Of_Service) en mémoire flash.
 - **Validation** : Compilation locale réussie et déploiement OTA sur 192.168.1.50 validé.
 
+## [v7.0.2] - 2026-06-16
+### Ajout
+- **Nouvel Endpoint de Lecture `/api/readproperty`** :
+  - Création de la route HTTP POST `/api/readproperty` dans [z_network.cpp](file:///home/dev/bacnet_2_mqtt/src/z_network.cpp#L655) pour lire n'importe quelle propriété (ex: Present_Value, Status_Flags) d'un objet.
+- **Suivi des requêtes asynchrones ReadProperty** :
+  - Ajout de `xPendingReadJob` et `xReadJobPending` dans [z_bacnet.cpp](file:///home/dev/bacnet_2_mqtt/src/z_bacnet.cpp#L64) pour assurer le suivi de l'Invoke ID.
+  - Correction de [handle_complex_ack_polling](file:///home/dev/bacnet_2_mqtt/src/z_bacnet.cpp#L680) : les réponses à `ReadProperty` simples ne sont plus faussement attribuées à `current_poll_idx` mais redirigées vers l'objet/propriété d'origine.
+  - Reset automatique du drapeau d'attente dans [handle_error_pdu](file:///home/dev/bacnet_2_mqtt/src/z_bacnet.cpp#L397).
+- **Suite de Tests API** :
+  - Création de l'outil de test modulaire et robuste [test_api_endpoints.py](file:///home/dev/bacnet_2_mqtt/utils/test_api_endpoints.py) basé sur la bibliothèque `unittest`.
+- **Validation** : Compilation locale réussie, déploiement OTA sur 192.168.1.50 validé, et validation de l'intégralité des 10 tests de routes API avec succès.
+
+
 

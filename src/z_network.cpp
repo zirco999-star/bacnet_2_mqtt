@@ -654,6 +654,58 @@ void setup_web_routes() {
         }
     });
 
+    // =========================================================================
+    // AJOUT CHIRURGICAL : Route API pour lire n'importe quelle propriété d'un objet (ReadProperty)
+    // Paramètres attendus : did, type, inst, prop, [array] (Optionnel, défaut -1)
+    // =========================================================================
+    webServer.on("/api/readproperty", HTTP_POST, [](AsyncWebServerRequest *request){
+        if(!is_authenticated(request)) return;
+        
+        if (request->hasParam("did", true) && request->hasParam("type", true) && 
+            request->hasParam("inst", true) && request->hasParam("prop", true)) {
+            
+            uint32_t ulDid = request->getParam("did", true)->value().toInt();
+            uint16_t usType = request->getParam("type", true)->value().toInt();
+            uint32_t ulInst = request->getParam("inst", true)->value().toInt();
+            uint8_t ucProp = request->getParam("prop", true)->value().toInt();
+            int32_t lArray = request->hasParam("array", true) ? request->getParam("array", true)->value().toInt() : -1;
+            
+            bool xDeviceFound = false;
+            BACnetJob xJob;
+            memset(&xJob, 0, sizeof(BACnetJob)); // Initialisation propre à 0
+            
+            xJob.type = JOB_READ_PROP; 
+            xJob.obj_type = usType;
+            xJob.obj_instance = ulInst;
+            xJob.prop_id = ucProp;
+            xJob.array_index = lArray;
+            xJob.target_mac = 255;
+            
+            // Recherche de l'adresse MAC cible
+            if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
+                for (auto& dev : bacnet_network_cache) {
+                    if (dev.ulDeviceId == ulDid) {
+                        xJob.target_mac = dev.ucMacAddress;
+                        xDeviceFound = true;
+                        break;
+                    }
+                }
+                xSemaphoreGive(cache_mutex);
+            }
+            
+            // Envoi dans la file d'attente
+            if (xDeviceFound) {
+                enqueue_bacnet_job(xJob);
+                z_log(pdLOG_INFO, "API", "ReadProperty ENQUEUED for %u:%lu (Prop: %u, Array: %d)\n", usType, (unsigned long)ulInst, ucProp, lArray);
+                request->send(200, "text/plain", "READ_PROPERTY ENQUEUED");
+            } else {
+                request->send(404, "text/plain", "Device not found");
+            }
+        } else {
+            request->send(400, "text/plain", "Missing params (requires: did, type, inst, prop)");
+        }
+    });
+
     // Route API principale pour la sauvegarde des paramètres système (NVS).
     // v6.9.3: Implémentation du filtre 'dirty' pour éviter de sur-solliciter la NVS et geler le bus SPI.
     // Valide et enregistre les données des différents onglets de configuration (WiFi, MQTT, BACnet, Polling, Security).
