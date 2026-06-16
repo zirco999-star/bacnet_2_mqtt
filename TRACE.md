@@ -568,5 +568,21 @@
   - Création de l'outil de test modulaire et robuste [test_api_endpoints.py](file:///home/dev/bacnet_2_mqtt/utils/test_api_endpoints.py) basé sur la bibliothèque `unittest`.
 - **Validation** : Compilation locale réussie, déploiement OTA sur 192.168.1.50 validé, et validation de l'intégralité des 10 tests de routes API avec succès.
 
+## [v7.0.5] - 2026-06-16
+### Ajout
+- **Émulation locale d'Out_Of_Service** :
+  - Résolution des limitations des contrôleurs physiques (ex: Distech ECB-203) ne supportant pas ou restreignant l'écriture à la propriété 96 (OutOfService) ou 111 (Status_Flags) sur les entrées analogiques (retournant `NO_SUCH_PROPERTY` ou `WRITE_ACCESS_DENIED`).
+  - Implémentation d'une émulation locale dans le cache de la passerelle : l'état `OutOfService` est forcé instantanément en RAM lors d'un appel à `/api/outofservice`.
+  - Blocage local des mises à jour de la Present_Value physique (issues du polling périodique RPM ou de lectures simples) quand l'objet est marqué `OutOfService` en RAM, préservant ainsi la valeur forcée injectée par l'utilisateur.
+  - Mise à jour immédiate et locale de `Present_Value` dans la RAM de la passerelle lors d'appels à `/api/writevalue` sur des sondes isolées.
+- **Sérialisation `/api/objects`** :
+  - Ajout des clés `status_flags` et `outofservice` dans le payload JSON retourné pour chaque objet.
+- **Scripts de Tests Python** :
+  - Correction de la clé `"value"` en `"val"` dans [readproperty.py](file:///home/dev/bacnet_2_mqtt/utils/readproperty.py) et [test_climate_hack.py](file:///home/dev/bacnet_2_mqtt/utils/test_climate_hack.py) pour correspondre au format JSON réel de la passerelle.
+  - Ajout du support de retour de valeur pour [readproperty.py](file:///home/dev/bacnet_2_mqtt/utils/readproperty.py).
+- **Validation** : Compilation locale réussie, déploiement OTA sur 192.168.1.50 validé, et validation du test complet de scénario de hack UTA avec succès.
+
+
+
 
 

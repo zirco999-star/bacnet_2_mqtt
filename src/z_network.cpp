@@ -347,6 +347,8 @@ void setup_web_routes() {
                         obj["step"] = o.fStepValue;
                         if (strlen(o.cMinRef) > 0) obj["min_ref"] = o.cMinRef;
                         if (strlen(o.cMaxRef) > 0) obj["max_ref"] = o.cMaxRef;
+                        obj["status_flags"] = o.ucStatusFlags;
+                        obj["outofservice"] = o.isOutOfService();
                     }
                 }
                 xSemaphoreGive(cache_mutex);
@@ -580,6 +582,20 @@ void setup_web_routes() {
                     if (dev.ulDeviceId == ulDid) {
                         xJob.target_mac = dev.ucMacAddress;
                         xDeviceFound = true;
+                        
+                        // Local out-of-service emulation fallback
+                        for (auto& o : dev.objects) {
+                            if (o.usType == usType && o.ulInstance == ulInst) {
+                                if (xState) {
+                                    o.ucStatusFlags |= BACNET_STATUS_OUT_OF_SERVICE;
+                                } else {
+                                    o.ucStatusFlags &= ~BACNET_STATUS_OUT_OF_SERVICE;
+                                }
+                                o.ulLastUpdate = millis();
+                                publish_mqtt_topic(dev.ulDeviceId, o, 96, false);
+                                break;
+                            }
+                        }
                         break;
                     }
                 }
@@ -635,6 +651,20 @@ void setup_web_routes() {
                     if (dev.ulDeviceId == ulDid) {
                         xJob.target_mac = dev.ucMacAddress;
                         xDeviceFound = true;
+                        
+                        // Local out-of-service write emulation
+                        for (auto& o : dev.objects) {
+                            if (o.usType == usType && o.ulInstance == ulInst) {
+                                if (ucProp == 85 && usType == 0 && o.isOutOfService()) {
+                                    o.fPresentValue = fVal;
+                                    o.ulLastUpdate = millis();
+                                    publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
+                                    check_ha_dependencies(dev.ulDeviceId, o.usType, o.ulInstance);
+                                    z_log(pdLOG_INFO, "API", "Local AI out-of-service emulation write applied: %.2f\n", fVal);
+                                }
+                                break;
+                            }
+                        }
                         break;
                     }
                 }

@@ -290,6 +290,7 @@ void bacnet_abort_current_transaction();
 bool enqueue_bacnet_job(BACnetJob job);
 void publish_all_names();
 String get_unit_text(uint16_t usUnits);
+void check_ha_dependencies(uint32_t did, uint16_t type, uint32_t inst);
 
 uint16_t build_read_property_multiple_apdu(uint8_t* buffer, uint8_t invoke_id, std::vector<BACnetObject*>& objects, uint8_t property_id);
 uint16_t build_read_property_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, uint8_t property_id, int32_t array_index);

@@ -95,7 +95,7 @@ static uint8_t calc_header_crc(uint8_t *data, size_t len);
 static uint16_t calc_data_crc(uint8_t *data, size_t len);
 static void send_mstp_frame(uint8_t target, uint8_t type, const uint8_t* apdu, uint16_t len);
 bool has_bacnet_work();
-static void check_ha_dependencies(uint32_t did, uint16_t type, uint32_t inst);
+void check_ha_dependencies(uint32_t did, uint16_t type, uint32_t inst);
 
 // --- TÂCHE DE RÉCEPTION DÉDIÉE (Priorité Critique) ---
 static void mstp_rx_task(void *pv) {
@@ -339,6 +339,14 @@ static void handle_simple_ack(uint8_t src_mac) {
                             check_ha_dependencies(d.ulDeviceId, o.usType, o.ulInstance);
                         } else if (pending_write_job.prop_id == 77) {
                             publish_mqtt_topic(d.ulDeviceId, o, 77, true);
+                        } else if (pending_write_job.prop_id == 96) {
+                            bool xIsOos = (pending_write_job.write_value > 0.5f);
+                            if (xIsOos) {
+                                o.ucStatusFlags |= BACNET_STATUS_OUT_OF_SERVICE;
+                            } else {
+                                o.ucStatusFlags &= ~BACNET_STATUS_OUT_OF_SERVICE;
+                            }
+                            publish_mqtt_topic(d.ulDeviceId, o, 96, false);
                         }
                         o.ulLastUpdate = millis();
                         break;
@@ -605,7 +613,7 @@ static void handle_complex_ack_discovery(BACnetDevice &dev, const uint8_t *apdu,
     }
 }
 
-static void check_ha_dependencies(uint32_t did, uint16_t type, uint32_t inst) {
+void check_ha_dependencies(uint32_t did, uint16_t type, uint32_t inst) {
     String t_str = "";
     if (type == 0) t_str = "AI";
     else if (type == 1) t_str = "AO";
@@ -643,11 +651,15 @@ static void handle_complex_ack_polling(BACnetDevice &dev, const uint8_t *apdu, u
                     uint32_t t_inst = current_oid & 0x3FFFFF;
                     for (auto& o : dev.objects) {
                         if (o.usType == t_type && o.ulInstance == t_inst) {
-                            if (o.fPresentValue != v) {
-                                o.fPresentValue = v;
-                                o.ulLastUpdate = millis();
-                                if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
-                                check_ha_dependencies(dev.ulDeviceId, o.usType, o.ulInstance);
+                            if (!(o.usType == 0 && o.isOutOfService())) {
+                                if (o.fPresentValue != v) {
+                                    o.fPresentValue = v;
+                                    o.ulLastUpdate = millis();
+                                    if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
+                                    check_ha_dependencies(dev.ulDeviceId, o.usType, o.ulInstance);
+                                } else {
+                                    o.ulLastUpdate = millis();
+                                }
                             } else {
                                 o.ulLastUpdate = millis();
                             }
@@ -688,11 +700,15 @@ static void handle_complex_ack_polling(BACnetDevice &dev, const uint8_t *apdu, u
             for (auto& o : dev.objects) {
                 if (o.usType == xPendingReadJob.obj_type && o.ulInstance == xPendingReadJob.obj_instance) {
                     if (xPendingReadJob.prop_id == 85) {
-                        if (o.fPresentValue != v) {
-                            o.fPresentValue = v; o.ulLastUpdate = millis();
-                            if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
-                            check_ha_dependencies(dev.ulDeviceId, o.usType, o.ulInstance);
-                        } else o.ulLastUpdate = millis();
+                        if (!(o.usType == 0 && o.isOutOfService())) {
+                            if (o.fPresentValue != v) {
+                                o.fPresentValue = v; o.ulLastUpdate = millis();
+                                if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
+                                check_ha_dependencies(dev.ulDeviceId, o.usType, o.ulInstance);
+                            } else o.ulLastUpdate = millis();
+                        } else {
+                            o.ulLastUpdate = millis();
+                        }
                     } else if (xPendingReadJob.prop_id == 111) {
                         o.ucStatusFlags = (uint8_t)v;
                         o.ulLastUpdate = millis();
@@ -706,21 +722,29 @@ static void handle_complex_ack_polling(BACnetDevice &dev, const uint8_t *apdu, u
                 float v = decode_bacnet_real(&apdu[ap]);
                 if (current_poll_idx < dev.objects.size()) {
                     auto& o = dev.objects[current_poll_idx]; 
-                    if (o.fPresentValue != v) {
-                        o.fPresentValue = v; o.ulLastUpdate = millis();
-                        if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
-                        check_ha_dependencies(dev.ulDeviceId, o.usType, o.ulInstance);
-                    } else o.ulLastUpdate = millis();
+                    if (!(o.usType == 0 && o.isOutOfService())) {
+                        if (o.fPresentValue != v) {
+                            o.fPresentValue = v; o.ulLastUpdate = millis();
+                            if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
+                            check_ha_dependencies(dev.ulDeviceId, o.usType, o.ulInstance);
+                        } else o.ulLastUpdate = millis();
+                    } else {
+                        o.ulLastUpdate = millis();
+                    }
                 }
             } else if (vt.number == 2 || vt.number == 9) {
                 uint32_t v = decode_bacnet_unsigned(&apdu[ap], vt.len);
                 if (current_poll_idx < dev.objects.size()) {
                     auto& o = dev.objects[current_poll_idx]; 
-                    if (o.fPresentValue != (float)v) {
-                        o.fPresentValue = (float)v; o.ulLastUpdate = millis();
-                        if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
-                        check_ha_dependencies(dev.ulDeviceId, o.usType, o.ulInstance);
-                    } else o.ulLastUpdate = millis();
+                    if (!(o.usType == 0 && o.isOutOfService())) {
+                        if (o.fPresentValue != (float)v) {
+                            o.fPresentValue = (float)v; o.ulLastUpdate = millis();
+                            if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
+                            check_ha_dependencies(dev.ulDeviceId, o.usType, o.ulInstance);
+                        } else o.ulLastUpdate = millis();
+                    } else {
+                        o.ulLastUpdate = millis();
+                    }
                 }
             }
         }
@@ -1301,6 +1325,14 @@ void process_incoming_frame(MSTP_Frame &frame) {
         case 0x50: // Error
         case 0x60: // Reject
         case 0x70: // Abort
+            {
+                char hex_str[64] = "";
+                int pos_str = 0;
+                for (int i = 0; i < al && i < 20; i++) {
+                    pos_str += snprintf(hex_str + pos_str, sizeof(hex_str) - pos_str, "%02X ", apdu[i]);
+                }
+                z_log(pdLOG_WARN, "BACNET", "PDU 0x%02X from MAC %d, hex: %s\n", pdu_type, frame.src, hex_str);
+            }
             if (xSemaphoreTake(cache_mutex, 0)) {
                 if (current_dev_idx < bacnet_network_cache.size()) {
                     handle_error_pdu(bacnet_network_cache[current_dev_idx], pdu_type);
