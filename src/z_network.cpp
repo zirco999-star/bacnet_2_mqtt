@@ -173,13 +173,22 @@ void z_log(int level, const char* tag, const char* format, ...) {
  * @brief Configure toutes les routes (endpoints) du serveur web asynchrone.
  */
 void setup_web_routes() {
+    // -------------------------------------------------------------------------
+    // WEBSOCKETS & INTERFACE WEB
+    // -------------------------------------------------------------------------
+    
+    // Enregistrement du gestionnaire d'événements WebSocket pour la transmission asynchrone des logs.
     ws.onEvent(onEvent); // v6.5.2: Callback obligatoire pour la thread-safety
     webServer.addHandler(&ws);
+    
+    // Route principale : Sert l'interface utilisateur web (Single Page Application).
     webServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         if (!is_authenticated(request)) return;
         request->send_P(200, "text/html", reinterpret_cast<const uint8_t*>(INDEX_HTML), sizeof(INDEX_HTML));
     });
 
+    // Routes statiques pour servir les différentes tailles d'icônes (Favicons).
+    // Ces icônes sont mises en cache par le navigateur pendant 1 an (max-age=31536000) pour optimiser les performances.
     webServer.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request){
         AsyncWebServerResponse *response = request->beginResponse_P(200, "image/x-icon", favicon_ico, favicon_ico_len);
         if (response) {
@@ -204,17 +213,26 @@ void setup_web_routes() {
         }
     });
 
-    // Route API pour obtenir l'état complet du système en JSON.
+    // -------------------------------------------------------------------------
+    // ROUTES API - LECTURE DES DONNÉES ET ÉTAT DU SYSTÈME
+    // -------------------------------------------------------------------------
+
+    // Route API pour obtenir l'état global du système (Santé).
+    // Retourne un JSON contenant les infos WiFi, MQTT, paramètres globaux, statistiques MS/TP 
+    // et un résumé (sans le détail des objets) de l'avancement de la découverte BACnet.
+    // Très sollicité par l'interface web pour le dashboard principal.
     webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request){
         if (!is_authenticated(request)) return;
 
         // v6.4.8: Strict Heap Protection
+        // Sécurité critique : On empêche la création du gros objet JSON si la RAM libre est trop basse.
         if (ESP.getFreeHeap() < 50000) {
             request->send(503, "text/plain", "Service Unavailable: Low Memory");
             return;
         }
 
         // v6.4.8: API Serialization
+        // Utilisation d'un mutex pour éviter qu'une autre tâche (ex: MS/TP) ne modifie le cache pendant la lecture.
         if (xSemaphoreTake(api_mutex, pdMS_TO_TICKS(1000))) {
             // v6.4.9: Force PSRAM allocation
             JsonDocument doc(&psram_alloc);
@@ -292,7 +310,9 @@ void setup_web_routes() {
         }
     });
 
-    // Route API pour obtenir la liste des objets BACnet découverts.
+    // Route API pour obtenir l'arborescence complète des équipements et de leurs objets BACnet.
+    // Cette route est utilisée pour peupler le tableau détaillé dans l'interface utilisateur.
+    // Elle extrait et sérialise la totalité du contenu de `bacnet_network_cache`.
     webServer.on("/api/objects", HTTP_GET, [](AsyncWebServerRequest *request){
         if (!is_authenticated(request)) return;
 
@@ -363,7 +383,6 @@ void setup_web_routes() {
 
 
     // Route API pour recharger tous les objets d'un appareil.
-    // Route API pour recharger tous les objets d'un appareil.
     webServer.on("/api/reload_device", HTTP_POST, [](AsyncWebServerRequest *request){
         if(!is_authenticated(request)) return;
         if (request->hasParam("id", true)) {
@@ -385,7 +404,8 @@ void setup_web_routes() {
         } else request->send(400, "text/plain", "Missing id");
     });
 
-    // Route API pour forcer la lecture d'une propriété d'un objet.
+    // Route API pour forcer le rafraîchissement immédiat de la valeur (`Present_Value`) d'un objet BACnet.
+    // Ajoute une requête de lecture asynchrone à la file des tâches BACnet du Core 1.
     webServer.on("/api/reload_object", HTTP_POST, [](AsyncWebServerRequest *request){
         if(!is_authenticated(request)) return;
         if (request->hasParam("did", true) && request->hasParam("inst", true) && request->hasParam("type", true)) {
@@ -393,28 +413,42 @@ void setup_web_routes() {
             uint32_t inst = request->getParam("inst", true)->value().toInt();
             uint16_t type = request->getParam("type", true)->value().toInt();
             
+            bool device_found = false;
             BACnetJob job;
-            job.type = JOB_WRITE_PROP; // On utilise WRITE_PROP avec une valeur bidon ou on ajoute JOB_READ_PROP dans z_bacnet.h si besoin. 
-                                       // NOTE: z_bacnet.h n'avait que WHO_IS, I_AM, WRITE_PROP.
+            job.type = JOB_READ_PROP; 
             job.obj_type = type;
             job.obj_instance = inst;
             job.prop_id = 85; // Present_Value
+            job.array_index = -1; // -1 = Pas de tableau (lecture standard)
+            job.target_mac = 255; // Valeur par défaut (Broadcast/Invalide) par sécurité
             
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
                 for (auto& dev : bacnet_network_cache) {
                     if (dev.ulDeviceId == did) {
                         job.target_mac = dev.ucMacAddress;
+                        device_found = true;
                         break;
                     }
                 }
                 xSemaphoreGive(cache_mutex);
             }
-            enqueue_bacnet_job(job);
-            request->send(200, "text/plain", "READ ENQUEUED");
+            
+            if (device_found) {
+                enqueue_bacnet_job(job);
+                request->send(200, "text/plain", "READ ENQUEUED");
+            } else {
+                request->send(404, "text/plain", "Device not found");
+            }
         } else request->send(400, "text/plain", "Missing params");
     });
 
-    // Route API pour sauvegarder les modifications d'un objet (nom, unités, polling, min, max, step).
+    // -------------------------------------------------------------------------
+    // ROUTES API - CONFIGURATION ET SAUVEGARDE
+    // -------------------------------------------------------------------------
+
+    // Route API pour mettre à jour les propriétés modifiables par l'utilisateur d'un objet BACnet.
+    // Gère le renommage, les unités, l'activation/désactivation du polling MQTT, ainsi que les limites numériques.
+    // Ces informations sont appliquées en RAM puis signalées pour être sauvées en Flash.
     webServer.on("/api/save_object", HTTP_POST, [](AsyncWebServerRequest *request){
         if(!is_authenticated(request)) return;
         if (request->hasParam("did", true) && request->hasParam("inst", true) && request->hasParam("type", true)) {
@@ -485,7 +519,8 @@ void setup_web_routes() {
         } else request->send(400, "text/plain", "Missing params");
     });
 
-    // Route API pour activer/désactiver un appareil complet.
+    // Route API pour activer ou désactiver un équipement entier.
+    // Un équipement désactivé n'est plus interrogé (pollé) sur le bus BACnet, ce qui libère de la bande passante.
     webServer.on("/api/toggle_device", HTTP_POST, [](AsyncWebServerRequest *request){
         if(!is_authenticated(request)) return;
         if (request->hasParam("id", true)) {
@@ -514,11 +549,13 @@ void setup_web_routes() {
 
     // Route API principale pour la sauvegarde des paramètres système (NVS).
     // v6.9.3: Implémentation du filtre 'dirty' pour éviter de sur-solliciter la NVS et geler le bus SPI.
+    // Valide et enregistre les données des différents onglets de configuration (WiFi, MQTT, BACnet, Polling, Security).
     webServer.on("/save", HTTP_POST, [](AsyncWebServerRequest *request){
         if (!is_authenticated(request)) return;
         String ft = "";
         if (request->hasParam("form_type", true)) ft = request->getParam("form_type", true)->value();
 
+        // Variable traquant si un paramètre a réellement été modifié.
         bool changed = false;
         String ip_str = "unknown";
         if (request->client() != nullptr) {
@@ -683,6 +720,7 @@ void setup_web_routes() {
         request->send(200, "text/plain", "OK");
 
         // Action post-sauvegarde si modification effective
+        // Certaines modifications exigent un redémarrage, d'autres non (ex: relancer la tâche MQTT).
         if (changed) {
             if (ft == "wifi") {
                 pending_reboot = true; reboot_timer = millis();
@@ -692,7 +730,8 @@ void setup_web_routes() {
         }
     });
 
-    // API pour réinitialiser le cache BACnet (suppression des fichiers Preferences).
+    // Route API pour vider la mémoire de la passerelle.
+    // Supprime de la NVS (Flash) l'historique complet de tous les équipements BACnet et leurs objets, puis redémarre.
     webServer.on("/api/reset_cache", HTTP_ANY, [](AsyncWebServerRequest *request){
         if (!is_authenticated(request)) return;
         if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(1000))) {

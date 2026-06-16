@@ -5,6 +5,7 @@
 #include <ArduinoJson.h>
 
 #include "z_network.h"
+#include "z_nvs.h"
 
 uint32_t period_mqtt_pub_count = 0;
 uint32_t period_mqtt_obj_count = 0;
@@ -162,6 +163,22 @@ static void mqtt_gatekeeper_task(void *pv) {
 
     while (1) {
         uint32_t now = millis();
+
+        // Gestion du Lazy Save NVS (déporté sur Core 0 pour éviter de geler la FSM MS/TP sur Core 1)
+        std::vector<uint32_t> dirty_dids;
+        if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
+            for (auto& dev : bacnet_network_cache) {
+                if (dev.xDirty && (now - dev.ulLastDirtyTime > 2000)) {
+                    dirty_dids.push_back(dev.ulDeviceId);
+                    dev.xDirty = false; // Reset to avoid double trigger
+                }
+            }
+            xSemaphoreGive(cache_mutex);
+        }
+
+        for (uint32_t did : dirty_dids) {
+            save_device_objects_locked(did);
+        }
 
         // 1. Logs d'événements déportés
         if (mqtt_pending_connected_log.exchange(false)) z_log(pdLOG_INFO, "MQTT", "Connected to Broker.\n");
@@ -509,7 +526,7 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
             char topic[128];
             snprintf(topic, sizeof(topic), "homeassistant/%s/%s/config", ha_component, uniq_id);
 
-            if (dev_enabled && obj_enabled && strcmp(obj_name, "Unknown") != 0 && dev_discovery_done) {
+            if (dev_enabled && obj_enabled && strcmp(obj_name, "Unknown") != 0 && (dev_discovery_done || is_single_object)) {
                 JsonDocument doc; 
                 char base_topic[128];
                 snprintf(base_topic, sizeof(base_topic), "%s/%lu/%s/%lu", sysCfg.mqtt_prefix, (unsigned long)current_did, t_str, (unsigned long)obj_inst);
@@ -600,6 +617,7 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                 } else {
                     total_published++;
                 }
+                
             } else if ((!dev_enabled || !obj_enabled) && dev_discovery_done) {
                 esp_mqtt_client_publish(mqtt_client, topic, "", 0, 1, 1);
             }

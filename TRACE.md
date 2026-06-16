@@ -502,3 +502,33 @@
   - 100 % des objets fonctionnels (89/89) validés et opérationnels dans Home Assistant après reload.
 
 
+
+## État au 15 Juin 2026 (Fix Discovery & Silence Timeout - v6.9.7) - DÉPLOYÉ
+- **Version** : v6.9.7
+- **Stabilité MS/TP** : Déportation du Lazy Save NVS (`save_device_objects_locked`) sur le Core 0 dans `mqtt_gatekeeper_task`. La FSM MS/TP sur le Core 1 n'est plus bloquée par les écritures Flash.
+- **Résilience RX** : Ajout d'un `uart_flush_input` lors des Silence Timeouts pour éviter la saturation du buffer par des trames corrompues en cas de collision.
+- **Auto-Discovery** : Assouplissement de la condition de publication MQTT : un objet est désormais publié individuellement même si la découverte globale de l'appareil est temporairement en pause (`dev.xDiscoveryDone == false`).
+- **Validation** : Firmware compilé et flashé avec succès via OTA (192.168.1.50).
+- **En attente** : Validation de la découverte (Phase 3) par l'utilisateur sur le réseau BACnet réel (ECB_203).
+
+## État au 15 Juin 2026 (Fix Deadlock UART & Sync Save - v6.9.8) - DÉPLOYÉ
+- **Version** : v6.9.8
+- **Fix UART Deadlock** : Retrait de l'appel `uart_flush_input` dans `handle_mstp_idle`. Cet appel depuis le Core 1 provoquait un deadlock de la tâche `mstp_rx_task` bloquée sur `uart_read_bytes`, "éteignant" complètement la réception MS/TP.
+- **Fix Découverte Lente (Sync Save)** : Suppression définitive de tous les appels synchrones à `save_device_objects_locked` restants dans `execute_discovery_logic` (Phase 3). Ils sont remplacés par un flag `dev.xDirty = true` pris en charge de manière asynchrone par `mqtt_gatekeeper_task` sur le Core 0. Cela empêche les pertes de jeton liées aux écritures NVS intensives.
+- **Validation OTA** : Flash réussi. En attente de validation physique par l'utilisateur.
+
+## [v6.8.5] - 2026-06-09
+### Ajout
+- **Phase 1** : Refactorisation structurelle complète selon `CONVENTION_CODAGE.md` (`uc`, `ul`, `x`, `pd`, etc.).
+- **Phase 2** : Intégration de la persistance NVS étendue (champs réseau dynamiques : Max_APDU, Timeout, Retries).
+- **Phase 3** : Implémentation du moteur de Polling par Lot (ReadPropertyMultiple - RPM) pour optimiser les performances du bus.
+- **Phase 4** : Découverte dynamique BACnet (lecture adaptative des limites réseaux distantes via la FSM MS/TP).
+- Mise à jour stricte de `GEMINI.md` pour imposer les normes de codage et le workflow de compilation.
+
+## [v6.8.5] - 2026-06-09
+### Ajout
+- **Phase 1** : Refactorisation structurelle complète selon `CONVENTION_CODAGE.md` (`uc`, `ul`, `x`, `pd`, etc.).
+- **Phase 2** : Intégration de la persistance NVS étendue (champs réseau dynamiques : Max_APDU, Timeout, Retries).
+- **Phase 3** : Implémentation du moteur de Polling par Lot (ReadPropertyMultiple - RPM) pour optimiser les performances du bus.
+- **Phase 4** : Découverte dynamique BACnet (lecture adaptative des limites réseaux distantes via la FSM MS/TP).
+- Mise à jour stricte de `GEMINI.md` pour imposer les normes de codage et le workflow de compilation.

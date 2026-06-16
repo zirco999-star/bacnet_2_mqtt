@@ -4,6 +4,12 @@
 #include "z_config.h"
 #include <vector>
 
+// --- MASQUES DE BITS POUR STATUS_FLAGS (ASHRAE 135) ---
+#define BACNET_STATUS_IN_ALARM         0x01 // Bit 0 : Alarme active
+#define BACNET_STATUS_FAULT            0x02 // Bit 1 : Défaut matériel/sonde
+#define BACNET_STATUS_OVERRIDDEN       0x04 // Bit 2 : Forçage local physique
+#define BACNET_STATUS_OUT_OF_SERVICE   0x08 // Bit 3 : Hors-service / Mode Hack
+
 // --- STRUCTURE DE PERSISTANCE BINAIRE (v1 Legacy) ---
 #pragma pack(push, 1)
 struct BACnetPersistenceObj {
@@ -14,14 +20,15 @@ struct BACnetPersistenceObj {
     bool xNamePublished;
     bool xIsCommandable;  
     uint16_t usUnits;       
-    uint8_t ucExpectedStatesCount; 
+    uint8_t ucExpectedStatesCount;
+    uint8_t ucStatusFlags;     // v7.0.0: Stocke les 4 bits de Status_Flags [InAlarm:Bit0][Fault:Bit1][Overridden:Bit2][OutOfService:Bit3]
     float fMinValue;      // v6.4.3: Prop 69
     float fMaxValue;      // v6.4.3: Prop 65
     char cLastHaComponent[16]; // v6.3.6: For ghost entity cleanup (sensor/select/switch)
     float fStepValue;     // v6.9.0
     char cMinRef[6];      // v6.9.0
     char cMaxRef[6];      // v6.9.0
-}; // Total: 94 bytes
+}; // Total: 95 bytes
 
 struct BACnetPersistenceDev {
     uint32_t ulDeviceId;
@@ -44,7 +51,7 @@ struct BACnetPersistenceDev {
 struct BACnetPersistencePage {
     uint32_t ulDeviceId;
     uint16_t page_index;
-    BACnetPersistenceObj objects[20]; // 20 * 48 = 960 octets ==> OK pour NVS
+    BACnetPersistenceObj objects[20]; // 20 * 95 = 1900 octets ==> OK pour NVS (< 1984)
 };
 #pragma pack(pop)
 
@@ -130,6 +137,7 @@ enum DISC_STEP_T {
     DISC_OBJ_MAX,         // Prop 65
     DISC_OBJ_STATES,
     DISC_OBJ_COMMANDABLE, // Propriété 87 (Priority_Array)
+    DISC_OBJ_STATUS_FLAGS; //propriété 111 : lu avant la valeur pour ne pas remonter les valeurs d'un objet en defaut.
     DISC_OBJ_VALUE
 };
 
@@ -151,12 +159,13 @@ struct BACnetObject {
     uint16_t usType = 65535;
     uint32_t ulInstance = 0;
     char cName[50] = "Unknown";
-    float fPresentValue = 0.0f;
+    float fPresentValue = NAN;
     bool xEnabled = false;
     bool xNamePublished = false;
     char cLastMqttName[50] = "";
     uint32_t ulLastUpdate = 0;
     uint16_t ucExpectedStatesCount = 0;
+    uint8_t ucStatusFlags = 0;
     uint16_t usUnits = 95;
     char cUnitText[20] = "";
     float fMinValue = NAN;
@@ -167,8 +176,15 @@ struct BACnetObject {
     bool xDiscoveryDone = false;
     bool xIsCommandable = false; // Prop 87
     char cLastHaComponent[16] = ""; // Pour nettoyer les doublons si on change sensor -> select
-    // state_texts reste dynamique en RAM, mais n'est pas persisté (ou alors avec une logique à part)
-    std::vector<String> state_texts; 
+    // state_texts reste dynamique en RAM, mais n'est pas persistant en NVS 
+    std::vector<String> state_texts;
+    
+    // --- ENCAPSULATION DES ETATS (HELPERS) ---
+    inline bool isInAlarm() const { return (ucStatusFlags & BACNET_STATUS_IN_ALARM) != 0; }
+    inline bool isFault() const { return (ucStatusFlags & BACNET_STATUS_FAULT) != 0; }
+    inline bool isOverridden() const { return (ucStatusFlags & BACNET_STATUS_OVERRIDDEN) != 0; }
+    inline bool isOutOfService() const { return (ucStatusFlags & BACNET_STATUS_OUT_OF_SERVICE) != 0; }
+
 };
 
 struct BACnetDevice {
@@ -254,7 +270,7 @@ enum MSTP_MASTER_STATE {
     MSTP_POLL_FOR_MASTER,
     MSTP_ANSWER_DATA_REQUEST
 };
-enum BACnetJobType { JOB_WHO_IS, JOB_I_AM, JOB_WRITE_PROP };
+enum BACnetJobType { JOB_WHO_IS, JOB_I_AM, JOB_WRITE_PROP, JOB_READ_PROP };
 struct BACnetJob {
     BACnetJobType type;
     uint8_t target_mac;

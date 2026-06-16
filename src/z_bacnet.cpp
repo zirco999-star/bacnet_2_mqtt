@@ -395,7 +395,12 @@ static void handle_error_pdu(BACnetDevice &dev, uint8_t type) {
             dev.xSupportsRpm = false;
         } else {
             if (dev.xDiscoveryDone && current_poll_idx < dev.objects.size()) {
-                dev.objects[current_poll_idx].ulLastUpdate = millis();
+                auto& o = dev.objects[current_poll_idx];
+                o.ulLastUpdate = millis();
+                if (isnan(o.fPresentValue)) {
+                    o.fPresentValue = 0.0f; // Default fallback to break HA Catch-22
+                    if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
+                }
             }
         }
     }
@@ -448,7 +453,7 @@ static void handle_complex_ack_discovery(BACnetDevice &dev, const uint8_t *apdu,
                 dev.ucDiscStep = DISC_OBJ_OID;
                 if (val == 0) {
                     dev.xDiscoveryDone = true;
-                    save_device_objects_locked(dev.ulDeviceId);
+                    dev.xDirty = true; dev.ulLastDirtyTime = millis();
                 }
             } else {
                 if (dev.ucDiscStep == DISC_DEV_MAX_APDU) { dev.usMaxApduLengthAccepted = (uint16_t)val; dev.ucDiscStep = DISC_DEV_TIMEOUT; }
@@ -550,10 +555,10 @@ static void handle_complex_ack_discovery(BACnetDevice &dev, const uint8_t *apdu,
                 bool stop = dev.xReloadSingle || dev.xRecoveryMode; 
                 if(!stop) dev.usDiscObjIdx++; 
                 dev.ucDiscStep = DISC_OBJ_OID; 
-                if(dev.usDiscObjIdx%50==0||dev.usDiscObjIdx>=dev.objects.size()) save_device_objects_locked(dev.ulDeviceId); 
+                if(dev.usDiscObjIdx%50==0||dev.usDiscObjIdx>=dev.objects.size()) { dev.xDirty = true; dev.ulLastDirtyTime = millis(); }
                 if(stop || dev.usDiscObjIdx>=dev.objects.size()){
                     dev.xDiscoveryDone = true; dev.xReloadSingle = false; dev.xRecoveryMode = false; 
-                    save_device_objects_locked(dev.ulDeviceId); 
+                    dev.xDirty = true; dev.ulLastDirtyTime = millis(); 
                     if (dev.usDiscObjIdx>=dev.objects.size()) { publish_all_names(); trigger_ha_discovery(dev.ulDeviceId, 0xFFFFFFFF, 0xFFFF); }
                 }
             }
@@ -623,6 +628,24 @@ static void handle_complex_ack_polling(BACnetDevice &dev, const uint8_t *apdu, u
                         }
                     }
                     current_oid = 0; // Reset for next
+                }
+            }
+            else if (t_rpm.number == 5) { // Error
+                if (current_oid > 0) {
+                    uint16_t t_type = current_oid >> 22;
+                    uint32_t t_inst = current_oid & 0x3FFFFF;
+                    z_log(pdLOG_WARN, "BACNET", "RPM returned Error (Context 5) for Object Type %d Inst %d. Skipped.", t_type, t_inst);
+                    for (auto& o : dev.objects) {
+                        if (o.usType == t_type && o.ulInstance == t_inst) {
+                            o.ulLastUpdate = millis(); // Mark as read to avoid infinite loop
+                            if (isnan(o.fPresentValue)) {
+                                o.fPresentValue = 0.0f; // Default fallback to break HA Catch-22
+                                if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
+                            }
+                            break;
+                        }
+                    }
+                    current_oid = 0;
                 }
             }
             ap += t_rpm.len;
@@ -750,6 +773,26 @@ uint16_t build_write_property_value_apdu(uint8_t* buffer, uint8_t invoke_id, uin
     return len;
 }
 
+// AJOUT : Constructeur d'APDU pour écrire un booléen sur Out_Of_Service (96)
+uint16_t build_write_property_outofservice_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, bool out_of_service) {
+    uint16_t len = 0;
+    buffer[len++] = 0x01; buffer[len++] = 0x04; buffer[len++] = 0x02; buffer[len++] = 0x03;
+    buffer[len++] = invoke_id; buffer[len++] = 0x0F; buffer[len++] = 0x0C;
+    
+    uint32_t oid = ((uint32_t)obj_type << 22) | (obj_instance & 0x3FFFFF);
+    buffer[len++] = (oid >> 24) & 0xFF; buffer[len++] = (oid >> 16) & 0xFF; buffer[len++] = (oid >> 8) & 0xFF; buffer[len++] = oid & 0xFF;
+    
+    buffer[len++] = 0x19; buffer[len++] = 96; // 96 = PROP_OUT_OF_SERVICE
+    buffer[len++] = 0x3E; // Open Tag 3
+    
+    // Tag BACnet Boolean (Tag Number 1). 0x11 = True, 0x10 = False.
+    buffer[len++] = out_of_service ? 0x11 : 0x10; 
+    
+    buffer[len++] = 0x3F; // Close Tag 3
+    return len;
+}
+
+
 uint16_t build_i_am_apdu(uint8_t* buffer, uint32_t device_instance, uint16_t max_apdu, uint16_t vendor_id) {
     uint16_t len = 0;
     buffer[len++] = 0x10; // PDU Type: Unconfirmed-Request
@@ -815,6 +858,7 @@ void handle_mstp_idle() {
             z_log(pdLOG_INFO, "MSTP", "Silence Timeout (%lu us). Lost Token? Claiming.\n", timer_silence_us);
             bacnetStats.xRingActive = false;
         }
+        // uart_flush_input(RS485_UART_PORT); // RETIRÉ: Provoque un deadlock de uart_read_bytes dans mstp_rx_task
         mstp_state = MSTP_NO_TOKEN;
     }
 }
@@ -841,6 +885,7 @@ void handle_mstp_wait_for_reply() {
         waiting_for_reply = false;
         if (!ring_stable) {
             poll_station = (poll_station + 1) % 128; if (poll_station == sysCfg.ucMacAddress) poll_station = (poll_station + 1) % 128;
+            poll_station = (poll_station + 1) % (sysCfg.max_master + 1); if (poll_station == sysCfg.ucMacAddress) poll_station = (poll_station + 1) % (sysCfg.max_master + 1);
             mstp_state = MSTP_POLL_FOR_MASTER; return;
         }
         if (current_dev_idx < bacnet_network_cache.size()) {
@@ -933,6 +978,17 @@ void execute_bacnet_work() {
                 mstp_state = MSTP_WAIT_FOR_REPLY;
                 break;
 
+            case JOB_READ_PROP:
+                // Création et émission d'une trame ReadProperty (Service 0x0C)
+                l = build_read_property_apdu(b, next_invoke_id++, j.obj_type, j.obj_instance, j.prop_id, j.array_index);
+                z_log(pdLOG_INFO, "BACNET", "READ obj: %u:%lu (Prop %u) MAC %d\n", j.obj_type, (unsigned long)j.obj_instance, j.prop_id, j.target_mac);
+                
+                waiting_for_reply = true;
+                retry_count = 0;
+                send_mstp_frame(j.target_mac, 0x05, b, l);
+                mstp_state = MSTP_WAIT_FOR_REPLY;
+                break;
+
             default:
                 z_log(pdLOG_WARN, "BACNET", "Unknown Job Type: %d\n", (int)j.type);
                 break;
@@ -1010,7 +1066,7 @@ void execute_discovery_logic(BACnetDevice &dev) {
 
                 if (dev.usDiscObjIdx >= dev.objects.size()) {
                     dev.xDiscoveryDone = true;
-                    save_device_objects_locked(dev.ulDeviceId);
+                    dev.xDirty = true; dev.ulLastDirtyTime = millis();
                     trigger_ha_discovery(dev.ulDeviceId, 0xFFFFFFFF, 0xFFFF);
                     return;
                 }
@@ -1193,16 +1249,7 @@ static void bacnet_task(void *pv) {
     for (;;) {
         uint32_t now = millis();
 
-        // v6.8.8: Gestion du Lazy Save NVS (Sauvegarde différée après 2s d'inactivité)
-        if (xSemaphoreTake(cache_mutex, 0)) {
-            for (auto& dev : bacnet_network_cache) {
-                if (dev.xDirty && (now - dev.ulLastDirtyTime > 2000)) {
-                    save_device_objects_locked(dev.ulDeviceId);
-                    // xDirty est mis à false par save_device_objects_locked
-                }
-            }
-            xSemaphoreGive(cache_mutex);
-        }
+        // v6.9.7: Lazy Save NVS déporté sur le Core 0 dans la tâche mqtt_gatekeeper_task pour éviter le gel de la FSM MS/TP
 
         timer_silence_us = (uint32_t)(esp_timer_get_time() - last_rx_time_us);
 
@@ -1291,6 +1338,8 @@ static void bacnet_task(void *pv) {
             case MSTP_INITIALIZE: 
                 next_station = (sysCfg.ucMacAddress + 1) % 128;
                 poll_station = (sysCfg.ucMacAddress + 1) % 128;
+                next_station = (sysCfg.ucMacAddress + 1) % (sysCfg.max_master + 1);
+                poll_station = (sysCfg.ucMacAddress + 1) % (sysCfg.max_master + 1);
                 ring_stable = false;
                 mstp_state = MSTP_IDLE; 
                 break;

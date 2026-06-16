@@ -268,80 +268,89 @@ void save_device_objects(uint32_t ulDeviceId) {
  * Sauvegarde interne d'un device (doit être appelé avec cache_mutex déjà verrouillé).
  */
 void save_device_objects_locked(uint32_t ulDeviceId) {
-    if (nvs_mutex == NULL) nvs_mutex = xSemaphoreCreateMutex();
-    if (xSemaphoreTake(nvs_mutex, pdMS_TO_TICKS(1000))) {
+    // 1. Copy data locally to avoid holding cache_mutex during NVS writes
+    bool found = false;
+    BACnetPersistenceDev head;
+    std::vector<BACnetObject> local_objects;
+
+    if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
         for (auto& dev : bacnet_network_cache) {
             if (dev.ulDeviceId == ulDeviceId) {
-                // v6.8.8: Reset du flag dirty avant l'écriture
                 dev.xDirty = false;
+                found = true;
+                
+                memset(&head, 0, sizeof(head));
+                head.ulDeviceId = dev.ulDeviceId;
+                head.ucMacAddress = dev.ucMacAddress;
+                head.xEnabled = dev.xEnabled;
+                head.usCount = (uint16_t)dev.objects.size();
+                head.xDiscoveryDone = dev.xDiscoveryDone;
+                head.ucDiscStep = (uint8_t)dev.ucDiscStep;
+                head.usDiscObjIdx = dev.usDiscObjIdx;
+                strlcpy(head.cName, dev.name.c_str(), 32);
+                strlcpy(head.cVendor, dev.vendor.c_str(), 32);
+                head.usMaxApduLengthAccepted = dev.usMaxApduLengthAccepted;
+                head.ulApduTimeout = dev.ulApduTimeout;
+                head.ucNumberOfApduRetries = dev.ucNumberOfApduRetries;
+                head.xSupportsRpm = dev.xSupportsRpm;
 
-                char ns[16];
-                snprintf(ns, sizeof(ns), "dv_%lu", (unsigned long)ulDeviceId); // Namespace standard
-                Preferences prefs;
-
-                if (prefs.begin(ns, false)) {
-                    prefs.clear();
-
-                    BACnetPersistenceDev head;
-                    memset(&head, 0, sizeof(head));
-                    head.ulDeviceId = dev.ulDeviceId;
-                    head.ucMacAddress = dev.ucMacAddress;
-                    head.xEnabled = dev.xEnabled;
-                    head.usCount = (uint16_t)dev.objects.size();
-                    head.xDiscoveryDone = dev.xDiscoveryDone;
-                    head.ucDiscStep = (uint8_t)dev.ucDiscStep;
-                    head.usDiscObjIdx = dev.usDiscObjIdx;
-                    strlcpy(head.cName, dev.name.c_str(), 32);
-                    strlcpy(head.cVendor, dev.vendor.c_str(), 32);
-                    // v6.8.3
-                    head.usMaxApduLengthAccepted = dev.usMaxApduLengthAccepted;
-                    head.ulApduTimeout = dev.ulApduTimeout;
-                    head.ucNumberOfApduRetries = dev.ucNumberOfApduRetries;
-                    head.xSupportsRpm = dev.xSupportsRpm;
-
-                    prefs.putBytes("head", &head, sizeof(head));
-
-                    for (int p = 0; p * 20 < (int)dev.objects.size(); p++) {
-                        BACnetPersistencePage page;
-                        memset(&page, 0, sizeof(page));
-                        page.ulDeviceId = ulDeviceId;
-                        page.page_index = (uint16_t)p;
-
-                        for (int i = 0; i < 20 && (p * 20 + i) < (int)dev.objects.size(); i++) {
-                            auto& o = dev.objects[p * 20 + i];
-                            page.objects[i].ulVal = ((uint32_t)o.usType << 22) | (o.ulInstance & 0x3FFFFF);
-                            page.objects[i].xEnabled = o.xEnabled;
-                            page.objects[i].xNamePublished = o.xNamePublished;
-                            page.objects[i].xIsCommandable = o.xIsCommandable;
-                            page.objects[i].usUnits = o.usUnits;
-                            page.objects[i].ucExpectedStatesCount = (uint8_t)std::min((int)o.ucExpectedStatesCount, 255);
-                            page.objects[i].fMinValue = o.fMinValue;
-                            page.objects[i].fMaxValue = o.fMaxValue;
-                            page.objects[i].fStepValue = o.fStepValue;
-                            strlcpy(page.objects[i].cMinRef, o.cMinRef, sizeof(page.objects[i].cMinRef));
-                            strlcpy(page.objects[i].cMaxRef, o.cMaxRef, sizeof(page.objects[i].cMaxRef));
-                            strlcpy(page.objects[i].cName, o.cName, 32);
-                            strlcpy(page.objects[i].cUnitText, o.cUnitText, 12);
-                            strlcpy(page.objects[i].cLastHaComponent, o.cLastHaComponent, 16);
-                        }
-                        char key[16]; snprintf(key, 16, "p%d", p);
-                        prefs.putBytes(key, &page, sizeof(page));
-                    }
-                    prefs.end();
-
-                    Preferences reg;
-                    if (reg.begin("registry", false)) {
-                        String list = reg.getString("dev_list", "");
-                        if (list.indexOf(String(ulDeviceId)) == -1) {
-                            list += (list.length() > 0 ? ";" : "") + String(ulDeviceId);
-                            reg.putString("dev_list", list);
-                        }
-                        reg.end();
-                    }
-                    z_log(pdLOG_INFO, "NVS", "Device %lu saved to Flash (Lazy Save)\n", (unsigned long)ulDeviceId);
-                }
+                local_objects = dev.objects; // Deep copy
                 break;
             }
+        }
+        xSemaphoreGive(cache_mutex);
+    }
+
+    if (!found) return;
+
+    if (nvs_mutex == NULL) nvs_mutex = xSemaphoreCreateMutex();
+    if (xSemaphoreTake(nvs_mutex, pdMS_TO_TICKS(1000))) {
+        char ns[16];
+        snprintf(ns, sizeof(ns), "dv_%lu", (unsigned long)ulDeviceId); // Namespace standard
+        Preferences prefs;
+
+        if (prefs.begin(ns, false)) {
+            prefs.clear();
+            prefs.putBytes("head", &head, sizeof(head));
+
+            for (int p = 0; p * 20 < (int)local_objects.size(); p++) {
+                BACnetPersistencePage page;
+                memset(&page, 0, sizeof(page));
+                page.ulDeviceId = ulDeviceId;
+                page.page_index = (uint16_t)p;
+
+                for (int i = 0; i < 20 && (p * 20 + i) < (int)local_objects.size(); i++) {
+                    auto& o = local_objects[p * 20 + i];
+                    page.objects[i].ulVal = ((uint32_t)o.usType << 22) | (o.ulInstance & 0x3FFFFF);
+                    page.objects[i].xEnabled = o.xEnabled;
+                    page.objects[i].xNamePublished = o.xNamePublished;
+                    page.objects[i].xIsCommandable = o.xIsCommandable;
+                    page.objects[i].usUnits = o.usUnits;
+                    page.objects[i].ucExpectedStatesCount = (uint8_t)std::min((int)o.ucExpectedStatesCount, 255);
+                    page.objects[i].fMinValue = o.fMinValue;
+                    page.objects[i].fMaxValue = o.fMaxValue;
+                    page.objects[i].fStepValue = o.fStepValue;
+                    strlcpy(page.objects[i].cMinRef, o.cMinRef, sizeof(page.objects[i].cMinRef));
+                    strlcpy(page.objects[i].cMaxRef, o.cMaxRef, sizeof(page.objects[i].cMaxRef));
+                    strlcpy(page.objects[i].cName, o.cName, 32);
+                    strlcpy(page.objects[i].cUnitText, o.cUnitText, 12);
+                    strlcpy(page.objects[i].cLastHaComponent, o.cLastHaComponent, 16);
+                }
+                char key[16]; snprintf(key, 16, "p%d", p);
+                prefs.putBytes(key, &page, sizeof(page));
+            }
+            prefs.end();
+
+            Preferences reg;
+            if (reg.begin("registry", false)) {
+                String list = reg.getString("dev_list", "");
+                if (list.indexOf(String(ulDeviceId)) == -1) {
+                    list += (list.length() > 0 ? ";" : "") + String(ulDeviceId);
+                    reg.putString("dev_list", list);
+                }
+                reg.end();
+            }
+            z_log(pdLOG_INFO, "NVS", "Device %lu saved to Flash (Lazy Save)\n", (unsigned long)ulDeviceId);
         }
         xSemaphoreGive(nvs_mutex);
     }
