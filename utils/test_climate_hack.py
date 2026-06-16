@@ -91,6 +91,14 @@ def run_hack_scenario(ip, user, password, did, inst, force_val, no_cleanup):
             raise ValueError(f"Échec de l'écriture de valeur (HTTP {r_write.status_code})")
         print("   Commande de valeur forcée enfilée avec succès.")
 
+        # Attente d'une minute pour que le hack agisse sur l'UTA
+        print("\n[Attente] Pause de 60 secondes pour permettre le déclenchement de l'UTA...")
+        for i in range(60, 0, -1):
+            sys.stdout.write(f"\r   Temps restant avant vérification et restauration : {i} secondes... ")
+            sys.stdout.flush()
+            time.sleep(1)
+        print("\r   Pause de 60 secondes terminée.                                          ")
+
         # 5. Attendre et vérifier la valeur en cache
         print("\n[Étape 5] Vérification de la prise en compte de la valeur forcée...")
         verified_val = False
