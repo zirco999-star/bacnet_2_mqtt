@@ -34,6 +34,7 @@ Utiliser impérativement les scripts du dossier `utils` :
 Chaque session ou etape majeure validee (ex: Ring stable, Discovery reussie) doit faire l'objet d'une mise a jour du fichier TRACE.md a la racine du projet.
 
 ### 4. Gestion Git
+- Mettre à jour la version globale via `#define configVERSION_GLOBAL "vX.Y.Z"` dans `src/z_config.h` avant de compiler et de commiter.
 - Commiter chaque version de reference (ex: v4.2.14 pour le Ring stable).
 - Message de commit explicite : vX.Y.Z: Description technique courte.
 
