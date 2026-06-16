@@ -602,3 +602,10 @@
   - Finalisation de la documentation complète en français des fichiers sources du projet (`.cpp`, `.h`, `.ino`, `index.html`) pour maximiser la maintenabilité et la clarté.
   - Incrémentation de la version globale à `v7.0.8` dans `z_config.h`.
 - **Validation** : Compilation de l'intégralité du projet validée avec succès.
+
+## [v7.0.10] - 2026-06-16
+### Modification
+- **Restauration de l'UI** :
+  - Restauration de la dernière version non commentée de `z_ui.h` et de `utils/dev_ui/index.html` à la demande de l'utilisateur pour résoudre des problèmes sur l'interface.
+  - Incrémentation de la version globale à `v7.0.10` dans `z_config.h`.
+- **Validation** : Compilation de l'intégralité du projet validée avec succès.

@@ -899,7 +899,7 @@ uint16_t build_read_property_multiple_apdu(uint8_t* buffer, uint8_t invoke_id, s
     buffer[len++] = 0x04; // Max Seg / Max Resp
     buffer[len++] = invoke_id;
     buffer[len++] = 0x0E; // Service Choice 14 (ReadPropertyMultiple)
-    
+
     for (auto* obj : objects) {
         // [0] ObjectIdentifier
         buffer[len++] = 0x0C;
@@ -908,7 +908,7 @@ uint16_t build_read_property_multiple_apdu(uint8_t* buffer, uint8_t invoke_id, s
         buffer[len++] = (oid >> 16) & 0xFF;
         buffer[len++] = (oid >> 8) & 0xFF;
         buffer[len++] = oid & 0xFF;
-        
+
         // [1] List of Property References
         buffer[len++] = 0x1E; // Open Tag 1
         buffer[len++] = 0x09; // Context 0, Length 1 (PropertyIdentifier)
@@ -916,8 +916,8 @@ uint16_t build_read_property_multiple_apdu(uint8_t* buffer, uint8_t invoke_id, s
         buffer[len++] = 0x1F; // Close Tag 1
     }
     return len;
-}
 
+}
 /**
  * @brief Construit l'APDU d'une requête de lecture simple ReadProperty (RP).
  * @details Prépare la structure binaire standard pour interroger la propriété d'un objet unique.
@@ -1046,19 +1046,44 @@ uint16_t build_write_property_outofservice_apdu(uint8_t* buffer, uint8_t invoke_
  */
 uint16_t build_i_am_apdu(uint8_t* buffer, uint32_t device_instance, uint16_t max_apdu, uint16_t vendor_id) {
     uint16_t len = 0;
-    buffer[len++] = 0x10; // PDU Type: Unconfirmed-Request
-    buffer[len++] = 0x00; // Service Choice: I-Am
-    buffer[len++] = 0xC4; // Tag 12, Len 4 (ObjectIdentifier)
+    // PDU Type: Unconfirmed-Request (0x10) + Service Choice: I-Am (0x00)
+    buffer[len++] = 0x10; 
+    buffer[len++] = 0x00; 
+    
+    // I-AmDeviceIdentifier (Tag 12, Length 4)
+    buffer[len++] = 0xC4; 
     uint32_t oid = (8 << 22) | (device_instance & 0x3FFFFF);
-    buffer[len++] = (oid >> 24) & 0xFF; buffer[len++] = (oid >> 16) & 0xFF;
-    buffer[len++] = (oid >> 8) & 0xFF;  buffer[len++] = oid & 0xFF;
-    if (max_apdu <= 255) { buffer[len++] = 0x21; buffer[len++] = (uint8_t)max_apdu; }
-    else { buffer[len++] = 0x22; buffer[len++] = (max_apdu >> 8) & 0xFF; buffer[len++] = max_apdu & 0xFF; }
-    buffer[len++] = 0x91; buffer[len++] = 0x03; // Tag 9 (Enumerated), Value 3 (segmented-none)
-    if (vendor_id <= 255) { buffer[len++] = 0x21; buffer[len++] = (uint8_t)vendor_id; }
-    else { buffer[len++] = 0x22; buffer[len++] = (vendor_id >> 8) & 0xFF; buffer[len++] = vendor_id & 0xFF; }
+    buffer[len++] = (oid >> 24) & 0xFF; 
+    buffer[len++] = (oid >> 16) & 0xFF;
+    buffer[len++] = (oid >> 8) & 0xFF;  
+    buffer[len++] = oid & 0xFF;
+
+    // MaxAPDULengthAccepted (Tag 2)
+    if (max_apdu <= 255) { 
+        buffer[len++] = 0x21; buffer[len++] = (uint8_t)max_apdu; 
+    } else { 
+        buffer[len++] = 0x22; buffer[len++] = (max_apdu >> 8) & 0xFF; buffer[len++] = max_apdu & 0xFF; 
+    }
+    // MaxAPDULengthAccepted (Tag 2)
+    if (max_apdu <= 255) { 
+        buffer[len++] = 0x21; buffer[len++] = (uint8_t)max_apdu; 
+    } else { 
+        buffer[len++] = 0x22; buffer[len++] = (max_apdu >> 8) & 0xFF; buffer[len++] = max_apdu & 0xFF; 
+    }
+
+    // SegmentationSupported (Tag 9) - Value 3 = segmented-none
+    buffer[len++] = 0x91; buffer[len++] = 0x03; 
+
+    // VendorID (Tag 2)
+    if (vendor_id <= 255) { 
+        buffer[len++] = 0x21; buffer[len++] = (uint8_t)vendor_id; 
+    } else { 
+        buffer[len++] = 0x22; buffer[len++] = (vendor_id >> 8) & 0xFF; buffer[len++] = vendor_id & 0xFF; 
+    }
+    
     return len;
 }
+
 
 /**
  * @brief Convertit l'identifiant d'unité de mesure BACnet en son symbole textuel compréhensible.
@@ -1278,9 +1303,7 @@ void execute_bacnet_work() {
                 }
                 z_log(pdLOG_DEBUG, "BACNET", "APDU hex : %s\n", hex_buf);
                 /// Fin log debug
-                z_log(pdLOG_INFO, "BACNET", "I-AM send%u:%lu (Prio: %u) = Hex: %s\n", 
-                    j.obj_type, (unsigned long)j.obj_instance, j.priority, hex_buf);
-
+                
                 z_log(pdLOG_INFO, "BACNET", "I-AM send (Device %lu)\n", (unsigned long)sysCfg.ulDeviceId);
                 break;
 

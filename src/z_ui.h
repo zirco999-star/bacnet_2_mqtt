@@ -5,160 +5,76 @@
 #include "z_config.h"
 
 const char INDEX_HTML[] PROGMEM = R"rawliteral(
-<!--
-===============================================================================
-  FICHIER : index.html
-  PROJET  : BACnet2MQTT Gateway — Interface Web Embarquée (Single Page App)
-  CIBLE   : ESP32-S3 Waveshare RS485-CAN (serveur HTTP ESPAsyncWebServer)
-===============================================================================
-
-  RÔLE :
-    Interface utilisateur complète (SPA) embarquée dans le firmware ESP32-S3
-    via le fichier z_ui.h (stocké en Flash PROGMEM). Elle permet :
-      - La supervision temps réel du réseau MS/TP et du système (Dashboard)
-      - La gestion granulaire des objets BACnet découverts (onglet BACNET)
-      - La configuration complète de la gateway (onglet Settings)
-      - Le terminal dual-core en temps réel via WebSocket
-
-  ARCHITECTURE :
-    - HTML/CSS/JS monolithique (pas de dépendances externes)
-    - Communication avec le firmware via API REST JSON (/api/*)
-    - Logs temps réel via WebSocket (ws://<IP>/ws-logs)
-    - Design mobile-first, dark mode, glassmorphism
-    - Rafraîchissement automatique toutes les 3 secondes (polling /api/status)
-
-  WORKFLOW DE DÉVELOPPEMENT (voir GEMINI.md) :
-    1. Extraire : python3 utils/dev_ui/1_extract_ui.py  → génère index.html
-    2. Modifier : éditer index.html localement
-    3. Tester  : python3 utils/dev_ui/2_server_proxy.py  → http://localhost:8000
-    4. Injecter: python3 utils/dev_ui/3_inject_ui.py     → met à jour z_ui.h
-    5. Compiler et flasher le firmware
-
-  DÉPENDANCES API (routes firmware z_network.cpp) :
-    GET  /api/status        → État complet du système (réseau, MSTP, heap, etc.)
-    GET  /api/objects        → Liste des devices et objets BACnet découverts
-    POST /save               → Sauvegarde de la configuration (WiFi, MQTT, BACnet)
-    POST /api/save_object    → Sauvegarde unitaire d'un objet (nom, unité, polling)
-    POST /api/reload_device  → Relance la découverte complète d'un device
-    POST /api/reload_object  → Relance la découverte d'un objet spécifique
-    POST /api/toggle_device  → Active/Désactive un device sur le bus MS/TP
-    POST /api/whois          → Envoie un broadcast Who-Is sur le bus
-    POST /api/iam            → Envoie un I-Am sur le bus
-    POST /api/reset_cache    → Efface le cache BACnet (NVS)
-    POST /api/factory_reset  → Remise à zéro complète du firmware
-    GET  /api/reboot         → Redémarre l'ESP32
-
-  DÉPENDANCE WEBSOCKET :
-    ws://<IP>/ws-logs → Flux de logs dual-core
-      Format des messages : "0|<texte>" pour Core 0, "1|<texte>" pour Core 1
-===============================================================================
--->
 <!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <!-- Favicons : icônes servies par le firmware via des routes dédiées dans z_network.cpp -->
     <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
     <link rel="icon" type="image/png" sizes="192x192" href="/web-app-manifest-192x192.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
     <title>BACNET2MQTT</title>
-
-    <!--
-    =========================================================================
-      SECTION CSS — Design System
-    =========================================================================
-      Palette dark-mode avec variables CSS (tokens de design).
-      Architecture visuelle : glassmorphism, badges d'état, cartes, accordéons.
-      Responsive mobile-first avec breakpoints à 500px et 800px.
-    =========================================================================
-    -->
     <style>
-        /* --- Tokens de couleur du design system --- */
         :root { 
-            --bg: #09090b;          /* Fond principal (quasi-noir) */
-            --card: #18181b;        /* Fond des cartes */
-            --primary: #3b82f6;     /* Bleu principal (actions, liens) */
-            --accent: #6366f1;      /* Violet accent (dégradés) */
-            --text: #fafafa;        /* Texte principal */
-            --muted: #a1a1aa;       /* Texte secondaire / labels */
-            --border: #27272a;      /* Bordures des composants */
-            --success: #22c55e;     /* Vert (connecté, OK) */
-            --error: #ef4444;       /* Rouge (erreur, déconnecté) */
-            --warning: #f59e0b;     /* Orange (avertissement, signal moyen) */
-            --glass: rgba(24, 24, 27, 0.9); /* Fond semi-transparent pour la navbar */
+            --bg: #09090b; --card: #18181b; --primary: #3b82f6; --accent: #6366f1; 
+            --text: #fafafa; --muted: #a1a1aa; --border: #27272a; --success: #22c55e; --error: #ef4444; --warning: #f59e0b;
+            --glass: rgba(24, 24, 27, 0.9);
         }
         body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; line-height: 1.4; -webkit-tap-highlight-color: transparent; overflow-x: hidden; }
         
-        /* --- Barre de navigation sticky avec effet glassmorphism ---
-             Contient le logo BACnet2MQTT et les badges d'état MSTP/MQTT */
         nav { background: var(--glass); backdrop-filter: blur(12px); padding: 0.6rem 1rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 100; }
         .logo-box { display: flex; flex-direction: column; }
         .logo { font-weight: 800; font-size: 1rem; letter-spacing: -0.03em; text-decoration: none; display: flex; align-items: center; gap: 0.3rem; }
-        /* Coloration tricolore du logo : BACnet(bleu) 2(vert) MQTT(violet) */
         .logo .b { color: var(--primary); } .logo .n { color: var(--success); } .logo .m { color: var(--accent); }
         .credits { font-size: 0.55rem; color: var(--muted); font-weight: 500; margin-top: -2px; }
         .credits a { color: var(--primary); text-decoration: none; font-weight: 700; }
 
-        /* --- Badges d'état (MSTP / MQTT) dans la navbar ---
-             Commutent entre badge-ok (vert) et badge-fail (rouge) dynamiquement -->
         .status-group { display: flex; gap: 0.4rem; }
         .badge { padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.6rem; font-weight: 800; background: #27272a; color: var(--muted); text-transform: uppercase; border: 1px solid transparent; }
         .badge-ok { background: rgba(34, 197, 94, 0.1); color: var(--success); border-color: rgba(34, 197, 94, 0.2); }
         .badge-fail { background: rgba(239, 68, 68, 0.1); color: var(--error); border-color: rgba(239, 68, 68, 0.2); }
 
-        /* --- Barre d'onglets principaux (Dashboard / BACNET / Settings) ---
-             Sticky sous la navbar pour un accès permanent sans défilement -->
         .tabs { display: flex; gap: 0.2rem; background: #000; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border); overflow-x: auto; position: sticky; top: 48px; z-index: 99; scrollbar-width: none; }
         .tabs::-webkit-scrollbar { display: none; }
         .tab-btn { padding: 0.5rem 0.8rem; background: transparent; border: none; color: var(--muted); font-size: 0.7rem; font-weight: 700; cursor: pointer; border-radius: 6px; white-space: nowrap; text-transform: uppercase; transition: all 0.2s; }
         .tab-btn.active { background: var(--primary); color: #fff; box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3); }
 
-        /* --- Conteneur principal et animation de transition entre onglets --- */
         .container { max-width: 1200px; margin: 0.5rem auto; padding: 0 0.6rem 2rem 0.6rem; }
         .tab-content { display: none; }
         .tab-content.active { display: block; animation: fadeIn 0.3s ease; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 
-        /* --- Grille du Dashboard : 4 cartes auto-adaptatives (Network, MS/TP, System, BACnet) --- */
+        /* DASHBOARD GRID */
         .dashboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.6rem; margin-bottom: 0.8rem; }
         .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
         .card-h { background: rgba(255,255,255,0.03); padding: 0.5rem 0.8rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
         .card-t { font-size: 0.65rem; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
         .card-b { padding: 0.6rem 0.8rem; }
 
-        /* --- Lignes d'information clé:valeur dans les cartes du dashboard --- */
         .info-row { display: flex; justify-content: space-between; margin-bottom: 0.3rem; font-size: 0.75rem; }
         .info-l { color: var(--muted); font-weight: 500; }
         .info-v { color: var(--text); font-weight: 700; font-family: monospace; }
 
-        /* --- Radar WiFi : barre de signal RSSI à 8 segments ---
-             Coloration dynamique : rouge (<2), orange (2-4), vert (>4) selon la puissance -->
+        /* WIFI RADAR */
         .echo-radar { display: flex; gap: 2px; height: 5px; align-items: center; margin-top: 6px; width: 100%; }
         .echo-segment { flex: 1; height: 100%; background: #27272a; border-radius: 1px; transition: all 0.3s ease; }
         .echo-segment.active { box-shadow: 0 0 3px currentColor; }
 
-        /* --- Barres de progression de découverte BACnet ---
-             Dégradé bleu→violet animé, affichage du pourcentage en overlay -->
+        /* PROGRESS BAR */
         .prog-box { margin-bottom: 0.6rem; }
         .prog-label { display: flex; justify-content: space-between; font-size: 0.6rem; font-weight: 800; text-transform: uppercase; margin-bottom: 3px; }
         .prog-cont { width: 100%; background: #27272a; border-radius: 6px; height: 12px; position: relative; overflow: hidden; border: 1px solid var(--border); }
         .prog-bar { height: 100%; background: linear-gradient(90deg, var(--primary), var(--accent)); width: 0%; transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1); }
         .prog-text { position: absolute; width: 100%; text-align: center; font-size: 0.5rem; font-weight: 900; color: #fff; line-height: 12px; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
 
-        /* --- Console duale : grid 2 colonnes sur desktop, 1 colonne sur mobile ---
-             Note : ce style est conservé pour compatibilité, le terminal utilise
-             maintenant le composant "tabbed terminal" plus bas -->
+        /* DUAL CONSOLE */
         .console-split { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
         @media (max-width: 800px) { .console-split { grid-template-columns: 1fr; } }
         .console-box { background: #000; border: 1px solid var(--border); border-radius: 8px; height: 250px; overflow-y: auto; padding: 0.5rem; font-size: 0.65rem; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; white-space: pre-wrap; word-break: break-all; }
-        /* Bordure gauche colorée pour distinguer visuellement les cores :
-           Vert = Core 0 (Système/WiFi), Bleu = Core 1 (BACnet FSM) */
         .c0 { border-left: 3px solid var(--success); }
         .c1 { border-left: 3px solid var(--primary); }
 
-        /* --- Tableau des objets BACnet (onglet BACNET) ---
-             Colonnes fixes : Reload | OBJ (badge type:instance) | CONFIG (nom+unité+min/max/step) | VAL | POLL -->
+        /* BACNET TABLE */
         .dev-card { margin-bottom: 1rem; }
         .dev-header { display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0.8rem; background: #1a1a1c; border-bottom: 1px solid var(--border); }
         .dev-actions { display: flex; gap: 0.4rem; }
@@ -167,37 +83,29 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         .compact-table th { font-size: 0.55rem; text-transform: uppercase; color: var(--muted); padding: 0.4rem 0.2rem; background: #141416; text-align: left; }
         .compact-table td { padding: 0.4rem 0.2rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
         
-        /* Badge type:instance (ex: AI:1005) avec police monospace */
         .obj-badge { font-family: monospace; font-size: 0.6rem; font-weight: 800; background: #27272a; color: var(--primary); padding: 2px 4px; border-radius: 4px; }
-        /* Valeur temps réel de l'objet (police large, vert, monospace) */
         .val-text { font-weight: 800; font-size: 0.85rem; font-family: monospace; color: var(--success); }
-        /* Champs de saisie inline dans le tableau (nom, min, max, step) */
         .in-text { background: #09090b; border: 1px solid var(--border); color: var(--text); padding: 4px 6px; border-radius: 4px; width: 100%; font-size: 0.75rem; box-sizing: border-box; transition: border 0.2s; }
         .in-text:focus { border-color: var(--primary); outline: none; background: #000; }
         
-        /* Sélecteurs (unités, options Multi-State) */
         select { background: #09090b; border: 1px solid var(--border); color: var(--accent); padding: 3px 4px; border-radius: 4px; font-size: 0.65rem; width: 100%; font-weight: 700; cursor: pointer; }
 
-        /* --- Accordéons de la page Settings ---
-             Utilise l'élément natif <details> pour le repli/déploiement sans JS -->
+        /* SETTINGS ACCORDIONS */
         details { background: var(--card); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 0.6rem; transition: all 0.2s; }
         details[open] { border-color: var(--primary); }
         summary { padding: 1rem; font-size: 0.75rem; font-weight: 800; cursor: pointer; text-transform: uppercase; color: var(--muted); list-style: none; display: flex; justify-content: space-between; align-items: center; outline: none; }
         summary::-webkit-details-marker { display: none; }
-        /* Icône ＋/－ à droite du summary pour indiquer l'état ouvert/fermé */
         summary::after { content: '＋'; font-size: 0.8rem; color: var(--muted); transition: transform 0.2s; }
         details[open] summary::after { content: '－'; transform: rotate(180deg); }
         details[open] summary { border-bottom: 1px solid var(--border); margin-bottom: 0.5rem; color: var(--text); }
         
-        /* --- Grille de formulaire à 2 colonnes (Settings) ---
-             Passe à 1 colonne sur écrans étroits (<500px) -->
         .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; padding: 0 1rem 1rem 1rem; }
         @media (max-width: 500px) { .form-grid { grid-template-columns: 1fr; } .span-2 { grid-column: span 2 !important; } }
         .span-2 { grid-column: span 2; }
         .f-item { display: flex; flex-direction: column; gap: 0.3rem; }
         .f-item label { font-size: 0.55rem; font-weight: 800; color: var(--muted); text-transform: uppercase; }
 
-        /* --- Boutons (3 variantes : primaire/secondaire/danger) --- */
+        /* BUTTONS */
         .btn { padding: 0.6rem 0.8rem; border-radius: 8px; font-weight: 800; font-size: 0.65rem; border: none; text-transform: uppercase; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; }
         .btn-p { background: var(--primary); color: #fff; box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3); }
         .btn-s { background: #27272a; color: var(--muted); border: 1px solid var(--border); }
@@ -206,8 +114,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         .btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
         .btn:active { transform: translateY(0); }
 
-        /* --- Composant Switch (toggle iOS-like) ---
-             Utilisé pour activer/désactiver le polling des objets et les devices -->
+        /* SWITCH */
         .switch { position: relative; display: inline-block; width: 34px; height: 18px; }
         .switch input { opacity: 0; width: 0; height: 0; }
         .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #3f3f46; transition: .3s; border-radius: 18px; }
@@ -215,58 +122,30 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         input:checked + .slider { background-color: var(--success); }
         input:checked + .slider:before { transform: translateX(16px); }
 
-        /* --- Classe "grisé" : appliquée aux lignes d'objets dont le polling est désactivé ---
-             Réduit l'opacité de toutes les colonnes sauf la dernière (switch) -->
         .grisé > td:not(:last-child) { opacity: 0.4; transition: opacity 0.3s; }
 
-        /* --- Terminal à onglets (Core 0 / Core 1) ---
-             Remplace l'ancien layout split-console par un composant à onglets
-             pour économiser l'espace vertical sur mobile -->
+        /* TABBED TERMINAL */
         .term-tabs { display: flex; gap: 0.2rem; background: rgba(0,0,0,0.2); padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); }
         .term-tab { padding: 0.3rem 0.6rem; font-size: 0.6rem; font-weight: 800; cursor: pointer; border-radius: 4px; color: var(--muted); text-transform: uppercase; transition: all 0.2s; }
         .term-tab.active { background: var(--border); color: var(--text); }
-        /* Bordure basse colorée pour identifier le core actif */
         .term-tab.c0-tab.active { border-bottom: 2px solid var(--success); }
         .term-tab.c1-tab.active { border-bottom: 2px solid var(--primary); }
-        /* Note : .console-box est redéfini ici (écrase le style précédent) pour le mode tabbé */
         .console-box { display: none; background: #000; height: 250px; overflow-y: auto; padding: 0.5rem; font-size: 0.65rem; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; white-space: pre-wrap; word-break: break-all; }
         .console-box.active { display: block; }
     </style>
 </head>
 <body>
-
-    <!--
-    =========================================================================
-      BARRE DE NAVIGATION (sticky, glassmorphism)
-    =========================================================================
-      - Logo tricolore BACnet2MQTT avec lien vers le repo GitHub
-      - Badge version firmware (rempli dynamiquement par updateStatus())
-      - Deux badges d'état temps réel :
-        * MSTP : vert si ring_active (jeton circulant), rouge sinon
-        * MQTT : vert si connecté au broker, rouge sinon
-    =========================================================================
-    -->
     <nav>
         <div class="logo-box">
             <a href="#" class="logo"><span class="b">BACNET</span><span class="n">2</span><span class="m">MQTT</span></a>
             <div class="credits">by <a href="https://github.com/zirco999-star" target="_blank">Z1rc0n1um</a> - <span id="v-tag">...</span></div>
         </div>
         <div class="status-group">
-            <!-- Ces badges sont mis à jour dynamiquement par updateStatus() -->
             <div id="b-tag" class="badge">MSTP</div>
             <div id="m-tag" class="badge">MQTT</div>
         </div>
     </nav>
 
-    <!--
-    =========================================================================
-      BARRE D'ONGLETS PRINCIPAUX (sticky sous la navbar)
-    =========================================================================
-      3 onglets : Dashboard (défaut) | BACNET (objets) | Settings (config)
-      Le clic déclenche openTab() qui gère l'affichage et le chargement
-      contextuel des données (refreshBACnet ou loadConfig).
-    =========================================================================
-    -->
     <div class="tabs">
         <button class="tab-btn active" id="btn-dash" onclick="openTab(event, 't-dash')">Dashboard</button>
         <button class="tab-btn" id="btn-bac" onclick="openTab(event, 't-bac')">BACNET</button>
@@ -274,25 +153,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     </div>
 
     <div class="container">
-
-        <!--
-        =====================================================================
-          ONGLET DASHBOARD — Supervision temps réel
-        =====================================================================
-          4 cartes de monitoring + boutons d'action + terminal dual-core.
-          Toutes les valeurs sont rafraîchies automatiquement par
-          updateStatus() via setInterval(3000).
-        =====================================================================
-        -->
+        <!-- TAB: DASHBOARD -->
         <div id="t-dash" class="tab-content active">
             <div class="dashboard-grid">
-
-                <!-- ===== CARTE : Network Info =====
-                     Affiche IP, Gateway, Subnet, MQTT Server et le radar RSSI WiFi.
-                     Le radar est une barre à 8 segments dont la coloration et
-                     le nombre de segments actifs reflètent la puissance du signal :
-                       - RSSI normalisé sur [-100, -40] dBm → 0 à 8 segments
-                       - Couleurs : rouge (faible) → orange (moyen) → vert (bon) -->
+                <!-- Network Card -->
                 <div class="card">
                     <div class="card-h"><div class="card-t">Network Info</div><div class="badge badge-ok" id="s-rssi">-- dBm</div></div>
                     <div class="card-b">
@@ -300,21 +164,12 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                         <div class="info-row"><span class="info-l">Gateway</span><span class="info-v" id="s-gw">0.0.0.0</span></div>
                         <div class="info-row"><span class="info-l">Subnet Mask</span><span class="info-v" id="s-sn">0.0.0.0</span></div>
                         <div class="info-row"><span class="info-l">MQTT Server</span><span class="info-v" id="s-mqs">---</span></div>
-                        <!-- Barre radar WiFi : 8 segments div, colorés dynamiquement par JS -->
                         <div class="echo-radar" id="radar">
                             <div class="echo-segment"></div><div class="echo-segment"></div><div class="echo-segment"></div><div class="echo-segment"></div><div class="echo-segment"></div><div class="echo-segment"></div><div class="echo-segment"></div><div class="echo-segment"></div>
                         </div>
                     </div>
                 </div>
-
-                <!-- ===== CARTE : MS/TP Info =====
-                     Statistiques du bus BACnet MS/TP :
-                       - Tokens : nombre de jetons reçus (santé du ring)
-                       - RX : réponses de données valides (Complex-ACK)
-                       - TX : requêtes de données envoyées (ReadProperty)
-                       - CRC Errors : erreurs de contrôle d'intégrité détectées
-                       - Active Nodes : nombre de devices découverts sur le bus
-                       - Device ID : identifiant ASHRAE calculé = (DID × 1000) + MAC -->
+                <!-- MS/TP Card -->
                 <div class="card">
                     <div class="card-h"><div class="card-t">MS/TP Info</div><div class="badge" id="s-mstp-state">--</div></div>
                     <div class="card-b">
@@ -324,13 +179,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                         <div class="info-row"><span class="info-l">Device ID</span><span class="info-v" id="s-ashrae-id">--</span></div>
                     </div>
                 </div>
-
-                <!-- ===== CARTE : System Status =====
-                     Métriques système de l'ESP32-S3 :
-                       - Free Heap : mémoire libre (détection de fuites)
-                       - Uptime : temps depuis le dernier boot (formaté jours/heures/min/sec)
-                       - Poll Interval : intervalle de polling BACnet configuré
-                       - Task Cores : rappel de l'affectation des cores (0:SYS, 1:BAC) -->
+                <!-- System Status -->
                 <div class="card">
                     <div class="card-h"><div class="card-t">System Status</div></div>
                     <div class="card-b">
@@ -340,14 +189,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                         <div class="info-row"><span class="info-l">Task Cores</span><span class="info-v">0:SYS | 1:BAC</span></div>
                     </div>
                 </div>
-
-                <!-- ===== CARTE : BACnet Status =====
-                     Barres de progression de la découverte par device.
-                     Chaque barre montre :
-                       - Le Device ID avec le compteur d'objets sélectionnés
-                       - L'état : Discovery (bleu) / Completed (vert) / Desactivated (gris)
-                       - Le pourcentage de progression avec hystérésis anti-régression
-                     Le conteneur a un overflow-y pour supporter de nombreux devices -->
+                <!-- Bacnet Card -->
                 <div class="card">
                     <div class="card-h"><div class="card-t">BACNet Status</div></div>
                     <div class="card-b" id="progress-list" style="max-height: 100px; overflow-y: auto; padding: 0.6rem 0.8rem;">
@@ -356,20 +198,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 </div>
             </div>
 
-            <!-- ===== BOUTONS D'ACTION BACnet =====
-                 Who-Is : broadcast de découverte sur le bus MS/TP (réveille les automates)
-                 I-Am   : annonce de présence de la gateway sur le bus -->
             <div class="cmd-group" style="display:flex; gap:0.6rem; margin-bottom:1rem">
                 <button class="btn btn-p" style="flex:1" onclick="fetch('/api/whois', {method:'POST'})">Send Who-Is</button>
                 <button class="btn btn-s" style="flex:1" onclick="fetch('/api/iam', {method:'POST'})">Send I-Am</button>
             </div>
 
-            <!-- ===== TERMINAL DUAL-CORE À ONGLETS =====
-                 Affiche les logs temps réel reçus via WebSocket (ws://<IP>/ws-logs).
-                 Core 0 (System) : logs WiFi, MQTT, API Web, OTA
-                 Core 1 (BACnet) : logs FSM MS/TP, polling, découverte, UART
-                 Chaque console est limitée à 200 lignes (FIFO) pour la mémoire.
-                 Le routage se fait par le préfixe du message : "0|..." ou "1|..." -->
             <div class="card" style="margin-top: 0.6rem;">
                 <div class="card-h"><div class="card-t">System Terminal</div></div>
                 <div class="term-tabs">
@@ -381,53 +214,19 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             </div>
         </div>
 
-        <!--
-        =====================================================================
-          ONGLET BACNET — Gestion des objets découverts
-        =====================================================================
-          Conteneur dynamique rempli par refreshBACnet() via /api/objects.
-          Chaque device BACnet est affiché dans un accordéon <details> avec :
-            - Header : ID device, nom, vendor, bouton Reload, switch ON/OFF
-            - Table d'objets : type:instance, nom éditable, unité (select),
-              min/max/step configurables, valeur temps réel, switch polling
-          Les objets de type Device (type=8) sont filtrés et non affichés.
-        =====================================================================
-        -->
+        <!-- TAB: BACNET -->
         <div id="t-bac" class="tab-content">
             <div id="bac-list"></div>
         </div>
 
-        <!--
-        =====================================================================
-          ONGLET SETTINGS — Configuration complète de la gateway
-        =====================================================================
-          5 sections en accordéons :
-            1. Network : WiFi SSID/Pass, mode Static IP (IP/GW/Subnet)
-            2. MQTT : Broker, User/Pass, Prefix, toggle HA Auto-Discovery
-            3. BACnet MS/TP : MAC, Device ID, Max Master, Retries, Timeout,
-               Token Skip, Max Info Frames, Heartbeat
-            4. Polling : intervalles MQTT et BACnet (secondes)
-            5. System : Admin User/Pass, niveau de log (ERROR→DEBUG)
-          
-          Chaque section a son propre formulaire avec un champ caché
-          "form_type" permettant au firmware de router vers le bon handler.
-          La sauvegarde se fait via POST /save avec FormData.
-          
-          IMPORTANT (MEMORY.md) : Les mots de passe ne sont JAMAIS renvoyés
-          par l'API. Le placeholder "******" est utilisé et le firmware
-          ignore les champs password vides ou égaux à "******".
-        =====================================================================
-        -->
+        <!-- TAB: SETTINGS -->
         <div id="t-conf" class="tab-content">
-
-            <!-- Section 1 : Configuration réseau WiFi -->
             <details open>
                 <summary>Network Configuration</summary>
                 <form id="f-net" class="form-grid">
                     <input type="hidden" name="form_type" value="wifi">
                     <div class="f-item"><label>WiFi SSID</label><input type="text" name="ssid" id="in-ssid"></div>
                     <div class="f-item"><label>WiFi Password</label><input type="password" name="pass" id="in-pass" placeholder="******"></div>
-                    <!-- Checkbox Static IP : révèle/masque les champs IP via toggleStatic() -->
                     <div class="span-2"><label class="btn btn-s" style="width:100%; box-sizing:border-box; justify-content:flex-start"><input type="checkbox" name="static_ip" id="in-static" onchange="toggleStatic()"> STATIC IP MODE</label></div>
                     <div id="div-static" class="span-2 form-grid" style="padding:0; gap:0.8rem; display:none">
                         <div class="f-item"><label>Local IP</label><input type="text" name="local_ip" id="in-ip"></div>
@@ -438,7 +237,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 </form>
             </details>
 
-            <!-- Section 2 : Configuration MQTT -->
             <details>
                 <summary>MQTT Server Configuration</summary>
                 <form id="f-mqtt" class="form-grid">
@@ -446,7 +244,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     <div class="f-item"><label>Broker Server IP</label><input type="text" name="mqh" id="in-mqh"></div>
                     <div class="f-item" >
                         <label>HA Auto-Discovery</label>
-                        <!-- Toggle Home Assistant Auto-Discovery (persisté en NVS sous clé "ha_disc") -->
                         <label class="switch" style="inset-inline-start: 25px; align-self: center;"><input type="checkbox" name="ha_disc" id="in-hadisc"><span class="slider"></span></label>
                     </div>
                     <div class="f-item"><label>MQTT User</label><input type="text" name="mqu" id="in-mqu"></div>
@@ -456,15 +253,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 </form>
             </details>
 
-            <!-- Section 3 : Configuration BACnet MS/TP
-                 - MAC : adresse MS/TP de la gateway sur le bus (0-127)
-                 - Device Instance : identifiant BACnet unique de la gateway
-                 - Max Master : adresse MAC maximale pour le Poll For Master (127 = scan complet)
-                 - Max Retries : tentatives de retransmission avant abandon (ASHRAE 135 Nretry)
-                 - APDU Timeout : temps d'attente de réponse en ms (ASHRAE 135 Tout)
-                 - Token Skip : nombre de jetons à ignorer entre chaque requête (throttling)
-                 - Max Info Frames : trames de données max par cycle de jeton (Burst Mode)
-                 - Heartbeat : intervalle de publication du log périodique (ms) -->
             <details>
                 <summary>BACnet MS/TP Configuration</summary>
                 <form id="f-bac" class="form-grid">
@@ -481,9 +269,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 </form>
             </details>
 
-            <!-- Section 4 : Intervalles de polling
-                 - MQTT Polling : fréquence de publication sur le broker (sec)
-                 - BACnet Polling : fréquence de lecture des Present_Value sur le bus (sec) -->
             <details>
                 <summary>Polling Configuration</summary>
                 <form id="f-poll" class="form-grid">
@@ -494,7 +279,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 </form>
             </details>
 
-            <!-- Section 5 : Configuration système (sécurité et logs) -->
             <details>
                 <summary>System Configuration</summary>
                 <form id="f-sec" class="form-grid">
@@ -502,7 +286,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     <div class="f-item"><label>Admin User</label><input type="text" name="admin_u" id="in-adu"></div>
                     <div class="f-item"><label>Admin Password</label><input type="password" name="admin_p" id="in-adp" placeholder="******"></div>
                     <div class="span-2 f-item"><label>Log Level</label>
-                        <!-- Niveau de log appliqué à chaud (hot-swap) sans reboot -->
                         <select name="lvl" id="in-lvl">
                             <option value="1">ERROR</option>
                             <option value="2">WARN</option>
@@ -514,10 +297,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 </form>
             </details>
 
-            <!-- ===== ACTIONS SYSTÈME DANGEREUSES =====
-                 - Clear BACNET Cache : nvs_flash_erase() sur les namespaces device
-                 - Reboot : redémarrage logiciel de l'ESP32 (avec confirmation)
-                 - Factory Reset : remise à zéro complète (NVS + config) -->
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.6rem; margin-top:1rem">
                 <button class="btn btn-s" onclick="confirmAction('/api/reset_cache', 'Remove all devices from the BACnet cache?')">Clear BACNET Cache</button>
                 <button class="btn btn-s" onclick="confirmReboot()">Reboot</button>
@@ -526,61 +305,14 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         </div>
     </div>
 
-    <!--
-    =========================================================================
-      SECTION JAVASCRIPT — Logique applicative
-    =========================================================================
-      Architecture :
-        - Dictionnaire UNITS : mapping code ASHRAE 135 → label textuel
-        - Gestion des onglets (openTab) et des formulaires (saveForm)
-        - Rafraîchissement automatique du dashboard (updateStatus, 3s)
-        - Rendu dynamique du tableau d'objets BACnet (refreshBACnet)
-        - Sauvegarde unitaire d'objet (saveObj) avec mise à jour inline
-        - Terminal WebSocket dual-core avec routage par préfixe
-        - Détection du mode développement pour redirection WebSocket
-    =========================================================================
-    -->
     <script>
-        /**
-         * Dictionnaire des unités BACnet conformes ASHRAE 135.
-         * Clé = code numérique ASHRAE (Engineering Units enumeration).
-         * Valeur = label textuel affiché dans l'UI et transmis au firmware.
-         * La clé vide ("") correspond à l'état non-configuré (affiché "---").
-         * Le code 95 ("no-units") est un cas spécial pour les objets sans unité.
-         * 
-         * IMPORTANT : Ce dictionnaire doit rester synchronisé avec la fonction
-         * get_unit_text() dans z_bacnet.cpp côté firmware.
-         */
         const UNITS = {
             "": "---", 95: "no-units", 62: "°C", 63: "°K", 64: "°F", 98: "%", 29: "%RH", 96: "ppm", 5: "V", 124: "mV", 2: "mA", 3: "A", 4: "Ohm", 8: "VA", 9: "kVA", 19: "kWh", 18: "Wh", 146: "MWh", 48: "kW", 47: "W", 49: "MW", 53: "Pa", 54: "kPa", 55: "bar", 56: "psi", 82: "L", 80: "m³", 87: "L/s", 88: "L/min", 136: "L/h", 85: "m³/s", 135: "m³/h", 159: "ms", 73: "s", 72: "min", 71: "h"
         };
-
-        /**
-         * Mémorisation de la progression maximale par device pour éviter
-         * les régressions visuelles de la barre de progression lors des
-         * rafraîchissements (effet d'hystérésis monotone croissant).
-         */
         const progHysteresis = {}; 
-
-        /**
-         * État d'ouverture/fermeture des accordéons par device (device_id → boolean).
-         * Permet de restaurer l'état des accordéons après un refresh du DOM
-         * qui détruit et reconstruit l'intégralité du #bac-list.
-         */
         const devBoxState = {};
-
-        /** Onglet actuellement affiché (utilisé pour conditionner les refreshs) */
         let currentTab = 't-dash';
 
-        /**
-         * @brief Gestion de la navigation entre les 3 onglets principaux.
-         * Active l'onglet sélectionné, masque les autres, et déclenche
-         * le chargement contextuel des données :
-         *   - 't-bac'  → refreshBACnet() pour charger les objets
-         *   - 't-conf' → loadConfig() pour pré-remplir les formulaires
-         * @param {Event} e - Événement click du bouton d'onglet.
-         * @param {string} id - ID du conteneur tab-content à afficher.
-         */
         function openTab(e, id) {
             currentTab = id;
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
@@ -591,22 +323,8 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             if(id === 't-conf') loadConfig();
         }
 
-        /**
-         * @brief Affiche/masque les champs IP statique selon l'état de la checkbox.
-         * Lié au onchange de la checkbox #in-static dans le formulaire Network.
-         */
         function toggleStatic() { document.getElementById('div-static').style.display = document.getElementById('in-static').checked ? 'grid' : 'none'; }
 
-        /**
-         * @brief Charge la configuration actuelle depuis le firmware via GET /api/status.
-         * Pré-remplit tous les champs des formulaires Settings avec les valeurs
-         * retournées par l'API. Appelé automatiquement lors de l'ouverture de
-         * l'onglet Settings.
-         * 
-         * Note : les champs mot de passe ne sont jamais pré-remplis (sécurité).
-         * L'API retourne les clés abrégées (ssid, mqs, mqu, mqpr, bpi, mpi, etc.)
-         * définies dans la route /api/status de z_network.cpp.
-         */
         function loadConfig() {
             fetch('/api/status').then(r=>r.json()).then(d=>{
                 document.getElementById('in-ssid').value = d.ssid || "";
@@ -634,66 +352,21 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             }).catch(e => console.error("Config load error", e));
         }
 
-        /**
-         * @brief Envoie les données d'un formulaire Settings au firmware.
-         * Utilise FormData pour sérialiser automatiquement tous les champs
-         * du formulaire, y compris le champ caché "form_type" qui permet
-         * au handler /save du firmware de router vers le bon traitement.
-         * 
-         * Note : seuls les changements WiFi déclenchent un reboot.
-         * Les modifications MQTT et BACnet sont appliquées à chaud (hot-reload).
-         * @param {string} id - ID du formulaire HTML à envoyer.
-         */
         function saveForm(id) {
             fetch('/save', {method:'POST', body:new FormData(document.getElementById(id))})
             .then(r => r.text()).then(t => { if(t==="OK") alert("Settings Applied"); });
         }
 
-        /**
-         * @brief Confirmation et exécution d'une action système (cache reset, factory reset).
-         * @param {string} url - URL de l'API à appeler (ex: /api/reset_cache).
-         * @param {string} msg - Message de confirmation affiché à l'utilisateur.
-         */
         function confirmAction(url, msg) { if(confirm(msg)) fetch(url, {method:'POST'}).then(()=>alert("Action triggered.")); }
-
-        /**
-         * @brief Confirmation et déclenchement du reboot de la gateway.
-         * Boîte de confirmation obligatoire avant redémarrage (MEMORY.md).
-         */
         function confirmReboot() { if(confirm("Reboot Gateway?")) fetch('/api/reboot'); }
 
-        /**
-         * @brief Rafraîchit le tableau complet des objets BACnet (onglet BACNET).
-         * 
-         * Workflow :
-         *   1. Vérifie qu'on est sur l'onglet BACNET (évite les requêtes inutiles)
-         *   2. Protège contre le refresh si un champ est en cours d'édition
-         *   3. Sauvegarde l'état d'ouverture des accordéons avant destruction du DOM
-         *   4. Appelle GET /api/objects pour récupérer la liste complète
-         *   5. Reconstruit le HTML dynamiquement avec template literals
-         * 
-         * Pour chaque device, génère un accordéon <details> contenant un tableau
-         * avec une ligne par objet. Chaque ligne permet l'édition inline :
-         *   - Nom (input texte, 30 chars max)
-         *   - Unité (select peuplé depuis le dictionnaire UNITS)
-         *   - Min/Max/Step (inputs pour les limites HA number entities)
-         *   - Toggle polling (switch)
-         * 
-         * Les objets Device (type=8) sont exclus de l'affichage.
-         * La table de correspondance type→abréviation suit les normes BACnet :
-         *   AI=0, AO=1, AV=2, BI=3, BO=4, BV=5, ..., MSI=13, MSO=14, MSV=19
-         */
         function refreshBACnet() {
             if (currentTab !== 't-bac') return;
             
-            /* Protection : ne pas rafraîchir le DOM si l'utilisateur est en train
-               de modifier un champ dans le tableau (évite la perte de saisie) */
             if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'SELECT')) {
                 if (document.activeElement.closest('#bac-list')) return;
             }
 
-            /* Sauvegarde de l'état ouvert/fermé de chaque accordéon device
-               avant la reconstruction complète du DOM */
             document.querySelectorAll('.dev-card').forEach(det => {
                 const id = det.dataset.did;
                 if(id) devBoxState[id] = det.open;
@@ -703,8 +376,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 let html = '';
                 if (!Array.isArray(data)) return;
                 data.forEach(dev => {
-                    /* Restauration de l'état d'ouverture : ouvert si le device est
-                       activé ET l'accordéon était précédemment ouvert (ou premier affichage) */
                     const isOpen = (dev.enabled && (devBoxState[dev.device_id] !== undefined ? devBoxState[dev.device_id] : true));
                     html += `<details class="card dev-card" data-did="${dev.device_id}" ${isOpen ? 'open' : ''}>
                         <summary class="dev-header">
@@ -724,23 +395,11 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                                 <tbody>`;
                     if (Array.isArray(dev.objects)) {
                         dev.objects.forEach((o, idx) => {
-                            /* Filtrage des objets Device (type 8) qui sont des métadonnées,
-                               pas des points de données exploitables */
                             if(o.type === 8) return;
-
-                            /* Table de correspondance des types BACnet vers leurs abréviations
-                               normatives (indexes = BACnet Object Type enumeration) */
                             let typeStr = ["AI","AO","AV","BI","BO","BV","CAL","CMD","DEV","EVN","FIL","GRP","LP","MSI","MSO","NOT","PRG","SCH","AVG","MSV"][o.type] || "OBJ";
-
-                            /* La classe "grisé" réduit l'opacité des lignes dont le polling
-                               est désactivé pour une distinction visuelle immédiate */
                             let rowClass = o.poll ? '' : 'grisé';
-
-                            /* Formatage de la valeur : 2 décimales si numérique, "--" sinon */
                             let valDisplay = (o.val !== null && !isNaN(o.val)) ? o.val.toFixed(2) : '--';
                             
-                            /* Attributs data-* sur le <tr> : transportent le contexte BACnet
-                               nécessaire à saveObj() pour identifier l'objet côté firmware */
                             html += `<tr data-did="${dev.device_id}" data-inst="${o.inst}" data-type="${o.type}" class="${rowClass}">
                                 <td style="text-align:center"><button class="btn btn-s btn-sm" style="padding:2px 4px" onclick="reloadObject(${dev.device_id}, ${o.inst}, ${o.type})" title="Reload Object Properties">↻</button></td>
                                 <td><span class="obj-badge">${typeStr}:${o.inst}</span></td>
@@ -748,8 +407,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                                     <div style="display:grid; grid-template-columns: 2fr 1fr; gap: 4px;">
                                         <input type="text" class="in-text" value="${o.name || ''}" maxlength="30" placeholder="Name" onchange="saveObj(this)">
                                         <select onchange="saveObj(this)">`;
-                            /* Génération dynamique du <select> des unités avec présélection
-                               basée sur la correspondance entre o.unit et le label UNITS */
                             for(let u in UNITS) {
                                 let label = UNITS[u];
                                 let isSelected = (o.unit === label) || (!o.unit && u === "") || (o.unit === "no-units" && label === "no-units");
@@ -777,20 +434,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             });
         }
 
-        /**
-         * @brief Sauvegarde les propriétés d'un objet BACnet via POST /api/save_object.
-         * 
-         * Collecte toutes les valeurs de la ligne du tableau (nom, unité, min, max,
-         * step, polling) et les envoie au firmware en une seule requête.
-         * Le firmware met à jour le cache RAM, persiste en NVS, et déclenche
-         * éventuellement un WriteProperty BACnet si le nom a changé (v7.0.6).
-         * 
-         * @param {HTMLElement} el - L'élément qui a déclenché le changement (input/select/checkbox).
-         * @param {boolean} isToggle - Si true, applique immédiatement le style grisé/actif
-         *                             sur la ligne sans attendre le prochain refresh.
-         */
         function saveObj(el, isToggle = false) {
-            /* Remonte au <tr> parent pour accéder aux data-attributes BACnet */
             const tr = el.closest('tr');
             const did = tr.dataset.did;
             const inst = tr.dataset.inst;
@@ -801,51 +445,15 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             const max_val = tr.querySelector('.max-in').value;
             const step_val = tr.querySelector('.step-in').value;
             const poll = tr.querySelector('input[type="checkbox"]').checked;
-
-            /* Feedback visuel immédiat pour le toggle polling */
             if(isToggle) tr.classList.toggle('grisé', !poll);
-
-            /* Conversion du code unité en label textuel via le dictionnaire UNITS
-               avant envoi au firmware qui stocke le texte (ex: "°C", "%") */
             const params = new URLSearchParams({ did, inst, type, name, unit: UNITS[unit], poll: poll?1:0, min: min_val, max: max_val, step: step_val });
             fetch('/api/save_object', {method:'POST', body:params});
         }
 
-        /**
-         * @brief Relance la découverte complète de tous les objets d'un device.
-         * Réinitialise le compteur de progression (hystérésis) et appelle
-         * POST /api/reload_device. Le firmware reprend la FSM de découverte
-         * depuis DISC_OBJ_NAME pour rafraîchir noms, unités et valeurs.
-         * @param {number} id - Index interne du device dans le cache firmware.
-         */
         function reloadDevice(id) { if(confirm("Reload all objects for this device?")) { delete progHysteresis[id]; fetch('/api/reload_device', {method:'POST', body:new URLSearchParams({id})}); } }
-
-        /**
-         * @brief Relance la découverte d'un seul objet BACnet.
-         * Utile pour rafraîchir les métadonnées (nom, unités) d'un point
-         * spécifique sans impacter les autres objets du device.
-         * @param {number} did - Device ID BACnet.
-         * @param {number} inst - Numéro d'instance de l'objet.
-         * @param {number} type - Type d'objet BACnet (0=AI, 1=AO, etc.).
-         */
         function reloadObject(did, inst, type) { fetch('/api/reload_object', {method:'POST', body:new URLSearchParams({did, inst, type})}); }
-
-        /**
-         * @brief Active ou désactive un device BACnet complet.
-         * Basculer sur OFF déclenche côté firmware :
-         *   - Arrêt du polling de tous ses objets
-         *   - Nettoyage des entités Home Assistant (unpublish HA discovery)
-         *   - Conservation du cache local pour réactivation future
-         * @param {number} id - Index interne du device.
-         */
         function toggleDevice(id) { fetch('/api/toggle_device', {method:'POST', body:new URLSearchParams({id})}).then(()=>refreshBACnet()); }
 
-        /**
-         * @brief Formate une durée en secondes en chaîne lisible (Xd Xh Xm Xs).
-         * Utilisé pour afficher l'uptime du système dans la carte System Status.
-         * @param {number} s - Durée en secondes.
-         * @return {string} Chaîne formatée (ex: "2d 5h 30m 15s").
-         */
         function formatUptime(s) {
             let d = Math.floor(s / 86400); s %= 86400;
             let h = Math.floor(s / 3600); s %= 3600;
@@ -853,36 +461,12 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             return (d>0?d+'d ':'')+(h>0?h+'h ':'')+(m>0?m+'m ':'')+s+'s';
         }
 
-        /**
-         * @brief Fonction principale de rafraîchissement du dashboard.
-         * Appelée toutes les 3 secondes via setInterval().
-         * 
-         * Étapes :
-         *   1. GET /api/status → récupère l'état complet du firmware
-         *   2. Met à jour le titre de la page et le tag de version
-         *   3. Calcule et affiche le radar WiFi (RSSI → segments colorés)
-         *   4. Met à jour les cartes Network, MS/TP et System
-         *   5. Calcule le Device ID ASHRAE = (DID × 1000) + MAC
-         *   6. Met à jour les badges d'état MSTP/MQTT (vert/rouge)
-         *   7. Génère les barres de progression de découverte par device
-         *   8. Déclenche un refreshBACnet() si l'onglet BACNET est visible
-         * 
-         * La progression de découverte utilise une hystérésis monotone croissante
-         * pour éviter les régressions visuelles lors des rechargements partiels.
-         * Les étapes < 4 correspondent à la Phase 1 (identité du device),
-         * les étapes >= 4 à la Phase 2 (découverte des objets).
-         */
         function updateStatus() {
             fetch('/api/status').then(r=>r.json()).then(d => {
-                /* Mise à jour du titre et de la version dans la navbar */
                 if (d.ver) {
                     document.title = "BACNET2MQTT - " + d.ver;
                     document.getElementById('v-tag').innerText = d.ver;
                 }
-
-                /* === RADAR WIFI ===
-                   Normalisation du RSSI [-100 dBm, -40 dBm] → [0, 8] segments.
-                   Coloration par zone : rouge (0-1), orange (2-4), vert (5-7) */
                 const rssi = d.rssi;
                 document.getElementById('s-rssi').innerText = rssi + " dBm";
                 const radar = document.getElementById('radar').children;
@@ -894,8 +478,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                         radar[i].style.backgroundColor = color; radar[i].classList.add('active');
                     } else { radar[i].style.backgroundColor = '#27272a'; }
                 }
-
-                /* === CARTES DASHBOARD === */
                 document.getElementById('s-ip').innerText = d.cur_ip || '---';
                 document.getElementById('s-gw').innerText = d.cur_gw || '---';
                 document.getElementById('s-sn').innerText = d.cur_mask || '---';
@@ -903,37 +485,19 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 document.getElementById('s-tokens').innerText = d.mstp_cnt || 0;
                 document.getElementById('s-rx').innerText = d.mstp_rx || 0;
                 document.getElementById('s-tx').innerText = d.mstp_tx || 0;
-
-                /* Coloration dynamique du compteur d'erreurs CRC (rouge si > 0) */
                 const errEl = document.getElementById('s-err');
                 document.getElementById('s-err').innerText = d.mstp_err || 0;
                 errEl.style.color = (d.mstp_err > 0) ? 'var(--error)' : 'var(--text)';
-
-                /* Calcul de l'identifiant ASHRAE conforme : (DeviceID × 1000) + MAC
-                   Ex: DID=364, MAC=4 → 364004 (convention BACnet2MQTT) */
                 const ashraeId = (d.did * 1000) + (d.mac || 0);
                 document.getElementById('s-ashrae-id').innerText = ashraeId;
                 document.getElementById('s-heap').innerText = (d.heap || 0) + " KB";
                 document.getElementById('s-uptime').innerText = formatUptime(d.uptime || 0);
                 document.getElementById('s-bpi').innerText = (d.bpi || 0) + " s";
-
-                /* === BADGES D'ÉTAT MSTP / MQTT ===
-                   mstp_t = ring_active (flag liveness de la FSM BACnet)
-                   mqtt = état de connexion au broker MQTT */
                 document.getElementById('b-tag').className = 'badge ' + (d.mstp_t ? 'badge-ok' : 'badge-fail');
                 document.getElementById('m-tag').className = 'badge ' + (d.mqtt ? 'badge-ok' : 'badge-fail');
                 document.getElementById('s-mstp-state').innerText = d.mstp_t ? "RUNNING" : "STOPPED";
                 document.getElementById('s-mstp-state').className = 'badge ' + (d.mstp_t ? 'badge-ok' : 'badge-fail');
 
-                /* === BARRES DE PROGRESSION DÉCOUVERTE ===
-                   Chaque device possède une barre de progression reflétant l'avancement
-                   de la FSM de découverte (DISC_DEV_ID → DISC_OBJ_VALUE).
-                   
-                   Logique de calcul du pourcentage :
-                     - step < 4 : Phase 1 (identité), progression linéaire 0-100% sur 4 étapes
-                     - !enabled : device désactivé, affiché comme "DESACTIVATED" à 100%
-                     - done : découverte terminée, 100% vert
-                     - sinon : Phase 2 (objets), 20% de base + 80% proportionnel à idx/total */
                 const pList = document.getElementById('progress-list');
                 if(d.devices && d.devices.length > 0) {
                     let phtml = '';
@@ -942,20 +506,19 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                         let status = "Discovery...";
                         let sCol = 'var(--primary)';
 
-                        if(dev.step < 4) {
+                        if(dev.step < 4) { // DISC_DEV_ID to DISC_OBJ_COUNT
                             pct = (dev.step / 4) * 100;
                         } else if (!dev.enabled) {
                             status = "DESACTIVATED";
                             sCol = 'var(--muted)';
-                            pct = 100;
+                            pct = 100; // Information de base récupérée
                         } else if(dev.done) { 
                             pct = 100; status = "Completed"; sCol = 'var(--success)'; 
                         } else {
+                            // Object discovery progress (steps 4+)
                             pct = 20 + Math.min(80, (dev.idx / (dev.total || 1)) * 80);
                         }
 
-                        /* Hystérésis : ne jamais afficher un pourcentage inférieur au maximum
-                           précédemment observé (évite l'effet de recul de la barre) */
                         if (!progHysteresis[dev.id] || pct > progHysteresis[dev.id]) progHysteresis[dev.id] = pct;
                         let displayPct = Math.max(pct, progHysteresis[dev.id] || 0);
 
@@ -971,54 +534,21 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                     document.getElementById('s-nodes').innerText = d.devices.length;
                 }
                 
-                /* Si l'utilisateur est sur l'onglet BACNET, rafraîchir aussi le tableau
-                   des objets pour refléter les nouvelles valeurs de polling */
                 if (currentTab === 't-bac') refreshBACnet();
                 
             }).catch(e => console.error("Status update error", e));
         }
 
-        /**
-         * @brief Bascule entre les onglets du terminal dual-core.
-         * Gère l'affichage exclusif entre les consoles Core 0 et Core 1.
-         * @param {number} idx - Index de l'onglet (0 = Core 0 System, 1 = Core 1 BACnet).
-         */
         function switchTerm(idx) {
             document.querySelectorAll('.term-tab').forEach((t, i) => t.classList.toggle('active', i === idx));
             document.querySelectorAll('.console-box').forEach((b, i) => b.classList.toggle('active', i === idx));
         }
 
-        /*
-         * ===================================================================
-         *   INITIALISATION WebSocket — Logs temps réel dual-core
-         * ===================================================================
-         * 
-         * Connexion WebSocket vers ws://<IP>/ws-logs pour recevoir les logs
-         * en temps réel depuis les deux cores de l'ESP32-S3.
-         * 
-         * DÉTECTION MODE DÉVELOPPEMENT :
-         *   Si le hostname du navigateur ne correspond pas à l'IP du matériel
-         *   (192.168.1.50), le WebSocket est redirigé automatiquement vers
-         *   le hardware réel. Cela permet de développer l'UI via le proxy
-         *   local (2_server_proxy.py sur localhost:8000) tout en recevant
-         *   les vrais logs du firmware.
-         * 
-         * PROTOCOLE DE ROUTAGE DES MESSAGES :
-         *   Chaque message WebSocket est préfixé par le numéro de core :
-         *     "0|<texte>" → Core 0 (WiFi, MQTT, API Web, OTA)
-         *     "1|<texte>" → Core 1 (FSM BACnet MS/TP, UART, polling)
-         *   Le message est routé vers la console correspondante (#log-c0 ou #log-c1).
-         * 
-         * GESTION MÉMOIRE :
-         *   Chaque console est limitée à 200 lignes (FIFO). Les lignes les plus
-         *   anciennes sont supprimées quand le seuil est dépassé pour éviter
-         *   la saturation mémoire du navigateur sur les sessions longues.
-         */
         try {
+            // Détection du mode développement : si on n'est pas sur l'IP de l'ESP32, on force le routage WS vers le matériel
             const hardwareIP = "192.168.1.50";
             let wsTarget = window.location.hostname;
             
-            /* Redirection WebSocket vers le matériel si on est en mode développement */
             if (wsTarget !== hardwareIP) {
                 wsTarget = hardwareIP;
                 console.log("[DEV] Hostname '" + window.location.hostname + "' détecté. Routage WebSocket vers matériel:", wsTarget);
@@ -1027,28 +557,16 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             ws.onmessage = (e) => {
                 const data = e.data;
                 let target = null; let text = data;
-
-                /* Routage par préfixe : "0|" → Core 0, "1|" → Core 1 */
                 if(data.startsWith("0|")) { target = document.getElementById('log-c0'); text = data.substring(2); }
                 else if(data.startsWith("1|")) { target = document.getElementById('log-c1'); text = data.substring(2); }
                 if(target) {
                     const line = document.createElement('div');
                     line.textContent = text; target.appendChild(line);
-                    /* Auto-scroll vers le bas pour suivre les derniers logs */
                     target.scrollTop = target.scrollHeight;
-                    /* FIFO 200 lignes : supprime les plus anciennes pour la mémoire */
                     if(target.childNodes.length > 200) target.removeChild(target.firstChild);
                 }
             };
         } catch(e) {}
-
-        /*
-         * ===================================================================
-         *   DÉMARRAGE — Boucle principale de rafraîchissement
-         * ===================================================================
-         * Lance le polling périodique du dashboard toutes les 3 secondes
-         * et effectue un premier appel immédiat pour un affichage instantané.
-         */
         setInterval(updateStatus, 3000); updateStatus();
     </script>
 </body>
