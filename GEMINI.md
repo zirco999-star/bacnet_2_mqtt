@@ -54,3 +54,8 @@ Pour modifier l'interface sans recompiler le firmware :
    - Les WebSockets sont routés dynamiquement vers l'IP du matériel.
 3. **Injection** : Une fois l'UI validée, lancer `python3 utils/dev_ui/3_inject_ui.py` pour mettre à jour `src/z_ui.h`.
 4. **Finalisation** : Compiler et flasher une seule fois à la fin.
+
+## Intégration Home Assistant (ha_agent)
+- **Définition** : L'agent dispose d'un sous-agent `ha_agent` configuré avec les outils MCP (`enable_mcp_tools=true`) pour communiquer avec l'instance locale Home Assistant (URL : `http://192.168.1.11:8123`).
+- **Directives** : Au début de chaque session, si une interaction ou une vérification avec Home Assistant est nécessaire, l'agent doit immédiatement déclarer ce sous-agent via `define_subagent` et l'utiliser via `invoke_subagent` pour interroger les états, appeler des services ou vérifier l'auto-découverte.
+
