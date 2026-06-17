@@ -701,3 +701,14 @@
   - Compilation et flashage OTA `v7.1.0` réussis sur 192.168.1.50.
   - Validation réussie par le script temporaire `tmp/test_v7.1.0_features.py` : les topics d'états MQTT publient bien le JSON, et l'écriture du mot clé `"AUTO"` libère correctement le tableau de priorité de l'automate (retour de `val: null` sur l'objet).
 
+## [v7.1.1] - 2026-06-17
+### Modification
+- **Optimisation des Diagnostics Status_Flags (OUI/NON)** :
+  - Modification de `publish_ha_autodiscovery` dans `src/z_mqtt.cpp` pour déplacer les 4 entités de statut (Alarme, Défaut, Forçage Manuel, Hors Service) du domaine `binary_sensor` vers `sensor`.
+  - Modification du filtre `val_tpl` pour retourner directement la chaîne `"OUI"` ou `"NON"` (ex: `{{ 'OUI' if value_json.alarm else 'NON' }}`).
+  - Ajout d'icônes dédiées et explicites pour chaque indicateur de diagnostic (ex: `mdi:alarm-light`, `mdi:alert`, `mdi:hand-back-right`, `mdi:power-plug-off`).
+  - Ajout d'une logique de migration automatique supprimant les anciens `binary_sensor` pour éviter les entités orphelines dans Home Assistant lors de la découverte.
+  - Mise à jour correspondante des fonctions de nettoyage (`unpublish_ha_discovery` et désactivation d'objets) pour purger les deux formats d'entités.
+- **Validation** :
+  - Compilation et déploiement par flashage OTA `v7.1.1` sur `192.168.1.50`.
+  - Validation effectuée via le sous-agent `ha_agent` interrogeant directement l'API Home Assistant : les entités de diagnostic sont correctement typées en `sensor` avec état textuel à `"NON"`, friendly name correct et icônes appliquées.

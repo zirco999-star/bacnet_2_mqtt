@@ -1221,10 +1221,10 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                     }
                 }
                 
-                // AJOUT CHIRURGICAL : Publication des 4 binary_sensors de status_flags pour cet objet
+                // AJOUT CHIRURGICAL : Publication des 4 sensors de status_flags pour cet objet
                 const char* flags[] = {"alarm", "fault", "overridden", "oos"};
                 const char* names[] = {"Alarme", "Défaut", "Forçage Manuel", "Hors Service"};
-                const char* classes[] = {"problem", "problem", "update", "connectivity"};
+                const char* icons[] = {"mdi:alarm-light", "mdi:alert", "mdi:hand-back-right", "mdi:power-plug-off"};
                 
                 for (int i = 0; i < 4; i++) {
                     JsonDocument flag_doc;
@@ -1232,7 +1232,12 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                     snprintf(flag_uniq_id, sizeof(flag_uniq_id), "bacnet_%lu_%s_%lu_%s",
                              (unsigned long)current_did, t_str, (unsigned long)obj_inst, flags[i]);
                     char flag_config_topic[128];
-                    snprintf(flag_config_topic, sizeof(flag_config_topic), "homeassistant/binary_sensor/%s/config", flag_uniq_id);
+                    snprintf(flag_config_topic, sizeof(flag_config_topic), "homeassistant/sensor/%s/config", flag_uniq_id);
+                    
+                    // Migration : Supprimer l'ancienne configuration binary_sensor
+                    char flag_old_config_topic[128];
+                    snprintf(flag_old_config_topic, sizeof(flag_old_config_topic), "homeassistant/binary_sensor/%s/config", flag_uniq_id);
+                    esp_mqtt_client_publish(mqtt_client, flag_old_config_topic, "", 0, 1, 1);
                     
                     flag_doc["~"] = String(base_topic);
                     flag_doc["uniq_id"] = String(flag_uniq_id);
@@ -1241,14 +1246,11 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                     flag_doc["avty_t"] = String(lwt_topic);
                     flag_doc["pl_avail"] = "online";
                     flag_doc["pl_not_avail"] = "offline";
+                    flag_doc["icon"] = icons[i];
                     
                     char flag_val_tpl[128];
-                    snprintf(flag_val_tpl, sizeof(flag_val_tpl), "{{ 'ON' if value_json.%s else 'OFF' }}", flags[i]);
+                    snprintf(flag_val_tpl, sizeof(flag_val_tpl), "{{ 'OUI' if value_json.%s else 'NON' }}", flags[i]);
                     flag_doc["val_tpl"] = String(flag_val_tpl);
-                    
-                    if (strlen(classes[i]) > 0) {
-                        flag_doc["dev_cla"] = classes[i];
-                    }
                     
                     JsonObject flag_device = flag_doc["dev"].to<JsonObject>();
                     JsonArray flag_ids = flag_device["ids"].to<JsonArray>();
@@ -1271,13 +1273,18 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                  * sur le topic de configuration. HA retire automatiquement l'entité. */
                 esp_mqtt_client_publish(mqtt_client, topic, "", 0, 1, 1);
 
-                // AJOUT CHIRURGICAL : Supprimer également les 4 binary_sensors de status_flags
+                // AJOUT CHIRURGICAL : Supprimer également les 4 sensors de status_flags (et nettoyer les anciens binary_sensors)
                 const char* flags[] = {"alarm", "fault", "overridden", "oos"};
                 for (const char* flag : flags) {
-                    char flag_topic[128];
-                    snprintf(flag_topic, sizeof(flag_topic), "homeassistant/binary_sensor/bacnet_%lu_%s_%lu_%s/config",
+                    char flag_topic_bin[128];
+                    snprintf(flag_topic_bin, sizeof(flag_topic_bin), "homeassistant/binary_sensor/bacnet_%lu_%s_%lu_%s/config",
                              (unsigned long)current_did, t_str, (unsigned long)obj_inst, flag);
-                    esp_mqtt_client_publish(mqtt_client, flag_topic, "", 0, 1, 1);
+                    esp_mqtt_client_publish(mqtt_client, flag_topic_bin, "", 0, 1, 1);
+
+                    char flag_topic_sen[128];
+                    snprintf(flag_topic_sen, sizeof(flag_topic_sen), "homeassistant/sensor/bacnet_%lu_%s_%lu_%s/config",
+                             (unsigned long)current_did, t_str, (unsigned long)obj_inst, flag);
+                    esp_mqtt_client_publish(mqtt_client, flag_topic_sen, "", 0, 1, 1);
                 }
             }
 
@@ -1481,13 +1488,18 @@ void unpublish_ha_discovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type, co
                     esp_mqtt_client_publish(mqtt_client, topic, "", 0, 1, 1);
                 }
 
-                // AJOUT CHIRURGICAL : Supprimer également les 4 binary_sensors de status_flags lors du nettoyage complet
+                // AJOUT CHIRURGICAL : Supprimer également les 4 sensors de status_flags lors du nettoyage complet (et nettoyer les anciens binary_sensors)
                 const char* flags[] = {"alarm", "fault", "overridden", "oos"};
                 for (const char* flag : flags) {
-                    char flag_topic[128];
-                    snprintf(flag_topic, sizeof(flag_topic), "homeassistant/binary_sensor/bacnet_%lu_%s_%lu_%s/config",
+                    char flag_topic_bin[128];
+                    snprintf(flag_topic_bin, sizeof(flag_topic_bin), "homeassistant/binary_sensor/bacnet_%lu_%s_%lu_%s/config",
                              (unsigned long)dev.ulDeviceId, t_str, (unsigned long)obj.ulInstance, flag);
-                    esp_mqtt_client_publish(mqtt_client, flag_topic, "", 0, 1, 1);
+                    esp_mqtt_client_publish(mqtt_client, flag_topic_bin, "", 0, 1, 1);
+
+                    char flag_topic_sen[128];
+                    snprintf(flag_topic_sen, sizeof(flag_topic_sen), "homeassistant/sensor/bacnet_%lu_%s_%lu_%s/config",
+                             (unsigned long)dev.ulDeviceId, t_str, (unsigned long)obj.ulInstance, flag);
+                    esp_mqtt_client_publish(mqtt_client, flag_topic_sen, "", 0, 1, 1);
                 }
                 vTaskDelay(pdMS_TO_TICKS(10));
             }
