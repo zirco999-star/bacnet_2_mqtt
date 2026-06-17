@@ -175,7 +175,8 @@ void load_device_objects(uint32_t ulDeviceId) {
 
                                 // La valeur courante n'est pas persistée ; elle sera
                                 // lue depuis le bus BACnet au prochain cycle de polling.
-                                obj.fPresentValue = 0.0f;
+                                // v7.0.12: Initialisation à NAN pour forcer la publication MQTT au premier poll
+                                obj.fPresentValue = NAN;
                                 dev.objects.push_back(obj);
                                 
                                 // Reconstruction de la table de dépendances Home Assistant.

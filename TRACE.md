@@ -609,3 +609,27 @@
   - Restauration de la dernière version non commentée de `z_ui.h` et de `utils/dev_ui/index.html` à la demande de l'utilisateur pour résoudre des problèmes sur l'interface.
   - Incrémentation de la version globale à `v7.0.10` dans `z_config.h`.
 - **Validation** : Compilation de l'intégralité du projet validée avec succès.
+
+## [v7.0.11] - 2026-06-17
+### Modification
+- **Correctif États HA Unknown** :
+  - Modification de `publish_mqtt_topic` dans `src/z_mqtt.cpp` pour forcer `pub.retain = true` pour les topics d'états d'objets BACnet (`Present_Value` et `Out_Of_Service`).
+  - Résout le bug où Home Assistant affichait des entités à l'état `unknown` au démarrage ou après rechargement, car la passerelle ne publiait les états qu'en mode non-retained et uniquement en cas de changement physique de valeur.
+  - Incrémentation de la version globale à `v7.0.11` dans `z_config.h`.
+- **Validation** : Compilation validée avec succès.
+
+## [v7.0.12] - 2026-06-17
+### Modification
+- **Forçage de publication sur Reload** :
+  - Modification du traitement de `xReadJobPending` dans `src/z_bacnet.cpp` pour court-circuiter le test de changement `o.fPresentValue != v`. Un rechargement d'objet provoqué par l'API Web force désormais systématiquement une publication MQTT vers le broker.
+- **Restauration de cache NVS à NAN** :
+  - Modification de `load_device_objects` dans `src/z_nvs.cpp` pour initialiser `obj.fPresentValue` à `NAN` plutôt qu'à `0.0f` lors de la restauration du cache RAM au boot.
+  - Corrige le bug où tout objet dont la valeur physique sur le terrain est `0.0` (ex: `DemandeChaud1`) n'était jamais publié lors du premier polling après reboot, car la comparaison `0.0 != 0.0` renvoyait faux.
+- **Validation** : Flashage OTA `v7.0.12` validé sur 192.168.1.50, résolution confirmée sur l'état LWT et réactivité instantanée du reload.
+
+## [v7.0.13] - 2026-06-17
+### Modification
+- **Anti-Perte de Messages (MQTT Outbox Saturé)** :
+  - Résolution des pertes de messages MQTT lors des rafales de publication au démarrage (saturant l'outbox du client MQTT ESP-IDF, notamment pendant la publication en rafale des configurations Auto-Discovery).
+  - Modification du consommateur de queue dans `src/z_mqtt.cpp` : si `esp_mqtt_client_publish` renvoie une erreur (valeur négative), la commande de publication `pubJob` n'est plus jetée, mais renvoyée en tête de file via `xQueueSendToFront` pour réessai après un délai de 100 ms.
+- **Validation** : Validation complète avec le script `validate_retained.py`. Tous les topics cibles de tests (`ConsigneFinale1,2,3` et `DemandeChaud1,2,3`) ont été publiés avec succès et sont marqués comme retained sur le broker MQTT. Uptime stable, zéro fuite mémoire.

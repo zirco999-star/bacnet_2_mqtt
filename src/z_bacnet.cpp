@@ -797,11 +797,12 @@ static void handle_complex_ack_polling(BACnetDevice &dev, const uint8_t *apdu, u
                 if (o.usType == xPendingReadJob.obj_type && o.ulInstance == xPendingReadJob.obj_instance) {
                     if (xPendingReadJob.prop_id == 85) {
                         if (!(o.usType == 0 && o.isOutOfService())) {
-                            if (o.fPresentValue != v) {
-                                o.fPresentValue = v; o.ulLastUpdate = millis();
-                                if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
-                                check_ha_dependencies(dev.ulDeviceId, o.usType, o.ulInstance);
-                            } else o.ulLastUpdate = millis();
+                            // En cas de relecture explicite demandée par API, on force
+                            // la mise à jour et la publication MQTT sans condition de changement.
+                            o.fPresentValue = v; 
+                            o.ulLastUpdate = millis();
+                            if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
+                            check_ha_dependencies(dev.ulDeviceId, o.usType, o.ulInstance);
                         } else {
                             o.ulLastUpdate = millis();
                         }

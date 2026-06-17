@@ -457,8 +457,9 @@ static void mqtt_gatekeeper_task(void *pv) {
                 snprintf(topic, sizeof(topic), "%s/%lu/%s/%lu/%s", sysCfg.mqtt_prefix, (unsigned long)pubJob.ulDeviceId, t_str, (unsigned long)pubJob.obj_instance, subtopic);
                 
                 if (esp_mqtt_client_publish(mqtt_client, topic, pubJob.value_string, 0, 1, pubJob.retain) < 0) {
-                    z_log(pdLOG_WARN, "MQTT", "Publish failed. Queue Full or Client error.\n");
-                    vTaskDelay(pdMS_TO_TICKS(50));
+                    z_log(pdLOG_WARN, "MQTT", "Publish failed (outbox full). Putting back to queue front...\n");
+                    xQueueSendToFront(mqtt_publish_queue, &pubJob, 0);
+                    vTaskDelay(pdMS_TO_TICKS(100));
                     break;
                 } else {
                     period_mqtt_pub_count++;
@@ -1251,7 +1252,7 @@ void publish_mqtt_topic(uint32_t ulDeviceId, BACnetObject& obj, uint8_t prop_id,
     pub.obj_type = obj.usType;
     pub.obj_instance = obj.ulInstance;
     pub.prop_id = prop_id;
-    pub.retain = retain;
+    pub.retain = true; // v7.0.11: Forçage du flag retain à true pour éviter l'état unknown au reload HA
 
     if (prop_id == 77) {
         /* Propriété Object_Name : copie directe du nom en cache. */
