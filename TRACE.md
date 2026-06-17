@@ -1,5 +1,15 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 17 Juin 2026 (Restauration Modificabilité des Consignes Écrivables non-commandables - v7.1.13) - DÉPLOYÉ
+- **Version** : v7.1.12 → v7.1.13
+- **Restauration de la Modificabilité (Regression Fix)** :
+  - Modification de `publish_ha_autodiscovery` dans [z_mqtt.cpp](file:///home/dev/bacnet_2_mqtt/src/z_mqtt.cpp) : les types `AO`, `AV`, `BO`, `BV`, `MSO` et `MSV` sont à nouveau systématiquement exposés en tant que composants modifiables Home Assistant (`number`, `switch` ou `select`) au lieu d'être réduits à de simples `sensor` (lecture seule) lorsque `obj_commandable` est faux.
+  - L'évaluation dynamique de l'envoi de la priorité de commande est conservée : si l'objet est non-commandable (`xIsCommandable == false` comme pour `ConsigneFinale1`, les offsets et les limites), la passerelle écrit sur l'automate sans tag de priorité (priorité 0). S'il est commandable, elle continue d'écrire en priorité 8.
+  - Les boutons de réinitialisation (`button.ecb_203_<name>_reset`) restent masqués et désactivés pour les objets non-commandables, puisqu'ils ne gèrent pas la libération de priorité.
+- **Validation** :
+  - Les entités `ConsigneFinale1`, `ConsigneTempEcoETE`, `TempoVolet`, `HighOffsetLimit` etc. sont à nouveau représentées par des composants `number` ou `select` modifiables sur le tableau de bord.
+  - La modification de ces entités transmet des valeurs acceptées par l'automate sans générer d'erreurs protocolaires ni de rejets d'APDU.
+
 ## État au 17 Juin 2026 (Classification Priorité & Commandabilité ASHRAE 135 - v7.1.12) - DÉPLOYÉ
 - **Version** : v7.1.11 → v7.1.12
 - **Amélioration Commandabilité** :
