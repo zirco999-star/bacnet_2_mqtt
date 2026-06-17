@@ -1027,6 +1027,14 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                 doc["~"] = String(base_topic);
                 doc["uniq_id"] = String(uniq_id);
                 doc["name"] = String(obj_name); 
+
+                // Définition de l'icône par défaut pour la ventilation et les volets (mdi:fan)
+                String name_lower = String(obj_name);
+                name_lower.toLowerCase();
+                if (name_lower.indexOf("ventil") >= 0 || name_lower.indexOf("volet") >= 0) {
+                    doc["icon"] = "mdi:fan";
+                }
+
                 doc["stat_t"] = "~/state";
                 doc["val_tpl"] = "{{ value_json.val }}"; // AJOUT CHIRURGICAL : Extraction de la valeur depuis le JSON
                 doc["avty_t"] = String(lwt_topic);
