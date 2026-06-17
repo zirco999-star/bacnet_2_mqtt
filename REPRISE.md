@@ -1,26 +1,27 @@
-# 🚀 PROMPT DE REPRISE : Projet BACnet2MQTT (v4.5.33)
+# 🚀 PROMPT DE REPRISE : Projet BACnet2MQTT (v7.1.13)
 
-**État du Projet :** Réorganisation terminée, structure propre déployée. Compilation validée ✅.
+**État du Projet :** Classification de commandabilité ASHRAE 135 finalisée. Restauration de la modificabilité des consignes secondaires et des configurations sur le dashboard Home Assistant validée ✅.
+
 **Fichiers Clés :**
 - `GEMINI.md` : Directives prioritaires et spécificités techniques (ESP-IDF v5).
-- `MEMORY.md` : Dernier point de passage et contexte réseau utilisateur.
+- `TRACE.md` : Journal de suivi exhaustif de toutes les versions de référence et des déploiements.
+- `MEMORY.md` : Contexte réseau et checkpoints matériels.
 
 ## 🛠 Actions de Début de Session (OBLIGATOIRE)
 1. **Initialisation** : Lis le fichier `GEMINI.md` local pour charger les pins, les cores et les règles d'autonomie.
-2. **Contextualisation** : Lis `MEMORY.md` pour récupérer les paramètres réseau (Gateway, DNS) et le dernier checkpoint.
-3. **Validation** : Lance une compilation de test via `./utils/compil.sh` pour confirmer que l'environnement est prêt.
+2. **Consultation de l'Historique** : Examine la dernière entrée de `TRACE.md` pour comprendre les améliorations apportées en `v7.1.13` (Restauration modificabilité consignes Catégorie 2).
+3. **Validation** : Lance une compilation de test via `./utils/compil.sh` pour confirmer la propreté de l'environnement de développement.
 
-## 📍 Tâches Prioritaires (Next Steps)
-1. **Fix Gateway IP** : Dans `src/z_network.cpp`, s'assurer que `sysCfg.gateway` est bien `192.168.1.254` (Freebox) pour arrêter les reboots MQTT (Domino Effect).
-2. **Fix Deadlock FSM** : Dans `src/z_bacnet.cpp`, remplacer les écoutes `UART_TX_DONE` par le polling `uart_wait_tx_done(RS485_UART_PORT, 0)`.
-3. **Transition FSM** : S'assurer que le passage se fait vers `MSTP_AWAIT_REPLY` après TX si une réponse est attendue.
-4. **Who-Is Global** : Implémenter la trame Broadcast 0x06 avec NPDU global.
-
-## 📜 Rappel du Workflow Strict
-- **Compilation** : `./utils/compil.sh`
-- **Flash OTA** : `./utils/flashOTA.sh`
-- **Journalisation** : Mettre à jour `TRACE.md` après chaque succès technique.
-- **WhatsApp** : Prévenir l'utilisateur au début et à la fin de chaque étape majeure.
+## 📍 Points Clés à retenir (Session v7.1.13)
+1. **Classification des Objets (ASHRAE 135)** :
+   - **Catégorie 1** : Objets commandables (AO, BO, MSO, AV/BV/MSV de régulation active). Ils possèdent une `Priority_Array` (Prop 87) et nécessitent le Context Tag 4 (priorité 8) pour être écrits. Ils disposent d'un bouton de reset Home Assistant (`button.ecb_203_<name>_reset`) envoyant `AUTO` (Relinquish).
+   - **Catégorie 2** : Objets écrivables mais non-commandables (consignes finales, offsets, limites, changeover). Ils ne possèdent pas de `Priority_Array`. Les écritures doivent être émises **sans tag de priorité** (priorité 0, pas d'octet `0x49` dans l'APDU) pour éviter les rejets de l'automate. Leurs boutons de reset sont automatiquement masqués.
+   - **Catégorie 3** : Objets en lecture seule (AI, BI, MSI).
+2. **Dashboard Lovelace** :
+   - Localisation : `/home/dev/homeassistant/.storage/lovelace.ecb_203`.
+   - Modifié pour retirer uniquement les 19 boutons de réinitialisation superflus (car les objets de Catégorie 2 n'en possèdent pas). Les entités de contrôle restent sous forme de `number` ou `switch` éditables.
+3. **Autogestion du Cache et des Fantômes** :
+   - `src/z_mqtt.cpp` publie dynamiquement un payload vide sur les topics autodiscovery HA obsolètes lors d'une découverte si le composant a changé pour éviter les entités fantômes.
 
 ---
 *Fin du Prompt de Reprise.*
