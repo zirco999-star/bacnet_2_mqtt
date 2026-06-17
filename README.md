@@ -1,5 +1,5 @@
 # BACnet MS/TP to MQTT Gateway (ESP32-S3)
-[![Version](https://img.shields.io/badge/version-6.8.6-blue.svg)](https://github.com/zirco999-star/bacnet_2_mqtt)
+[![Version](https://img.shields.io/badge/version-7.1.7-blue.svg)](https://github.com/zirco999-star/bacnet_2_mqtt)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **Tags:** #home-assistant #mqtt #esp32 #bacnet #mstp #hacf #automation #industrial-iot
@@ -8,67 +8,44 @@
 
 ## 🇫🇷 Français
 
-Une Passerelle bidirectionnelle autonome BACNET MSTP vers MQTT (ESP32-S3) pour l'interface des réseaux de terrain **BACnet MS/TP** (RS-485) avec un broker **MQTT**, avec intégration automatique dans **Home Assistant**.
+Une passerelle bidirectionnelle autonome BACnet MS/TP vers MQTT (ESP32-S3) pour l'interfaçage des réseaux de terrain **BACnet MS/TP** (RS-485) avec un broker **MQTT**, incluant une intégration automatique dans **Home Assistant**.
 
 ### 🛠️ Environnement de Développement
-Ce projet a été développé et intensivement testé dans les conditions réelles suivantes :
-- **Matériel** : [Waveshare ESP32-S3-RS485-CAN](https://www.waveshare.com/esp32-s3-rs485-can.htm) (8 Mo d'OPI PSRAM indispensable pour la stabilité du tas).
-- **Cible Terrain** : Automates **Distech ECB-203** (Installation YZENTIS UTA verticale).
+- **Matériel** : [Waveshare ESP32-S3-RS485-CAN](https://www.waveshare.com/esp32-s3-rs485-can.htm) (8 Mo d'OPI PSRAM indispensables pour la stabilité).
+- **Cibles Terrain** : Automates **Distech ECB-203** (Régulation UTA verticale).
 
-### 🧠 Points Forts
-- **Architecture Dual-Core Réelle** : Core 1 dédié à la FSM MS/TP (ASHRAE 135) pour une précision temporelle stricte ; Core 0 pour le Wi-Fi, MQTT et l'interface Web.
-- **Auto-Discovery Home Assistant** : Intégration immédiate des entités via MQTT Discovery (diagnostic gateway + objets BACnet).
-- **Gestion Multi-State (MSI/MSO/MSV)** : Traduction bidirectionnelle automatique des `State_Text` (ex: "Confort", "Eco") via une récupération robuste en une seule transaction.
-- **Sécurité Mémoire** : Utilisation de la PSRAM via `Heap_4` pour prévenir toute fragmentation lors des scans intensifs.
+### 🚀 Évolutions Majeures v7.1.7
+- **Séparation des Forçages** : Distinction stricte entre le forçage manuel physique (bit `Overridden` lu sur la propriété 111 de l'automate) et le forçage réseau émis par la passerelle en priorité 8 (`overridden_bacnet` géré par la passerelle).
+- **Bouton de Libération (Reset)** : Génération automatique d'un bouton de Reset dans Home Assistant pour chaque objet commandable permettant d'envoyer la commande de libération de priorité (`AUTO`/Relinquish).
+- **Correction Payloads Binaires** : Suppression des décimales pour les objets binaires (BI/BO/BV) publiés sur MQTT (`"0"` / `"1"` au lieu de `"0.00"` / `"1.00"`), évitant les états `unknown` dans HA.
+- **Outils Publics Communauté** : Nouveaux scripts python pour interroger la passerelle sous forme de tableau ASCII (`list_objects.py`) et écrire des propriétés de manière flexible (`write_property.py`) avec avertissements normatifs sur la priorité d'écriture.
+
+### 📚 Documentation Détaillée
+Consultez les guides du dossier [docs/](file:///home/dev/bacnet_2_mqtt/docs/) :
+1. [docs/1_compilation_installation.md](file:///home/dev/bacnet_2_mqtt/docs/1_compilation_installation.md) : Guide de compilation et flash.
+2. [docs/2_configuration.md](file:///home/dev/bacnet_2_mqtt/docs/2_configuration.md) : Séquence d'installation et paramètres de configuration.
+3. [docs/3_api_mqtt.md](file:///home/dev/bacnet_2_mqtt/docs/3_api_mqtt.md) : Référence complète de l'API REST et des topics MQTT.
+4. [docs/4_integration_ha.md](file:///home/dev/bacnet_2_mqtt/docs/4_integration_ha.md) : Intégration Home Assistant, entités générées et exemples d'automatisations.
 
 ---
 
 ## 🇺🇸 English
 
-A Standalone bidirectional BACNET MSTP to MQTT gateway (ESP32-S3) for interfacing **BACnet MS/TP** (RS-485) field networks with an **MQTT** broker, with automatic integration into **Home Assistant**.
+A standalone bidirectional BACnet MS/TP to MQTT gateway (ESP32-S3) for interfacing **BACnet MS/TP** (RS-485) field networks with an **MQTT** broker, featuring automatic **Home Assistant** integration.
 
-### 🛠️ Development Environment
-This project was developed and extensively tested under real-world conditions:
-- **Hardware**: [Waveshare ESP32-S3-RS485-CAN](https://www.waveshare.com/esp32-s3-rs485-can.htm) (8 MB OPI PSRAM is mandatory for heap stability).
-- **Field Target**: **Distech ECB-203** Controllers (YZENTIS Vertical AHU installation).
+### 🛠️ Hardware Requirements
+- **Hardware**: [Waveshare ESP32-S3-RS485-CAN](https://www.waveshare.com/esp32-s3-rs485-can.htm) (8 MB OPI PSRAM is mandatory).
+- **Field Target**: **Distech ECB-203** Controllers (Vertical AHU installation).
 
-### 🧠 Key Highlights
-- **True Dual-Core Architecture**: Core 1 dedicated to the MS/TP FSM (ASHRAE 135) for strict timing compliance; Core 0 handles Wi-Fi, MQTT, and the Web UI.
-- **Home Assistant Auto-Discovery**: Instant entity integration via MQTT Discovery (gateway diagnostics + BACnet objects).
-- **Multi-State Management (MSI/MSO/MSV)** : Automatic bidirectional translation of `State_Text` labels (e.g., "Comfort", "Eco") using robust single-transaction retrieval.
-- **Memory Safety**: Extensive PSRAM usage via `Heap_4` to prevent fragmentation during heavy bus scans.
+### 🚀 Major v7.1.7 Features
+- **Separated Overrides**: Strict distinction between physical local override (read from BACnet property 111 `Overridden` bit) and network gateway override (`overridden_bacnet` virtual state managed on priority 8).
+- **Relinquish Button (Reset)**: Automatic generation of a Reset button in Home Assistant for each commandable object, sending the `"AUTO"` keyword to clear priority 8 control.
+- **Binary Format Fix**: Removed decimals from binary telemetry payloads (BI/BO/BV) on MQTT (`"0"` or `"1"` instead of `"0.00"` or `"1.00"`), fixing `unknown` states in HA.
+- **CLI Python Tools**: New public scripts in `utils/` to query all objects in a clean ASCII table (`list_objects.py`) and write property values flexibly (`write_property.py`) with standard compliance warnings.
 
----
-
-## ⚙️ Configuration & Installation
-
-1.  **Sanitize Configuration**: Edit `src/z_config.h` and replace default placeholders:
-    ```cpp
-    #define DEFAULT_SSID    "YOUR_WIFI_SSID"
-    #define DEFAULT_WIFI_PASS "YOUR_WIFI_PASSWORD"
-    #define DEFAULT_MQTT_SERVER "192.168.1.10"
-    ```
-2.  **Compilation Settings**:
-    - **Board**: ESP32S3 Dev Module.
-    - **Flash Mode**: QIO.
-    - **PSRAM**: OPI PSRAM (Mandatory).
-    - **Partition Scheme**: 8MB Flash with SPIFFS or higher.
-
-## 📡 MQTT Topics Structure
-The gateway uses a granular and structured topic hierarchy:
-
-| Direction | Topic Pattern | Description |
-| :--- | :--- | :--- |
-| **Telemetry** | `[prefix]/[DeviceID]/[Type]/[Instance]/state` | Current object value (textual for Multi-State) |
-| **Command** | `[prefix]/[DeviceID]/[Type]/[Instance]/set` | Write property to BACnet bus |
-| **Metadata** | `[prefix]/[DeviceID]/[Type]/[Instance]/name` | BACnet Object_Name property |
-| **Diagnostics** | `[prefix]/B2M/[Key]/state` | Gateway health (rssi, heap, temp, mstp_status) |
-| **LWT** | `tele/[prefix]/LWT` | Gateway Availability (online/offline) |
-
-*Types: AI, AO, AV, BI, BO, BV, MSI, MSO, MSV*
-
-## 👥 Community & Support
-- Join the discussion on [**HACF Forum**](https://forum.hacf.fr/t/hvac-yzentis-distech-ecb-203-passerelle-bacnet-ms-tp-vers-mqtt-sur-esp32-s3/80861).
-- Contributions for ASHRAE 135 object decoding are welcome!
-
-*Developed with passion by **Z1rc0n1um** for the open-source community.*
+### 📚 Documentation
+Please refer to the files in the [docs/](file:///home/dev/bacnet_2_mqtt/docs/) folder:
+1. [Compilation & Installation](file:///home/dev/bacnet_2_mqtt/docs/1_compilation_installation.md)
+2. [Gateway Configuration](file:///home/dev/bacnet_2_mqtt/docs/2_configuration.md)
+3. [API REST & MQTT Topics Reference](file:///home/dev/bacnet_2_mqtt/docs/3_api_mqtt.md)
+4. [Home Assistant Integration & Blueprints](file:///home/dev/bacnet_2_mqtt/docs/4_integration_ha.md)

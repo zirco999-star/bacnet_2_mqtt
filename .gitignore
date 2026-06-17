@@ -1,24 +1,11 @@
-# Build files
-build/
-.arduino/
-.pio/
-*.bin
-*.elf
-*.map
-
-# IDE files
+.gemini/
+extract/
 .vscode/
 .theia/
-.gemini/
-
-# Local config & Logs
-TRACE.md
-GEMINI.md
-MEMORY.md
-*.log
-*.py
-*.sh
-extract/
+.pio/
+*.map
+tmp_*
+index_html.h.gch
 tmp/
 plans/
 utils/
