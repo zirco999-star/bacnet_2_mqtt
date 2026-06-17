@@ -1151,6 +1151,8 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                         char num_config_topic[128];
                         snprintf(num_config_topic, sizeof(num_config_topic), "homeassistant/number/%s/config", num_uniq_id);
 
+                        // v7.0.14: Définition de ~ (base_topic) requise pour résoudre ~/state et ~/set
+                        num_doc["~"] = String(base_topic);
                         num_doc["uniq_id"] = String(num_uniq_id);
                         num_doc["name"] = String(obj_name) + " Forcing Value";
                         num_doc["icon"] = "mdi:thermometer-cog";
@@ -1161,10 +1163,9 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                         num_doc["stat_t"] = "~/state"; 
                         num_doc["cmd_t"] = "~/set";
 
-                        float final_min = isnan(obj_min) ? sysCfg.default_number_min : obj_min;
-                        float final_max = isnan(obj_max) ? sysCfg.default_number_max : obj_max;
-                        num_doc["min"] = final_min;
-                        num_doc["max"] = final_max;
+                        // v7.0.14: Forçage des bornes min à -1.0 et max à 40.0 pour les valeurs de forçage
+                        num_doc["min"] = -1.0f;
+                        num_doc["max"] = 40.0f;
                         num_doc["step"] = obj_step;
 
                         String unit = String(obj_unit_text);

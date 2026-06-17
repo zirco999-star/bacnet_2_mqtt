@@ -633,3 +633,12 @@
   - Résolution des pertes de messages MQTT lors des rafales de publication au démarrage (saturant l'outbox du client MQTT ESP-IDF, notamment pendant la publication en rafale des configurations Auto-Discovery).
   - Modification du consommateur de queue dans `src/z_mqtt.cpp` : si `esp_mqtt_client_publish` renvoie une erreur (valeur négative), la commande de publication `pubJob` n'est plus jetée, mais renvoyée en tête de file via `xQueueSendToFront` pour réessai après un délai de 100 ms.
 - **Validation** : Validation complète avec le script `validate_retained.py`. Tous les topics cibles de tests (`ConsigneFinale1,2,3` et `DemandeChaud1,2,3`) ont été publiés avec succès et sont marqués comme retained sur le broker MQTT. Uptime stable, zéro fuite mémoire.
+
+## [v7.0.14] - 2026-06-17
+### Modification
+- **Correctif Résolution Forcing Value (Auto-Discovery)** :
+  - Correction de l'Auto-Discovery de l'entité `number` "Forcing Value" pour toutes les Analog Inputs (AI) dans `src/z_mqtt.cpp`.
+  - Ajout de la clé `"~"` (pointant vers le base topic de l'objet) absente de la structure du `num_doc`. Sans cette clé, les topics `stat_t` et `cmd_t` abrégés (ex: `~/state`) ne pouvaient être résolus par Home Assistant, laissant l'entité de forçage bloquée à l'état `unknown`.
+- **Limites du Forçage (min/max)** :
+  - Forçage strict des attributs `min = -1` et `max = 40` dans le payload de configuration de l'entité de forçage pour s'assurer que toutes les régulations et forçages manuels soient contraints dans cette plage.
+- **Validation** : Compilation et flashage OTA `v7.0.14` validés sur 192.168.1.50. Validation par script du format du JSON Auto-Discovery sur le broker (les entités sont maintenant correctement résolues avec la clé `"~"` et les bornes `-1/40`).
