@@ -754,3 +754,14 @@
   - Compilation et déploiement réussis par flashage OTA `v7.1.6` sur `192.168.1.50`.
   - Validation par le sous-agent `ha_agent` interrogeant l'API HA locale : les entités `binary_sensor.ecb_203_demandechaudx` et `binary_sensor.ecb_203_demandefroidx` ont toutes changé d'état de `"unknown"` à `"off"` avec succès.
   - Les commandes d'écriture/retour sur les `switch` sont préservées et fonctionnelles (les payloads `"1"` et `"0"` étant convertis en flottants `1.0` et `0.0` par `atof` sur la passerelle).
+
+## [v7.1.7] - 2026-06-17
+### Modification
+- **Correction du formatage des valeurs d'objets binaires (BV/BO/BI) sur MQTT** :
+  - Modification de `publish_mqtt_topic` dans `src/z_mqtt.cpp` pour intercepter les types `OBJ_BINARY_INPUT` (0), `OBJ_BINARY_OUTPUT` (4), et `OBJ_BINARY_VALUE` (5) et formater leur valeur Present_Value sans décimale (`%.0f` au lieu de `%.2f`).
+  - Cette correction permet de publier la valeur en cache sous forme d'un entier propre (`0` ou `1` dans le JSON, ex: `{"val": 0, ...}`) au lieu d'un flottant (`0.0` ou `0.00`).
+  - Home Assistant extrait ainsi correctement le texte `"0"` ou `"1"`, ce qui correspond exactement aux valeurs attendues par `pl_on = "1"` / `pl_off = "0"`.
+- **Validation** :
+  - Compilation et déploiement réussis par flashage OTA `v7.1.7` sur `192.168.1.50`.
+  - Déclenchement de la découverte via l'API `/api/trigger_discovery` pour forcer la mise à jour globale.
+  - Validation par le sous-agent `ha_agent` : les entités de type `switch` (telles que `switch.ecb_203_demandechaud1`) sont désormais correctement reconnues à l'état **`off`** par Home Assistant.

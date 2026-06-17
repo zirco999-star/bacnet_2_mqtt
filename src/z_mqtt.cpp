@@ -1405,6 +1405,11 @@ void publish_mqtt_topic(uint32_t ulDeviceId, BACnetObject& obj, uint8_t prop_id,
                     } else snprintf(val_str, sizeof(val_str), "%.0f", obj.fPresentValue);
                 } else snprintf(val_str, sizeof(val_str), "%.0f", obj.fPresentValue);
                 break;
+            case OBJ_BINARY_INPUT:
+            case OBJ_BINARY_OUTPUT:
+            case OBJ_BINARY_VALUE:
+                snprintf(val_str, sizeof(val_str), "%.0f", obj.fPresentValue);
+                break;
             default:
                 snprintf(val_str, sizeof(val_str), "%.2f", obj.fPresentValue);
                 break;
