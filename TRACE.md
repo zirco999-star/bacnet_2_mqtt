@@ -1,5 +1,13 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 17 Juin 2026 (Personnalisation des icônes de ventilation et volets - v7.1.14) - DÉPLOYÉ
+- **Version** : v7.1.13 → v7.1.14
+- **Personnalisation des Icônes** :
+  - Modification de `publish_ha_autodiscovery` dans [z_mqtt.cpp](file:///home/dev/bacnet_2_mqtt/src/z_mqtt.cpp) : injection automatique de l'icône `"mdi:fan"` pour tous les objets BACnet dont le nom contient `"ventil"` ou `"volet"` (ex: vitesse ventilateur, volets d'air, poids de volet de soufflage, temporisations de volets).
+  - Cela assure une parfaite cohérence visuelle avec l'icône de l'onglet du Dashboard "Ventilation & Volets" (`mdi:fan`).
+- **Validation** :
+  - Déploiement et auto-découverte validés sous Home Assistant.
+
 ## État au 17 Juin 2026 (Restauration Modificabilité des Consignes Écrivables non-commandables - v7.1.13) - DÉPLOYÉ
 - **Version** : v7.1.12 → v7.1.13
 - **Restauration de la Modificabilité (Regression Fix)** :
