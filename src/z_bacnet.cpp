@@ -410,6 +410,8 @@ static void handle_simple_ack(uint8_t src_mac) {
                                 // Forcer un rafraîchissement immédiat de StatusFlags + PresentValue.
                                 o.ulLastStatusFlagsUpdate = 0;
                                 o.ulLastUpdate = 0;
+                                publish_mqtt_topic(d.ulDeviceId, o, 85, false);
+                                check_ha_dependencies(d.ulDeviceId, o.usType, o.ulInstance);
                                 z_log(pdLOG_INFO, "BACNET", "Relinquish ACK for %u:%lu (Prio %u). Scheduled immediate refresh.\n",
                                       o.usType, (unsigned long)o.ulInstance, pending_write_job.priority);
                             } else {

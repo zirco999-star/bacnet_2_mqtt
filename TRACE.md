@@ -1,5 +1,14 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 17 Juin 2026 (Test d'Intégration Ventilation HA - v7.1.11) - VALIDÉ
+- **Objectif** : Validation du comportement dynamique de forçage BACnet et de réinitialisation de l'entité `number.ecb_203_ventilateur`.
+- **Déroulement du Test** :
+  1. Modification de `number.ecb_203_ventilateur` à `100`.
+  2. Attente de 5 secondes, vérification que `sensor.ecb_203_ventilateur_forcage_bacnet` passe à `"OUI"`.
+  3. Appui sur `button.ecb_203_ventilateur_reset` via le service `button.press`.
+  4. Attente de 2 secondes, vérification que `sensor.ecb_203_ventilateur_forcage_bacnet` est immédiatement repassé à `"NON"`.
+- **Résultat** : Toutes les étapes sont passées avec succès. Temps de réaction conformes, pas d'erreurs ou de timeouts.
+
 ## État au 16 Juin 2026 (Fix WriteProperty(Object_Name) - v7.0.6) - DÉPLOYÉ
 - **Version** : v7.0.5 → v7.0.6
 - **Bug corrigé** : `/api/save_object` — Lors du changement de nom d'un objet BACnet depuis l'UI Web, le firmware mettait à jour le cache local (RAM + NVS) mais n'envoyait **aucun job BACnet** pour propager l'écriture vers l'automate physique. La propriété `Object_Name` (prop_id=77) restait donc inchangée sur le device, et le topic MQTT retained (`{prefix}/{did}/{type}/{inst}/name`) conservait l'ancienne valeur (ex: `AI:1005`).
