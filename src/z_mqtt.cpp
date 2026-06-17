@@ -857,6 +857,10 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
             if (dev_cla) doc["dev_cla"] = dev_cla;
             if (unit) doc["unit_of_meas"] = unit;
             if (icon) doc["icon"] = icon;
+            if (strcmp(key, "uptime") == 0) {
+                doc["val_tpl"] = "{% set s = value | int %}{% set d = s // 86400 %}{% set h = (s % 86400) // 3600 %}{% set m = (s % 3600) // 60 %}{% set sec = s % 60 %}{% if d > 0 %}{{ d }}j {{ h }}h {{ m }}m {{ sec }}s{% elif h > 0 %}{{ h }}h {{ m }}m {{ sec }}s{% else %}{{ m }}m {{ sec }}s{% endif %}";
+            }
+
             if (is_binary) {
                 doc["pl_on"] = "ON";
                 doc["pl_off"] = "OFF";
@@ -876,7 +880,7 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
         };
 
         pub_gw_sensor("ver", "Gateway Version", NULL, NULL, "mdi:information-outline");
-        pub_gw_sensor("uptime", "Gateway Uptime", "duration", "s", "mdi:timer-outline");
+        pub_gw_sensor("uptime", "Gateway Uptime", NULL, NULL, "mdi:timer-outline");
         pub_gw_sensor("rssi", "Gateway WiFi RSSI", "signal_strength", "dBm");
         pub_gw_sensor("heap", "Gateway Free Heap", "data_size", "KB", "mdi:memory");
         pub_gw_sensor("min_heap", "Gateway Min Heap", "data_size", "KB", "mdi:memory");
