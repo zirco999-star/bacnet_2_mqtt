@@ -1023,7 +1023,7 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                 /* Payloads binaires : "1.00" et "0.00" correspondent au format
                  * de publication de Present_Value pour les objets binaires BACnet. */
                 if (strcmp(ha_component, "binary_sensor") == 0 || strcmp(ha_component, "switch") == 0) {
-                    doc["pl_on"] = "1.00"; doc["pl_off"] = "0.00";
+                    doc["pl_on"] = "1"; doc["pl_off"] = "0";
                 }
 
                 /* Configuration spécifique aux entités "number" (AO, AV commandables).

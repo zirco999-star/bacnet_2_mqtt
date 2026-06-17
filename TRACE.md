@@ -744,3 +744,13 @@
   - Compilation et déploiement réussis par flashage OTA `v7.1.5` sur `192.168.1.50`.
   - Validation via le sous-agent `ha_agent` communiquant avec l'API HA locale : les boutons `button.voletair1_reset` et `button.consignefinale1_reset` ont été correctement auto-découverts et rattachés aux équipements respectifs.
   - Le relinquish global via le bouton (ou script de repli) fonctionne comme prévu.
+
+## [v7.1.6] - 2026-06-17
+### Modification
+- **Correction des binary_sensor et switch MQTT Discovery (Payloads binaires)** :
+  - Modification de `publish_ha_autodiscovery` dans `src/z_mqtt.cpp` pour remplacer les payloads `pl_on` / `pl_off` de `"1.00"` / `"0.00"` par `"1"` / `"0"`.
+  - Cette modification permet d'aligner l'attente de Home Assistant avec le typage numérique réel du JSON publié pour `Present_Value` (ex: `value_json.val` qui produit le chiffre `1` ou `0` dans le template, et non `"1.00"` / `"0.00"`).
+- **Validation** :
+  - Compilation et déploiement réussis par flashage OTA `v7.1.6` sur `192.168.1.50`.
+  - Validation par le sous-agent `ha_agent` interrogeant l'API HA locale : les entités `binary_sensor.ecb_203_demandechaudx` et `binary_sensor.ecb_203_demandefroidx` ont toutes changé d'état de `"unknown"` à `"off"` avec succès.
+  - Les commandes d'écriture/retour sur les `switch` sont préservées et fonctionnelles (les payloads `"1"` et `"0"` étant convertis en flottants `1.0` et `0.0` par `atof` sur la passerelle).
