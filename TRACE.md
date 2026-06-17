@@ -642,3 +642,20 @@
 - **Limites du Forçage (min/max)** :
   - Forçage strict des attributs `min = -1` et `max = 40` dans le payload de configuration de l'entité de forçage pour s'assurer que toutes les régulations et forçages manuels soient contraints dans cette plage.
 - **Validation** : Compilation et flashage OTA `v7.0.14` validés sur 192.168.1.50. Validation par script du format du JSON Auto-Discovery sur le broker (les entités sont maintenant correctement résolues avec la clé `"~"` et les bornes `-1/40`).
+
+## [v7.0.15] - 2026-06-17
+### Validation
+- **Test de Contournement/Forçage (Hack Ventilation UTA via MQTT)** :
+  - Objectif : Valider le fonctionnement du mode `OutOfService` (OoS) et du forçage de température exclusivement par MQTT pour déclencher la demande de chauffage de l'UTA.
+  - Procédure de test automatique (`test_hack_both.py`) :
+    1. Connexion au broker MQTT `192.168.1.11` et abonnement aux topics de température, d'état OoS et de demande de chaud.
+    2. Activation du mode Out-Of-Service de `temp_bureau` (`AI:1`) via publication `"ON"` sur `bacnet/364004/AI/1/outofservice/set`.
+    3. Forçage de la valeur de température de `temp_bureau` à `-1.00` via publication sur `bacnet/364004/AI/1/set`.
+    4. Observation des modifications de l'état physique sur le contrôleur BACnet ECB_203.
+    5. Restauration de l'état initial (OoS = `"OFF"`).
+  - Résultats de la validation :
+    - Le forçage de `temp_bureau` (`AI:1`) applique bien la valeur `-1.00` à la variable finale correspondante `TempFinale2` (`AV:28`).
+    - Ce forçage de Zone 2 active la demande de chauffage associée **`DemandeChaud2` (`BV:2`)** qui passe de `0.00` à `1.00` après ~10s.
+    - Le forçage de `temp_salon` (`AI:5001`) à `-1.00` quant à lui applique la valeur à `TempFinale1` (`AV:27`), ce qui active la demande de chauffage associée **`DemandeChaud1` (`BV:1`)** de `0.00` à `1.00` après ~10s.
+    - La restauration de `outofservice` à `OFF` libère immédiatement la sonde physique, ramenant les variables `TempFinale1/2` à leurs valeurs ambiantes physiques et désactivant le chauffage (`DemandeChaud1/2` repassent à `0.00`).
+
