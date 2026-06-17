@@ -280,6 +280,21 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                                     else if (type_str == "AI") job.obj_type = 0;
                                     else { job.type = JOB_WHO_IS; found = false; }
 
+                                    // Déterminer la priorité selon la commandabilité réelle dans le cache
+                                    if (found) {
+                                        job.priority = 0; // Pas de priorité par défaut (ex: non commandable)
+                                        if (job.prop_id == 85) {
+                                            for (auto& o : d.objects) {
+                                                if (o.usType == job.obj_type && o.ulInstance == job.obj_instance) {
+                                                    if (o.xIsCommandable) {
+                                                        job.priority = 8; // Priorité 8 si commandable
+                                                    }
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+
                                     if (found) {
                                         bool xProceed = true;
                                         
@@ -1120,6 +1135,32 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                     vTaskDelay(pdMS_TO_TICKS(100)); // Pause si erreur
                 } else {
                     total_published++;
+                    
+                    // Nettoyage des composants HA fantômes obsolètes (si l'état de commandabilité a changé)
+                    if (strcmp(ha_component, "number") == 0) {
+                        char alt_topic[128];
+                        snprintf(alt_topic, sizeof(alt_topic), "homeassistant/sensor/%s/config", uniq_id);
+                        esp_mqtt_client_publish(mqtt_client, alt_topic, "", 0, 1, 1);
+                    } else if (strcmp(ha_component, "sensor") == 0) {
+                        char alt_topic[128];
+                        snprintf(alt_topic, sizeof(alt_topic), "homeassistant/number/%s/config", uniq_id);
+                        esp_mqtt_client_publish(mqtt_client, alt_topic, "", 0, 1, 1);
+                    } else if (strcmp(ha_component, "switch") == 0) {
+                        char alt_topic[128];
+                        snprintf(alt_topic, sizeof(alt_topic), "homeassistant/binary_sensor/%s/config", uniq_id);
+                        esp_mqtt_client_publish(mqtt_client, alt_topic, "", 0, 1, 1);
+                    } else if (strcmp(ha_component, "binary_sensor") == 0) {
+                        char alt_topic[128];
+                        snprintf(alt_topic, sizeof(alt_topic), "homeassistant/switch/%s/config", uniq_id);
+                        esp_mqtt_client_publish(mqtt_client, alt_topic, "", 0, 1, 1);
+                    } else if (strcmp(ha_component, "select") == 0) {
+                        char alt_topic1[128];
+                        char alt_topic2[128];
+                        snprintf(alt_topic1, sizeof(alt_topic1), "homeassistant/number/%s/config", uniq_id);
+                        snprintf(alt_topic2, sizeof(alt_topic2), "homeassistant/sensor/%s/config", uniq_id);
+                        esp_mqtt_client_publish(mqtt_client, alt_topic1, "", 0, 1, 1);
+                        esp_mqtt_client_publish(mqtt_client, alt_topic2, "", 0, 1, 1);
+                    }
                 }
 
                 /* ── Entités de contournement (hack) pour Analog Input ─────────
@@ -1255,6 +1296,14 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                     serializeJson(reset_doc, reset_payload);
                     esp_mqtt_client_publish(mqtt_client, reset_config_topic, reset_payload.c_str(), reset_payload.length(), 1, 1);
                     total_published++;
+                } else {
+                    // Si l'objet n'est plus commandable, supprimer son bouton de reset de HA
+                    char reset_uniq_id[128];
+                    snprintf(reset_uniq_id, sizeof(reset_uniq_id), "bacnet_%lu_%s_%lu_reset",
+                             (unsigned long)current_did, t_str, (unsigned long)obj_inst);
+                    char reset_config_topic[128];
+                    snprintf(reset_config_topic, sizeof(reset_config_topic), "homeassistant/button/%s/config", reset_uniq_id);
+                    esp_mqtt_client_publish(mqtt_client, reset_config_topic, "", 0, 1, 1);
                 }
                 
                 // AJOUT CHIRURGICAL : Publication des 5 sensors de status_flags pour cet objet

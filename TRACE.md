@@ -1,5 +1,17 @@
 # Journal de Suivi - BACnet2MQTT
 
+## État au 17 Juin 2026 (Classification Priorité & Commandabilité ASHRAE 135 - v7.1.12) - DÉPLOYÉ
+- **Version** : v7.1.11 → v7.1.12
+- **Amélioration Commandabilité** :
+  - Modification de `handle_error_pdu` dans [z_bacnet.cpp](file:///home/dev/bacnet_2_mqtt/src/z_bacnet.cpp) pour définir `o.xIsCommandable = false` lorsqu'une erreur (ex: `UNKNOWN_PROPERTY`) se produit durant la tentative de lecture de la propriété `Priority_Array` (87) lors de la découverte de l'objet.
+  - Dynamisation de l'évaluation de la priorité dans [z_mqtt.cpp](file:///home/dev/bacnet_2_mqtt/src/z_mqtt.cpp) : l'écriture sur la propriété `Present_Value` (85) utilise le Context Tag 4 (priorité 8) uniquement si l'objet est marqué commandable dans le cache (`o.xIsCommandable == true`). Sinon, l'écriture se fait directement sans tag de priorité (priorité 0).
+  - Suppression automatique des entités de réinitialisation : pour les objets non-commandables, le bouton de reset Home Assistant (`button.ecb_203_<name>_reset`) est automatiquement nettoyé en publiant un payload vide sur son topic de configuration MQTT autodiscovery.
+- **Validation** :
+  - Test de conformité sur `ModeConfortEcoIpad` (MSV:50) qui ne possède pas de `Priority_Array` sur le Distech ECB-203.
+  - Vérification par log websocket que l'écriture de "Confort" / "Arret" envoie bien un APDU sans octet `49` (Prio: 0), acquitté avec succès par un `Simple-ACK` de l'automate.
+  - Nettoyage du bouton `button.ecb_203_modeconfortecoipad_reset` validé dans Home Assistant.
+  - L'indicateur de forçage BACnet global sur le dashboard Lovelace redescend bien à `🟢 NON`.
+
 ## État au 17 Juin 2026 (Test d'Intégration Ventilation HA - v7.1.11) - VALIDÉ
 - **Objectif** : Validation du comportement dynamique de forçage BACnet et de réinitialisation de l'entité `number.ecb_203_ventilateur`.
 - **Déroulement du Test** :

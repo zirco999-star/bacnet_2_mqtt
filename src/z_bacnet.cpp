@@ -473,7 +473,7 @@ static void handle_error_pdu(BACnetDevice &dev, uint8_t type) {
                 break;
             case DISC_OBJ_STATES:  dev.ucDiscStep = DISC_OBJ_COMMANDABLE; break;
             case DISC_OBJ_COMMANDABLE:
-                o.xIsCommandable = (o.usType==13||o.usType==14||o.usType==19||o.usType<=5);
+                o.xIsCommandable = false;
                 if(o.xEnabled || dev.xReloadSingle) dev.ucDiscStep = DISC_OBJ_STATUS_FLAGS;
                 else { if(!dev.xReloadSingle) dev.usDiscObjIdx++; dev.ucDiscStep = DISC_OBJ_OID; }
                 break;
