@@ -995,14 +995,14 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
 
             switch(obj_type) {
                 case OBJ_ANALOG_INPUT:       t_str = "AI"; ha_component = "sensor"; break;
-                case OBJ_ANALOG_OUTPUT:      t_str = "AO"; ha_component = (obj_commandable) ? "number" : "sensor"; break;
-                case OBJ_ANALOG_VALUE:       t_str = "AV"; ha_component = (obj_commandable) ? "number" : "sensor"; break;
+                case OBJ_ANALOG_OUTPUT:      t_str = "AO"; ha_component = "number"; break;
+                case OBJ_ANALOG_VALUE:       t_str = "AV"; ha_component = "number"; break;
                 case OBJ_BINARY_INPUT:       t_str = "BI"; ha_component = "binary_sensor"; break;
-                case OBJ_BINARY_OUTPUT:      t_str = "BO"; ha_component = (obj_commandable) ? "switch" : "binary_sensor"; break;
-                case OBJ_BINARY_VALUE:       t_str = "BV"; ha_component = (obj_commandable) ? "switch" : "binary_sensor"; break;
+                case OBJ_BINARY_OUTPUT:      t_str = "BO"; ha_component = "switch"; break;
+                case OBJ_BINARY_VALUE:       t_str = "BV"; ha_component = "switch"; break;
                 case OBJ_MULTI_STATE_INPUT:  t_str = "MSI"; ha_component = "sensor"; break;
-                case OBJ_MULTI_STATE_OUTPUT: t_str = "MSO"; ha_component = (obj_states.empty()) ? ((obj_commandable) ? "number" : "sensor") : "select"; break;
-                case OBJ_MULTI_STATE_VALUE:  t_str = "MSV"; ha_component = (obj_states.empty()) ? ((obj_commandable) ? "number" : "sensor") : "select"; break;
+                case OBJ_MULTI_STATE_OUTPUT: t_str = "MSO"; ha_component = (obj_states.empty()) ? "number" : "select"; break;
+                case OBJ_MULTI_STATE_VALUE:  t_str = "MSV"; ha_component = (obj_states.empty()) ? "number" : "select"; break;
             }
 
             /* Construction de l'identifiant unique HA et du topic de configuration.
