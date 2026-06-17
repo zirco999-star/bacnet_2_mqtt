@@ -287,6 +287,8 @@ struct BACnetObject {
     uint32_t ulLastUpdate = 0;            ///< Timestamp (millis) de la dernière mise à jour de la valeur.
     uint16_t ucExpectedStatesCount = 0;   ///< Nombre d'états pour les objets Multi-State (Prop 74).
     uint8_t ucStatusFlags = 0;            ///< Drapeaux d'état BACnet (4 bits, Prop 111).
+    uint32_t ulLastStatusFlagsUpdate = 0; ///< Timestamp (millis) du dernier polling de status_flags (Prop 111).
+    bool xOverriddenBacnet = false;       ///< true si la passerelle a une écriture active en priorité 8 sur cet objet.
     uint16_t usUnits = 95;                ///< Code d'unité BACnet (95 = "no-units", Prop 117).
     char cUnitText[20] = "";              ///< Texte d'unité résolu (ex: "°C", "kWh").
     float fMinValue = NAN;                ///< Valeur minimum (Prop 69). NAN = non définie.

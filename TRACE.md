@@ -709,6 +709,26 @@
   - Ajout d'icônes dédiées et explicites pour chaque indicateur de diagnostic (ex: `mdi:alarm-light`, `mdi:alert`, `mdi:hand-back-right`, `mdi:power-plug-off`).
   - Ajout d'une logique de migration automatique supprimant les anciens `binary_sensor` pour éviter les entités orphelines dans Home Assistant lors de la découverte.
   - Mise à jour correspondante des fonctions de nettoyage (`unpublish_ha_discovery` et désactivation d'objets) pour purger les deux formats d'entités.
-- **Validation** :
-  - Compilation et déploiement par flashage OTA `v7.1.1` sur `192.168.1.50`.
   - Validation effectuée via le sous-agent `ha_agent` interrogeant directement l'API Home Assistant : les entités de diagnostic sont correctement typées en `sensor` avec état textuel à `"NON"`, friendly name correct et icônes appliquées.
+
+## [v7.1.3] - 2026-06-17
+### Modification
+- **Correction du Relinquish et Décodage des Status_Flags** :
+  - Correction dans `handle_simple_ack` (`src/z_bacnet.cpp`) pour éviter d'écrire `NAN` dans le cache `fPresentValue` lors de la réception de l'ACK d'un relinquish (la valeur physique de l'automate doit être relue au prochain poll).
+  - Forçage de `ulLastStatusFlagsUpdate = 0` et `ulLastUpdate = 0` pour planifier une relecture immédiate de la valeur sur le bus après un relinquish.
+  - Correction du décodeur de réponse ReadJob pour la propriété 111 (Status_Flags) : remplacement du décodage d'entier non signé par un décodage bit string (tag 8) avec masquage approprié.
+  - Ajout de logs détaillés au niveau de la machine de décodage périodique pour tracer les changements des drapeaux d'état.
+
+## [v7.1.4] - 2026-06-17
+### Modification
+- **Séparation Forçage Manuel et Forçage BACnet** :
+  - Ajout du booléen `xOverriddenBacnet` dans la structure de données locale `BACnetObject` (`src/z_bacnet.h`) pour mémoriser l'état du forçage réseau de la passerelle.
+  - Mise à jour de `handle_simple_ack` (`src/z_bacnet.cpp`) pour positionner `xOverriddenBacnet` à `true` lors d'un ACK d'écriture à la priorité 8, et à `false` lors d'un relinquish à la priorité 8.
+  - Ajout de la clé `"overridden_bacnet"` dans le payload JSON publié via MQTT pour la Present_Value.
+  - Ajout d'un 5ème sensor de diagnostic `"Forçage BACnet"` dans le protocole de découverte Home Assistant (`src/z_mqtt.cpp`), configuré avec l'icône `mdi:lan-pending` et le template de conversion `OUI/NON`.
+  - Mise à jour des boucles de nettoyage de découverte (`unpublish`) pour purger le 5ème sensor en cas de désactivation ou de suppression.
+  - Ajout de la clé `"overridden_bacnet"` dans l'API de retour `/api/objects` (`src/z_network.cpp`).
+- **Validation** :
+  - Compilation et déploiement réussis par flashage OTA `v7.1.4` sur `192.168.1.50`.
+  - Validation via le script Python `test_v7.1.4_overridden_bacnet.py` : l'écriture à la priorité 8 active le flag `overridden_bacnet` à `True` dans `/api/objects`, et le relinquish (`AUTO`) le repasse correctement à `False`.
+  - Relinquish global appliqué sur l'ensemble des 45 objets de l'automate pour restaurer la configuration d'origine.

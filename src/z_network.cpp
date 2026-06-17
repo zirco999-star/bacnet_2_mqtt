@@ -484,6 +484,7 @@ void setup_web_routes() {
                         if (strlen(o.cMaxRef) > 0) obj["max_ref"] = o.cMaxRef;
                         obj["status_flags"] = o.ucStatusFlags;
                         obj["outofservice"] = o.isOutOfService();
+                        obj["overridden_bacnet"] = o.xOverriddenBacnet;
                     }
                 }
                 xSemaphoreGive(cache_mutex);

@@ -402,9 +402,25 @@ static void handle_simple_ack(uint8_t src_mac) {
                 for (auto& o : d.objects) {
                     if (o.usType == pending_write_job.obj_type && o.ulInstance == pending_write_job.obj_instance) {
                         if (pending_write_job.prop_id == 85) {
-                            o.fPresentValue = pending_write_job.write_value;
-                            publish_mqtt_topic(d.ulDeviceId, o, 85, false);
-                            check_ha_dependencies(d.ulDeviceId, o.usType, o.ulInstance);
+                            if (isnan(pending_write_job.write_value)) {
+                                // Relinquish : ne PAS écrire NAN dans le cache.
+                                if (pending_write_job.priority == 8) {
+                                    o.xOverriddenBacnet = false;
+                                }
+                                // Forcer un rafraîchissement immédiat de StatusFlags + PresentValue.
+                                o.ulLastStatusFlagsUpdate = 0;
+                                o.ulLastUpdate = 0;
+                                z_log(pdLOG_INFO, "BACNET", "Relinquish ACK for %u:%lu (Prio %u). Scheduled immediate refresh.\n",
+                                      o.usType, (unsigned long)o.ulInstance, pending_write_job.priority);
+                            } else {
+                                o.fPresentValue = pending_write_job.write_value;
+                                if (pending_write_job.priority == 8) {
+                                    o.xOverriddenBacnet = true;
+                                }
+                                o.ulLastStatusFlagsUpdate = 0; // Force relecture StatusFlags
+                                publish_mqtt_topic(d.ulDeviceId, o, 85, false);
+                                check_ha_dependencies(d.ulDeviceId, o.usType, o.ulInstance);
+                            }
                         } else if (pending_write_job.prop_id == 77) {
                             publish_mqtt_topic(d.ulDeviceId, o, 77, true);
                         } else if (pending_write_job.prop_id == 81) {
@@ -807,11 +823,29 @@ static void handle_complex_ack_polling(BACnetDevice &dev, const uint8_t *apdu, u
                             o.ulLastUpdate = millis();
                         }
                     } else if (xPendingReadJob.prop_id == 111) {
-                        o.ucStatusFlags = (uint8_t)v;
+                        // Décodage du bit string pour ReadJob explicite (prop 111)
+                        if (vt.number == 8 && vt.len >= 2) {
+                            uint8_t ucFlags = 0;
+                            uint8_t ucFirstByte = apdu[ap + 1];
+                            if (ucFirstByte & 0x80) ucFlags |= BACNET_STATUS_IN_ALARM;
+                            if (ucFirstByte & 0x40) ucFlags |= BACNET_STATUS_FAULT;
+                            if (ucFirstByte & 0x20) ucFlags |= BACNET_STATUS_OVERRIDDEN;
+                            if (ucFirstByte & 0x10) ucFlags |= BACNET_STATUS_OUT_OF_SERVICE;
+                            z_log(pdLOG_INFO, "BACNET", "ReadJob StatusFlags for %u:%lu : 0x%02X (raw: 0x%02X)\n",
+                                  o.usType, (unsigned long)o.ulInstance, ucFlags, ucFirstByte);
+                            o.ucStatusFlags = ucFlags;
+                        } else {
+                            o.ucStatusFlags = (uint8_t)v;
+                            z_log(pdLOG_WARN, "BACNET", "ReadJob StatusFlags unexpected tag %d len %d for %u:%lu\n",
+                                  vt.number, vt.len, o.usType, (unsigned long)o.ulInstance);
+                        }
                         o.ulLastUpdate = millis();
-                        if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 81, false);
+                        o.ulLastStatusFlagsUpdate = millis();
+                        if (o.xEnabled) {
+                            publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
+                            publish_mqtt_topic(dev.ulDeviceId, o, 81, false);
+                        }
                     }
-                    break;
                 }
             }
         } else {
@@ -842,6 +876,26 @@ static void handle_complex_ack_polling(BACnetDevice &dev, const uint8_t *apdu, u
                     } else {
                         o.ulLastUpdate = millis();
                     }
+                }
+            } else if (vt.number == 8 && vt.len >= 2) {
+                // AJOUT CHIRURGICAL : Décodage périodique de Status_Flags
+                uint8_t ucFlags = 0;
+                uint8_t ucFirstByte = apdu[ap + 1];
+                if (ucFirstByte & 0x80) ucFlags |= BACNET_STATUS_IN_ALARM;       // Bit 0
+                if (ucFirstByte & 0x40) ucFlags |= BACNET_STATUS_FAULT;          // Bit 1
+                if (ucFirstByte & 0x20) ucFlags |= BACNET_STATUS_OVERRIDDEN;     // Bit 2
+                if (ucFirstByte & 0x10) ucFlags |= BACNET_STATUS_OUT_OF_SERVICE; // Bit 3
+                
+                if (current_poll_idx < dev.objects.size()) {
+                    auto& o = dev.objects[current_poll_idx]; 
+                    if (o.ucStatusFlags != ucFlags) {
+                        z_log(pdLOG_INFO, "BACNET", "StatusFlags changed for %u:%lu : 0x%02X -> 0x%02X (raw: 0x%02X)\n",
+                              o.usType, (unsigned long)o.ulInstance, o.ucStatusFlags, ucFlags, ucFirstByte);
+                        o.ucStatusFlags = ucFlags;
+                        // On republie la valeur Present_Value car le JSON d'état contient les status_flags mis à jour
+                        if (o.xEnabled) publish_mqtt_topic(dev.ulDeviceId, o, 85, false);
+                    }
+                    o.ulLastStatusFlagsUpdate = millis();
                 }
             }
         }
@@ -1528,33 +1582,59 @@ void execute_polling_logic(BACnetDevice &dev) {
     uint8_t a[512]; uint16_t al = 0; size_t c = dev.objects.size();
     std::vector<BACnetObject*> batch;
     
-    if (c > 0 && dev.xSupportsRpm) {
+    if (c > 0) {
         size_t s = 0;
-        // Collect up to max APDU limit objects for this device
-        while (s < c && batch.size() < 21) { 
-            current_poll_idx = (current_poll_idx + 1) % c; 
-            auto& o = dev.objects[current_poll_idx]; 
-            if (o.xEnabled && o.usType != 8 && o.usType != 65535 && (o.ulLastUpdate == 0 || (millis()-o.ulLastUpdate)>(sysCfg.bacnet_poll_interval*1000))) { 
-                batch.push_back(&o);
-            } 
-            s++; 
+        bool found_job = false;
+        
+        // 1. Chercher d'abord si un objet activé a besoin de rafraîchir ses status_flags (Prop 111)
+        // Intervalle : toutes les 60 secondes.
+        while (s < c) {
+            current_poll_idx = (current_poll_idx + 1) % c;
+            auto& o = dev.objects[current_poll_idx];
+            if (o.xEnabled && o.usType != 8 && o.usType != 65535) {
+                uint32_t now = millis();
+                if (o.ulLastStatusFlagsUpdate == 0 || (now - o.ulLastStatusFlagsUpdate) > 60000) {
+                    // On envoie une lecture unitaire de Status_Flags
+                    al = build_read_property_apdu(a, next_invoke_id++, o.usType, o.ulInstance, 111, -1);
+                    period_poll_count++;
+                    found_job = true;
+                    // On simule une mise à jour temporelle pour éviter de boucler si l'équipement ne répond pas,
+                    // mais la vraie valeur sera stockée à la réception.
+                    o.ulLastStatusFlagsUpdate = now;
+                    break;
+                }
+            }
+            s++;
         }
-        if (!batch.empty()) {
-            al = build_read_property_multiple_apdu(a, next_invoke_id++, batch, 85);
-            period_poll_count += batch.size();
-        }
-    } else if (c > 0) {
-        // Fallback to single read
-        size_t s = 0; 
-        while (s < c) { 
-            current_poll_idx = (current_poll_idx + 1) % c; 
-            auto& o = dev.objects[current_poll_idx]; 
-            if (o.xEnabled && o.usType != 8 && o.usType != 65535 && (o.ulLastUpdate == 0 || (millis()-o.ulLastUpdate)>(sysCfg.bacnet_poll_interval*1000))) { 
-                al = build_read_property_apdu(a, next_invoke_id++, o.usType, o.ulInstance, 85, -1); 
-                period_poll_count++; 
-                break; 
-            } 
-            s++; 
+        
+        // 2. Sinon, faire le polling classique de Present_Value (Prop 85)
+        if (!found_job) {
+            s = 0;
+            if (dev.xSupportsRpm) {
+                while (s < c && batch.size() < 21) {
+                    current_poll_idx = (current_poll_idx + 1) % c;
+                    auto& o = dev.objects[current_poll_idx];
+                    if (o.xEnabled && o.usType != 8 && o.usType != 65535 && (o.ulLastUpdate == 0 || (millis() - o.ulLastUpdate) > (sysCfg.bacnet_poll_interval * 1000))) {
+                        batch.push_back(&o);
+                    }
+                    s++;
+                }
+                if (!batch.empty()) {
+                    al = build_read_property_multiple_apdu(a, next_invoke_id++, batch, 85);
+                    period_poll_count += batch.size();
+                }
+            } else {
+                while (s < c) {
+                    current_poll_idx = (current_poll_idx + 1) % c;
+                    auto& o = dev.objects[current_poll_idx];
+                    if (o.xEnabled && o.usType != 8 && o.usType != 65535 && (o.ulLastUpdate == 0 || (millis() - o.ulLastUpdate) > (sysCfg.bacnet_poll_interval * 1000))) {
+                        al = build_read_property_apdu(a, next_invoke_id++, o.usType, o.ulInstance, 85, -1);
+                        period_poll_count++;
+                        break;
+                    }
+                    s++;
+                }
+            }
         }
     }
     

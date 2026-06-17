@@ -1221,12 +1221,12 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                     }
                 }
                 
-                // AJOUT CHIRURGICAL : Publication des 4 sensors de status_flags pour cet objet
-                const char* flags[] = {"alarm", "fault", "overridden", "oos"};
-                const char* names[] = {"Alarme", "Défaut", "Forçage Manuel", "Hors Service"};
-                const char* icons[] = {"mdi:alarm-light", "mdi:alert", "mdi:hand-back-right", "mdi:power-plug-off"};
+                // AJOUT CHIRURGICAL : Publication des 5 sensors de status_flags pour cet objet
+                const char* flags[] = {"alarm", "fault", "overridden", "oos", "overridden_bacnet"};
+                const char* names[] = {"Alarme", "Défaut", "Forçage Manuel", "Hors Service", "Forçage BACnet"};
+                const char* icons[] = {"mdi:alarm-light", "mdi:alert", "mdi:hand-back-right", "mdi:power-plug-off", "mdi:lan-pending"};
                 
-                for (int i = 0; i < 4; i++) {
+                for (int i = 0; i < 5; i++) {
                     JsonDocument flag_doc;
                     char flag_uniq_id[128];
                     snprintf(flag_uniq_id, sizeof(flag_uniq_id), "bacnet_%lu_%s_%lu_%s",
@@ -1273,8 +1273,8 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                  * sur le topic de configuration. HA retire automatiquement l'entité. */
                 esp_mqtt_client_publish(mqtt_client, topic, "", 0, 1, 1);
 
-                // AJOUT CHIRURGICAL : Supprimer également les 4 sensors de status_flags (et nettoyer les anciens binary_sensors)
-                const char* flags[] = {"alarm", "fault", "overridden", "oos"};
+                // AJOUT CHIRURGICAL : Supprimer également les 5 sensors de status_flags (et nettoyer les anciens binary_sensors)
+                const char* flags[] = {"alarm", "fault", "overridden", "oos", "overridden_bacnet"};
                 for (const char* flag : flags) {
                     char flag_topic_bin[128];
                     snprintf(flag_topic_bin, sizeof(flag_topic_bin), "homeassistant/binary_sensor/bacnet_%lu_%s_%lu_%s/config",
@@ -1389,6 +1389,7 @@ void publish_mqtt_topic(uint32_t ulDeviceId, BACnetObject& obj, uint8_t prop_id,
         xJsonDoc["fault"]      = (obj.ucStatusFlags & BACNET_STATUS_FAULT) != 0;
         xJsonDoc["overridden"] = (obj.ucStatusFlags & BACNET_STATUS_OVERRIDDEN) != 0;
         xJsonDoc["oos"]        = (obj.ucStatusFlags & BACNET_STATUS_OUT_OF_SERVICE) != 0;
+        xJsonDoc["overridden_bacnet"] = obj.xOverriddenBacnet;
 
         serializeJson(xJsonDoc, pub.value_string, sizeof(pub.value_string));
     } 
@@ -1488,8 +1489,8 @@ void unpublish_ha_discovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type, co
                     esp_mqtt_client_publish(mqtt_client, topic, "", 0, 1, 1);
                 }
 
-                // AJOUT CHIRURGICAL : Supprimer également les 4 sensors de status_flags lors du nettoyage complet (et nettoyer les anciens binary_sensors)
-                const char* flags[] = {"alarm", "fault", "overridden", "oos"};
+                // AJOUT CHIRURGICAL : Supprimer également les 5 sensors de status_flags lors du nettoyage complet (et nettoyer les anciens binary_sensors)
+                const char* flags[] = {"alarm", "fault", "overridden", "oos", "overridden_bacnet"};
                 for (const char* flag : flags) {
                     char flag_topic_bin[128];
                     snprintf(flag_topic_bin, sizeof(flag_topic_bin), "homeassistant/binary_sensor/bacnet_%lu_%s_%lu_%s/config",
