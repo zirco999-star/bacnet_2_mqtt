@@ -385,13 +385,13 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                                 <div style="font-size:0.55rem; color:var(--muted); margin-top:2px">${dev.vendor || 'Unknown Vendor'}</div>
                             </div>
                             <div class="dev-actions">
-                                <button class="btn btn-s btn-sm" onclick="event.stopPropagation(); reloadDevice(${dev.device_id})">↻ Reload</button>
-                                <label class="switch" onclick="event.stopPropagation()"><input type="checkbox" ${dev.enabled?'checked':''} onchange="toggleDevice(${dev.device_id})"><span class="slider"></span></label>
+                                <button class="btn btn-s btn-sm" onclick="event.stopPropagation(); reloadDevice(${dev.id})">↻ Reload</button>
+                                <label class="switch" onclick="event.stopPropagation()"><input type="checkbox" ${dev.enabled?'checked':''} onchange="toggleDevice(${dev.id})"><span class="slider"></span></label>
                             </div>
                         </summary>
                         <div class="card-b" style="padding:0">
                             <table class="compact-table">
-                                <thead><tr><th style="width:22px"></th><th style="width:50px">OBJ</th><th>NAME / UNIT</th><th style="width:55px">VAL</th><th style="width:35px">POLL</th></tr></thead>
+                                <thead><tr><th style="width:22px"></th><th style="width:50px">OBJ</th><th>CONFIG</th><th style="width:55px">VAL</th><th style="width:35px">POLL</th></tr></thead>
                                 <tbody>`;
                     if (Array.isArray(dev.objects)) {
                         dev.objects.forEach((o, idx) => {
@@ -403,15 +403,23 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                             html += `<tr data-did="${dev.device_id}" data-inst="${o.inst}" data-type="${o.type}" class="${rowClass}">
                                 <td style="text-align:center"><button class="btn btn-s btn-sm" style="padding:2px 4px" onclick="reloadObject(${dev.device_id}, ${o.inst}, ${o.type})" title="Reload Object Properties">↻</button></td>
                                 <td><span class="obj-badge">${typeStr}:${o.inst}</span></td>
-                                <td>
-                                    <input type="text" class="in-text" value="${o.name || ''}" onchange="saveObj(this)">
-                                    <select onchange="saveObj(this)" style="margin-top:4px">`;
+                                <td style="padding: 0.4rem;">
+                                    <div style="display:grid; grid-template-columns: 2fr 1fr; gap: 4px;">
+                                        <input type="text" class="in-text" value="${o.name || ''}" maxlength="30" placeholder="Name" onchange="saveObj(this)">
+                                        <select onchange="saveObj(this)">`;
                             for(let u in UNITS) {
                                 let label = UNITS[u];
                                 let isSelected = (o.unit === label) || (!o.unit && u === "") || (o.unit === "no-units" && label === "no-units");
                                 html += `<option value="${u}" ${isSelected?'selected':''}>${label}</option>`;
                             }
-                            html += `</select></td>
+                            html += `           </select>
+                                    </div>
+                                    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin-top: 4px;">
+                                        <input type="text" class="in-text min-in" value="${o.min_ref || (o.min !== undefined && o.min !== null ? o.min : '')}" maxlength="6" placeholder="Min" onchange="saveObj(this)">
+                                        <input type="text" class="in-text max-in" value="${o.max_ref || (o.max !== undefined && o.max !== null ? o.max : '')}" maxlength="6" placeholder="Max" onchange="saveObj(this)">
+                                        <input type="number" class="in-text step-in" value="${o.step !== undefined && o.step !== null ? o.step : '1.0'}" step="0.1" placeholder="Step" onchange="saveObj(this)">
+                                    </div>
+                                </td>
                                 <td><span class="val-text">${valDisplay}</span></td>
                                 <td><label class="switch"><input type="checkbox" ${o.poll?'checked':''} onchange="saveObj(this, true)"><span class="slider"></span></label></td>
                             </tr>`;
@@ -431,11 +439,14 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             const did = tr.dataset.did;
             const inst = tr.dataset.inst;
             const type = tr.dataset.type;
-            const name = tr.querySelector('.in-text').value;
+            const name = tr.querySelector('input[placeholder="Name"]').value;
             const unit = tr.querySelector('select').value;
+            const min_val = tr.querySelector('.min-in').value;
+            const max_val = tr.querySelector('.max-in').value;
+            const step_val = tr.querySelector('.step-in').value;
             const poll = tr.querySelector('input[type="checkbox"]').checked;
             if(isToggle) tr.classList.toggle('grisé', !poll);
-            const params = new URLSearchParams({ did, inst, type, name, unit: UNITS[unit], poll: poll?1:0 });
+            const params = new URLSearchParams({ did, inst, type, name, unit: UNITS[unit], poll: poll?1:0, min: min_val, max: max_val, step: step_val });
             fetch('/api/save_object', {method:'POST', body:params});
         }
 
