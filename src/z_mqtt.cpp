@@ -517,7 +517,20 @@ static void mqtt_gatekeeper_task(void *pv) {
                 pub_b2m("rssi", String(WiFi.RSSI()));
                 pub_b2m("heap", String(ESP.getFreeHeap() / 1024));
                 pub_b2m("min_heap", String(ESP.getMinFreeHeap() / 1024));
-                pub_b2m("uptime", String(millis() / 1000));
+                unsigned long ulUptimeSec = millis() / 1000;
+                unsigned long ulDays = ulUptimeSec / 86400;
+                unsigned long ulHours = (ulUptimeSec % 86400) / 3600;
+                unsigned long ulMinutes = (ulUptimeSec % 3600) / 60;
+                unsigned long ulSec = ulUptimeSec % 60;
+                char cUptimeStr[64];
+                if (ulDays > 0) {
+                    snprintf(cUptimeStr, sizeof(cUptimeStr), "%luj %luh %lum %lus", ulDays, ulHours, ulMinutes, ulSec);
+                } else if (ulHours > 0) {
+                    snprintf(cUptimeStr, sizeof(cUptimeStr), "%luh %lum %lus", ulHours, ulMinutes, ulSec);
+                } else {
+                    snprintf(cUptimeStr, sizeof(cUptimeStr), "%lum %lus", ulMinutes, ulSec);
+                }
+                pub_b2m("uptime", String(cUptimeStr));
 
                 size_t n_dev = 0;
                 if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
@@ -857,6 +870,7 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
             if (dev_cla) doc["dev_cla"] = dev_cla;
             if (unit) doc["unit_of_meas"] = unit;
             if (icon) doc["icon"] = icon;
+
             if (is_binary) {
                 doc["pl_on"] = "ON";
                 doc["pl_off"] = "OFF";
@@ -876,7 +890,7 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
         };
 
         pub_gw_sensor("ver", "Gateway Version", NULL, NULL, "mdi:information-outline");
-        pub_gw_sensor("uptime", "Gateway Uptime", "duration", "s", "mdi:timer-outline");
+        pub_gw_sensor("uptime", "Gateway Uptime", NULL, NULL, "mdi:timer-outline");
         pub_gw_sensor("rssi", "Gateway WiFi RSSI", "signal_strength", "dBm");
         pub_gw_sensor("heap", "Gateway Free Heap", "data_size", "KB", "mdi:memory");
         pub_gw_sensor("min_heap", "Gateway Min Heap", "data_size", "KB", "mdi:memory");

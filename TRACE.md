@@ -778,4 +778,13 @@
   - **Correctif Vanne BO:6** : Remplacement de l'ID erroné `switch.ecb_203_vanne_bo_6` par l'ID réel `switch.ecb_203_vanne` pour la commande dans l'onglet des commandes binaires.
   - Redémarrage de Home Assistant et validation de l'état `RUNNING` après 55 secondes (les commandes de volets et de vanne répondent parfaitement).
 
-
+## [v7.1.9] - 2026-06-17
+### Modification
+- **Formatage de l'Uptime Gateway en C++ et nettoyage des attributs HA** :
+  - Modification de `src/z_mqtt.cpp` pour calculer et formater l'uptime de la Gateway directement en C++ (format lisible ex: "22m 44s", "1h 22m 40s") avant de le publier sous forme de chaîne de caractères sur MQTT.
+  - Suppression de la configuration du template Jinja (`val_tpl`) pour l'entité `uptime` dans la fonction `publish_ha_autodiscovery` de `src/z_mqtt.cpp` afin d'utiliser directement la valeur textuelle formatée.
+  - Retrait des attributs de mesure obsolètes (`unit_of_measurement` et `device_class`) de l'appel de découverte MQTT pour l'uptime en passant `NULL` pour les deux dans la fonction `pub_gw_sensor`.
+  - Incrémentation de la version globale du firmware à `v7.1.9` dans `src/z_config.h`.
+- **Validation** :
+  - Compilation et flashage OTA `v7.1.9` réussis sur `192.168.1.50`.
+  - Vérification de l'état du capteur via l'API Home Assistant : l'état actuel de `sensor.bacnet2mqtt_gateway_gateway_uptime` renvoie bien une chaîne formatée (ex: `"1m 12s"`) et les attributs de mesure (`unit_of_measurement` et `device_class`) ont été supprimés avec succès.
