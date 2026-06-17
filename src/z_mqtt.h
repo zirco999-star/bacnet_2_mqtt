@@ -42,7 +42,7 @@ struct MQTTPublishJob {
     uint16_t obj_type;         ///< Type d'objet BACnet (pour construire le topic).
     uint32_t obj_instance;     ///< Instance de l'objet (pour construire le topic).
     uint8_t prop_id;           ///< Identifiant de la propriété publiée (85=Present_Value, etc.).
-    char value_string[64];     ///< Valeur sérialisée en chaîne de caractères pour le payload MQTT.
+    char value_string[128];    ///< Valeur sérialisée en JSON ou chaîne pour le payload MQTT.
     bool retain;               ///< true pour publier avec le flag MQTT RETAIN (persistance broker).
 };
 

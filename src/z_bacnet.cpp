@@ -1036,6 +1036,32 @@ uint16_t build_write_property_outofservice_apdu(uint8_t* buffer, uint8_t invoke_
     return len;
 }
 
+// AJOUT CHIRURGICAL : Constructeur APDU pour relâcher une priorité (Write NULL)
+// Raison : Indispensable pour effacer une consigne manuelle (Priorité 8) et rendre la main au programme interne de l'automate.
+uint16_t build_write_property_relinquish_apdu(uint8_t* pucBuffer, uint8_t ucInvokeId, uint16_t usObjType, uint32_t ulObjInstance, uint8_t ucPropId, uint8_t ucPriority) {
+    uint16_t usLen = 0;
+    pucBuffer[usLen++] = 0x01; pucBuffer[usLen++] = 0x04; pucBuffer[usLen++] = 0x02; pucBuffer[usLen++] = 0x03;
+    pucBuffer[usLen++] = ucInvokeId; pucBuffer[usLen++] = 0x0F; pucBuffer[usLen++] = 0x0C;
+    
+    uint32_t ulOid = ((uint32_t)usObjType << 22) | (ulObjInstance & 0x3FFFFF);
+    pucBuffer[usLen++] = (ulOid >> 24) & 0xFF; pucBuffer[usLen++] = (ulOid >> 16) & 0xFF; pucBuffer[usLen++] = (ulOid >> 8) & 0xFF; pucBuffer[usLen++] = ulOid & 0xFF;
+    
+    pucBuffer[usLen++] = 0x19; pucBuffer[usLen++] = ucPropId;   
+    pucBuffer[usLen++] = 0x3E; // Open Tag 3
+    
+    // Application Tag 0 (NULL).
+    pucBuffer[usLen++] = 0x00;   
+    
+    pucBuffer[usLen++] = 0x3F; // Close Tag 3
+    
+    if (ucPriority > 0 && ucPriority <= 16) {
+        pucBuffer[usLen++] = 0x49; // Tag 4 (Priority)
+        pucBuffer[usLen++] = ucPriority;
+    }
+    
+    return usLen;
+}
+
 /**
  * @brief Construit l'APDU non confirmé de type I-Am pour s'annoncer sur le réseau BACnet.
  * @details Spécifie notre propre Instance Device, notre capacité maximale d'APDU acceptée, et notre code vendeur.
@@ -1315,8 +1341,10 @@ void execute_bacnet_work() {
                 } else if (j.prop_id == 81) { // Out_Of_Service
                     bool xIsOos = (j.write_value > 0.5f);
                     l = build_write_property_outofservice_apdu(b, next_invoke_id++, j.obj_type, j.obj_instance, xIsOos);
-                    z_log(pdLOG_DEBUG, "BACNET", "APDU hex : ");
                     z_log(pdLOG_INFO, "BACNET", "WRITE obj: %u:%lu (Out_Of_Service) -> %d\n", j.obj_type, (unsigned long)j.obj_instance, xIsOos);
+                } else if (isnan(j.write_value)) { // AJOUT CHIRURGICAL : Si la valeur est NAN, c'est un Relinquish (AUTO)
+                    l = build_write_property_relinquish_apdu(b, next_invoke_id++, j.obj_type, j.obj_instance, j.prop_id, j.priority);
+                    z_log(pdLOG_INFO, "BACNET", "WRITE obj: %u:%lu (Prop %u) -> RELINQUISH/AUTO (Prio: %u)\n", j.obj_type, (unsigned long)j.obj_instance, j.prop_id, j.priority);
                 } else { // Present_Value (85) ou autre numérique
                     l = build_write_property_value_apdu(b, next_invoke_id++, j.obj_type, j.obj_instance, j.prop_id, j.write_value, j.priority);
                     z_log(pdLOG_INFO, "BACNET", "WRITE obj: %u:%lu (Prop %u) -> %.2f (Prio: %u)\n", j.obj_type, (unsigned long)j.obj_instance, j.prop_id, j.write_value, j.priority);

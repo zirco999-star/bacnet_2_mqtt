@@ -904,7 +904,10 @@ void setup_web_routes() {
             uint16_t usType = request->getParam("type", true)->value().toInt();
             uint32_t ulInst = request->getParam("inst", true)->value().toInt();
             uint8_t ucProp = request->getParam("prop", true)->value().toInt();
-            float fVal = request->getParam("val", true)->value().toFloat();
+            
+            // MODIFICATION CHIRURGICALE : Autoriser le mot clé "AUTO" pour générer un NAN (Relinquish)
+            String xValStr = request->getParam("val", true)->value();
+            float fVal = xValStr.equalsIgnoreCase("AUTO") ? NAN : xValStr.toFloat();
             
             uint8_t ucPriority = request->hasParam("priority", true) ? request->getParam("priority", true)->value().toInt() : 0;
             

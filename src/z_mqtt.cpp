@@ -326,6 +326,9 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                                                         break;
                                                     }
                                                 }
+                                            } else if (String(payload_buf).equalsIgnoreCase("AUTO")) {
+                                                // AJOUT CHIRURGICAL : Prise en charge du mot clé AUTO depuis MQTT (Relinquish)
+                                                job.write_value = NAN;
                                             } else if (job.obj_type == 14 || job.obj_type == 19) {
                                                 /* Multi-State Output/Value : conversion texte → index.
                                                  * BACnet utilise des index 1-based pour les états.
@@ -1006,6 +1009,7 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                 doc["uniq_id"] = String(uniq_id);
                 doc["name"] = String(obj_name); 
                 doc["stat_t"] = "~/state";
+                doc["val_tpl"] = "{{ value_json.val }}"; // AJOUT CHIRURGICAL : Extraction de la valeur depuis le JSON
                 doc["avty_t"] = String(lwt_topic);
                 doc["pl_avail"] = "online";
                 doc["pl_not_avail"] = "offline";
@@ -1188,6 +1192,7 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                         
                         num_doc["stat_t"] = "~/state"; 
                         num_doc["cmd_t"] = "~/set";
+                        num_doc["val_tpl"] = "{{ value_json.val }}"; // AJOUT CHIRURGICAL : Extraction pour le forçage
 
                         // v7.0.14: Forçage des bornes min à -1.0 et max à 40.0 pour les valeurs de forçage
                         num_doc["min"] = -1.0f;
@@ -1216,10 +1221,64 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                     }
                 }
                 
+                // AJOUT CHIRURGICAL : Publication des 4 binary_sensors de status_flags pour cet objet
+                const char* flags[] = {"alarm", "fault", "overridden", "oos"};
+                const char* names[] = {"Alarme", "Défaut", "Forçage Manuel", "Hors Service"};
+                const char* classes[] = {"problem", "problem", "update", "connectivity"};
+                
+                for (int i = 0; i < 4; i++) {
+                    JsonDocument flag_doc;
+                    char flag_uniq_id[128];
+                    snprintf(flag_uniq_id, sizeof(flag_uniq_id), "bacnet_%lu_%s_%lu_%s",
+                             (unsigned long)current_did, t_str, (unsigned long)obj_inst, flags[i]);
+                    char flag_config_topic[128];
+                    snprintf(flag_config_topic, sizeof(flag_config_topic), "homeassistant/binary_sensor/%s/config", flag_uniq_id);
+                    
+                    flag_doc["~"] = String(base_topic);
+                    flag_doc["uniq_id"] = String(flag_uniq_id);
+                    flag_doc["name"] = String(obj_name) + " " + names[i];
+                    flag_doc["stat_t"] = "~/state";
+                    flag_doc["avty_t"] = String(lwt_topic);
+                    flag_doc["pl_avail"] = "online";
+                    flag_doc["pl_not_avail"] = "offline";
+                    
+                    char flag_val_tpl[128];
+                    snprintf(flag_val_tpl, sizeof(flag_val_tpl), "{{ 'ON' if value_json.%s else 'OFF' }}", flags[i]);
+                    flag_doc["val_tpl"] = String(flag_val_tpl);
+                    
+                    if (strlen(classes[i]) > 0) {
+                        flag_doc["dev_cla"] = classes[i];
+                    }
+                    
+                    JsonObject flag_device = flag_doc["dev"].to<JsonObject>();
+                    JsonArray flag_ids = flag_device["ids"].to<JsonArray>();
+                    flag_ids.add(String(dev_id_str));
+                    flag_device["name"] = dev_name.length() > 0 ? String(dev_name) : String(dev_id_str);
+                    flag_device["mf"] = dev_vendor.length() > 0 ? String(dev_vendor) : "BACnet Manufacturer";
+                    flag_device["sw"] = configVERSION_GLOBAL;
+                    
+                    String flag_payload;
+                    serializeJson(flag_doc, flag_payload);
+                    if (esp_mqtt_client_publish(mqtt_client, flag_config_topic, flag_payload.c_str(), flag_payload.length(), 1, 1) < 0) {
+                        z_log(pdLOG_WARN, "MQTT", "Discovery publish failed for flag %s. Outbox full?\n", flag_uniq_id);
+                        vTaskDelay(pdMS_TO_TICKS(100));
+                    } else {
+                        total_published++;
+                    }
+                }
             } else if ((!dev_enabled || !obj_enabled) && dev_discovery_done) {
                 /* Suppression de l'entité HA : publication d'un payload vide (retained)
                  * sur le topic de configuration. HA retire automatiquement l'entité. */
                 esp_mqtt_client_publish(mqtt_client, topic, "", 0, 1, 1);
+
+                // AJOUT CHIRURGICAL : Supprimer également les 4 binary_sensors de status_flags
+                const char* flags[] = {"alarm", "fault", "overridden", "oos"};
+                for (const char* flag : flags) {
+                    char flag_topic[128];
+                    snprintf(flag_topic, sizeof(flag_topic), "homeassistant/binary_sensor/bacnet_%lu_%s_%lu_%s/config",
+                             (unsigned long)current_did, t_str, (unsigned long)obj_inst, flag);
+                    esp_mqtt_client_publish(mqtt_client, flag_topic, "", 0, 1, 1);
+                }
             }
 
             if (dev_discovery_done) {
@@ -1286,26 +1345,45 @@ void publish_mqtt_topic(uint32_t ulDeviceId, BACnetObject& obj, uint8_t prop_id,
         if (strlen(obj.cName) == 0) return;
         strlcpy(pub.value_string, obj.cName, sizeof(pub.value_string));
     } else if (prop_id == 85) {
-        /* Propriété Present_Value : formatage selon le type d'objet. */
+        /* Propriété Present_Value : formatage selon le type d'objet et empaquetage JSON */
+        char val_str[64] = {0};
         switch(obj.usType) {
             case OBJ_MULTI_STATE_INPUT:
             case OBJ_MULTI_STATE_OUTPUT:
             case OBJ_MULTI_STATE_VALUE:
-                /* Les Multi-State BACnet utilisent des index 1-based.
-                 * Si des state_texts existent, on publie le texte correspondant
-                 * (ex: "Auto", "Manuel", "Arrêt") plutôt que l'index numérique.
-                 * Cela permet à HA d'afficher directement le libellé dans l'UI. */
                 if (!obj.state_texts.empty()) {
                     int idx = (int)obj.fPresentValue - 1;
                     if (idx >= 0 && idx < (int)obj.state_texts.size()) {
-                        strlcpy(pub.value_string, obj.state_texts[idx].c_str(), sizeof(pub.value_string));
-                    } else snprintf(pub.value_string, sizeof(pub.value_string), "%.0f", obj.fPresentValue);
-                } else snprintf(pub.value_string, sizeof(pub.value_string), "%.0f", obj.fPresentValue);
+                        strlcpy(val_str, obj.state_texts[idx].c_str(), sizeof(val_str));
+                    } else snprintf(val_str, sizeof(val_str), "%.0f", obj.fPresentValue);
+                } else snprintf(val_str, sizeof(val_str), "%.0f", obj.fPresentValue);
                 break;
             default:
-                snprintf(pub.value_string, sizeof(pub.value_string), "%.2f", obj.fPresentValue);
+                snprintf(val_str, sizeof(val_str), "%.2f", obj.fPresentValue);
                 break;
         }
+
+        // Création du document JSON en PSRAM
+        JsonDocument xJsonDoc;
+        
+        // Insertion sécurisée du type de valeur (string pour Multi-State avec texte, float sinon)
+        if (obj.usType == OBJ_MULTI_STATE_INPUT || obj.usType == OBJ_MULTI_STATE_OUTPUT || obj.usType == OBJ_MULTI_STATE_VALUE) {
+            if (!obj.state_texts.empty()) {
+                xJsonDoc["val"] = String(val_str);
+            } else {
+                xJsonDoc["val"] = atof(val_str);
+            }
+        } else {
+            xJsonDoc["val"] = atof(val_str);
+        }
+
+        // Extraction et normalisation des status flags depuis le cache (0x01, 0x02, 0x04, 0x08)
+        xJsonDoc["alarm"]      = (obj.ucStatusFlags & BACNET_STATUS_IN_ALARM) != 0;
+        xJsonDoc["fault"]      = (obj.ucStatusFlags & BACNET_STATUS_FAULT) != 0;
+        xJsonDoc["overridden"] = (obj.ucStatusFlags & BACNET_STATUS_OVERRIDDEN) != 0;
+        xJsonDoc["oos"]        = (obj.ucStatusFlags & BACNET_STATUS_OUT_OF_SERVICE) != 0;
+
+        serializeJson(xJsonDoc, pub.value_string, sizeof(pub.value_string));
     } 
     /* Propriété Out_Of_Service : formatage binaire "ON"/"OFF" pour le switch HA. */
     else if (prop_id == 81) {
@@ -1401,6 +1479,15 @@ void unpublish_ha_discovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type, co
                     char topic[128];
                     snprintf(topic, sizeof(topic), "homeassistant/%s/%s/config", comp, uniq_id);
                     esp_mqtt_client_publish(mqtt_client, topic, "", 0, 1, 1);
+                }
+
+                // AJOUT CHIRURGICAL : Supprimer également les 4 binary_sensors de status_flags lors du nettoyage complet
+                const char* flags[] = {"alarm", "fault", "overridden", "oos"};
+                for (const char* flag : flags) {
+                    char flag_topic[128];
+                    snprintf(flag_topic, sizeof(flag_topic), "homeassistant/binary_sensor/bacnet_%lu_%s_%lu_%s/config",
+                             (unsigned long)dev.ulDeviceId, t_str, (unsigned long)obj.ulInstance, flag);
+                    esp_mqtt_client_publish(mqtt_client, flag_topic, "", 0, 1, 1);
                 }
                 vTaskDelay(pdMS_TO_TICKS(10));
             }

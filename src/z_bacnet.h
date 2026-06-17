@@ -624,6 +624,18 @@ uint16_t build_write_property_name_apdu(uint8_t* buffer, uint8_t invoke_id, uint
 uint16_t build_write_property_value_apdu(uint8_t* buffer, uint8_t invoke_id, uint16_t obj_type, uint32_t obj_instance, uint8_t prop_id, float value, uint8_t ucPriority);
 
 /**
+ * @brief Construit une APDU WriteProperty pour libérer une priorité (Write NULL).
+ * @param pucBuffer    Buffer de sortie pour l'APDU encodée.
+ * @param ucInvokeId   Identifiant d'invocation.
+ * @param usObjType    Type de l'objet cible.
+ * @param ulObjInstance Instance de l'objet cible.
+ * @param ucPropId     Identifiant de la propriété à relâcher.
+ * @param ucPriority   Priorité BACnet à effacer (1-16).
+ * @return Longueur de l'APDU encodée en octets.
+ */
+uint16_t build_write_property_relinquish_apdu(uint8_t* pucBuffer, uint8_t ucInvokeId, uint16_t usObjType, uint32_t ulObjInstance, uint8_t ucPropId, uint8_t ucPriority);
+
+/**
  * @brief Construit une APDU WriteProperty pour modifier Out_Of_Service (Prop 81).
  * @param buffer         Buffer de sortie pour l'APDU encodée.
  * @param invoke_id      Identifiant d'invocation.

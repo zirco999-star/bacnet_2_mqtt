@@ -686,3 +686,18 @@
   - Validation réussie par script `test_oos_strict.py` : l'écriture sur `AI:5001` sans OoS est rejetée et réinitialisée, tandis que l'écriture après passage de OoS à ON est acceptée avec priorité 8 et déclenche correctement la demande de chauffage associée (`DemandeChaud1`).
   - Déploiement de la version `v7.0.18` par OTA validé. Original parameters restored.
 
+## [v7.1.0] - 2026-06-17
+### Modification
+- **Surveillance Globale Status_Flags (Prop 111)** :
+  - Modification de `publish_mqtt_topic` dans `src/z_mqtt.cpp` pour formater le topic d'état Present_Value (85) sous forme d'un objet JSON contenant la valeur numérique (`val`) et les 4 booléens d'état (`alarm`, `fault`, `overridden`, `oos`).
+  - Ajout de la publication dynamique des configurations Auto-Discovery pour les 4 binary_sensors associés (problem, connectivity, update) afin de regrouper les informations de diagnostic dans Home Assistant sans augmenter la charge réseau.
+  - Ajout de la clé `val_tpl` (value_template) pour extraire le champ `val` sur toutes les entités principales de découverte et éviter d'afficher le JSON brut.
+  - Extension du nettoyage `unpublish` pour inclure la suppression propre des configurations de ces 4 binary_sensors de diagnostic.
+- **Commande Relinquish (AUTO)** :
+  - Ajout de la fonction APDU `build_write_property_relinquish_apdu` dans `src/z_bacnet.cpp` (déclarée dans `src/z_bacnet.h`) pour écrire la valeur `NULL` (Application Tag 0) à une priorité donnée.
+  - Interception des valeurs d'écriture `NAN` (Not-A-Number) dans `execute_bacnet_work()` pour déclencher l'APDU Relinquish.
+  - Prise en charge de la commande `"AUTO"` dans l'API REST Web `/api/writevalue` (dans `src/z_network.cpp`) et le parser MQTT `/set` (dans `src/z_mqtt.cpp`) pour traduire l'instruction en `NAN`.
+- **Validation** :
+  - Compilation et flashage OTA `v7.1.0` réussis sur 192.168.1.50.
+  - Validation réussie par le script temporaire `tmp/test_v7.1.0_features.py` : les topics d'états MQTT publient bien le JSON, et l'écriture du mot clé `"AUTO"` libère correctement le tableau de priorité de l'automate (retour de `val: null` sur l'objet).
+
