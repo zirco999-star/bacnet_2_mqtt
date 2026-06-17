@@ -830,7 +830,7 @@ void setup_web_routes() {
             xJob.type = JOB_WRITE_PROP; 
             xJob.obj_type = usType;
             xJob.obj_instance = ulInst;
-            xJob.prop_id = 96; // PROP_OUT_OF_SERVICE
+            xJob.prop_id = 81; // PROP_OUT_OF_SERVICE
             xJob.write_value = xState ? 1.0f : 0.0f;
             xJob.priority = 8; // Priorité 8 (Manuel) par défaut pour le débrayage
             xJob.target_mac = 255;
@@ -850,7 +850,7 @@ void setup_web_routes() {
                                     o.ucStatusFlags &= ~BACNET_STATUS_OUT_OF_SERVICE;
                                 }
                                 o.ulLastUpdate = millis();
-                                publish_mqtt_topic(dev.ulDeviceId, o, 96, false);
+                                publish_mqtt_topic(dev.ulDeviceId, o, 81, false);
                                 break;
                             }
                         }
@@ -892,23 +892,25 @@ void setup_web_routes() {
      * @param   type     (POST) Type d'objet BACnet.
      * @param   inst     (POST) Instance de l'objet.
      * @param   prop     (POST) ID de propriété BACnet (ex: 85=Present_Value).
-     * @param   val      (POST) Valeur flottante à écrire.
+     * @param   val      (POST) Valeur flottante/chaîne à écrire.
      * @param   priority (POST, opt) Priorité BACnet 1-16 (défaut: 0 = pas de priorité).
      */
     webServer.on("/api/writevalue", HTTP_POST, [](AsyncWebServerRequest *request){
         if(!is_authenticated(request)) return;
         if (request->hasParam("did", true) && request->hasParam("type", true) && 
             request->hasParam("inst", true) && request->hasParam("prop", true) && 
-            request->hasParam("val", true)) {
+            (request->hasParam("val", true) || request->hasParam("name", true))) {
             
             uint32_t ulDid = request->getParam("did", true)->value().toInt();
             uint16_t usType = request->getParam("type", true)->value().toInt();
             uint32_t ulInst = request->getParam("inst", true)->value().toInt();
             uint8_t ucProp = request->getParam("prop", true)->value().toInt();
             
-            // MODIFICATION CHIRURGICALE : Autoriser le mot clé "AUTO" pour générer un NAN (Relinquish)
-            String xValStr = request->getParam("val", true)->value();
-            float fVal = xValStr.equalsIgnoreCase("AUTO") ? NAN : xValStr.toFloat();
+            float fVal = NAN;
+            if (request->hasParam("val", true)) {
+                String xValStr = request->getParam("val", true)->value();
+                fVal = xValStr.equalsIgnoreCase("AUTO") ? NAN : xValStr.toFloat();
+            }
             
             uint8_t ucPriority = request->hasParam("priority", true) ? request->getParam("priority", true)->value().toInt() : 0;
             
@@ -923,6 +925,12 @@ void setup_web_routes() {
             xJob.write_value = fVal;
             xJob.priority = ucPriority; // L'API transmet la priorité au moteur BACnet
             xJob.target_mac = 255;
+            
+            if (ucProp == 77 && request->hasParam("name", true)) {
+                strlcpy(xJob.name, request->getParam("name", true)->value().c_str(), sizeof(xJob.name));
+            } else if (ucProp == 77 && request->hasParam("val", true)) {
+                strlcpy(xJob.name, request->getParam("val", true)->value().c_str(), sizeof(xJob.name));
+            }
             
             // Recherche de l'adresse MAC cible
             if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(500))) {
@@ -959,7 +967,7 @@ void setup_web_routes() {
                 request->send(404, "text/plain", "Device not found");
             }
         } else {
-            request->send(400, "text/plain", "Missing params (requires: did, type, inst, prop, val)");
+            request->send(400, "text/plain", "Missing params (requires: did, type, inst, prop, val or name)");
         }
     });
 
