@@ -47,9 +47,9 @@
 
 /** @name Configuration WiFi par défaut */
 ///@{
-#define DEFAULT_SSID    "Freebox-A4297A"
+#define DEFAULT_SSID    "YOUR_WIFI_SSID"
 #define DEFAULT_STATIC_IP "192.168.1.50"
-#define DEFAULT_GATEWAY "192.168.1.1"
+#define DEFAULT_GATEWAY "192.168.1.254"
 #define DEFAULT_SUBNET "255.255.255.0"
 ///@}
 
@@ -73,9 +73,9 @@
 
 /** @name Configuration MQTT par défaut */
 ///@{
-#define DEFAULT_MQTT_SERVER "192.168.1.11"
+#define DEFAULT_MQTT_SERVER ""
 #define DEFAULT_MQTT_POLL 30
-#define DEFAULT_HA_DISCOVER true
+#define DEFAULT_HA_DISCOVER false
 ///@}
 
 /** @name Plages par défaut pour les entités Home Assistant de type 'number'
