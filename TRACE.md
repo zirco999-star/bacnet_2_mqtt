@@ -788,3 +788,14 @@
 - **Validation** :
   - Compilation et flashage OTA `v7.1.9` réussis sur `192.168.1.50`.
   - Vérification de l'état du capteur via l'API Home Assistant : l'état actuel de `sensor.bacnet2mqtt_gateway_gateway_uptime` renvoie bien une chaîne formatée (ex: `"1m 12s"`) et les attributs de mesure (`unit_of_measurement` et `device_class`) ont été supprimés avec succès.
+
+## [v7.1.10] - 2026-06-17
+### Modification
+- **Retour à l'Auto-Discovery Jinja2 pour l'Uptime Gateway** :
+  - Revert de l'uptime calculé en C++ dans `src/z_mqtt.cpp` pour publier à nouveau le nombre brut de secondes.
+  - Restauration de la configuration du template Jinja `val_tpl` dans `publish_ha_autodiscovery` pour déléguer le formatage d'uptime à Home Assistant (évite les conflits d'actualisation de l'entité).
+  - Incrémentation de la version globale du firmware à `v7.1.10` dans `src/z_config.h`.
+- **Validation** :
+  - Compilation et flashage OTA réussis.
+  - Validation dynamique dans Home Assistant : le capteur s'actualise correctement toutes les 15 secondes au format lisible.
+

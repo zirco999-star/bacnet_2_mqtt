@@ -517,20 +517,7 @@ static void mqtt_gatekeeper_task(void *pv) {
                 pub_b2m("rssi", String(WiFi.RSSI()));
                 pub_b2m("heap", String(ESP.getFreeHeap() / 1024));
                 pub_b2m("min_heap", String(ESP.getMinFreeHeap() / 1024));
-                unsigned long ulUptimeSec = millis() / 1000;
-                unsigned long ulDays = ulUptimeSec / 86400;
-                unsigned long ulHours = (ulUptimeSec % 86400) / 3600;
-                unsigned long ulMinutes = (ulUptimeSec % 3600) / 60;
-                unsigned long ulSec = ulUptimeSec % 60;
-                char cUptimeStr[64];
-                if (ulDays > 0) {
-                    snprintf(cUptimeStr, sizeof(cUptimeStr), "%luj %luh %lum %lus", ulDays, ulHours, ulMinutes, ulSec);
-                } else if (ulHours > 0) {
-                    snprintf(cUptimeStr, sizeof(cUptimeStr), "%luh %lum %lus", ulHours, ulMinutes, ulSec);
-                } else {
-                    snprintf(cUptimeStr, sizeof(cUptimeStr), "%lum %lus", ulMinutes, ulSec);
-                }
-                pub_b2m("uptime", String(cUptimeStr));
+                pub_b2m("uptime", String(millis() / 1000));
 
                 size_t n_dev = 0;
                 if (xSemaphoreTake(cache_mutex, pdMS_TO_TICKS(100))) {
@@ -870,6 +857,9 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
             if (dev_cla) doc["dev_cla"] = dev_cla;
             if (unit) doc["unit_of_meas"] = unit;
             if (icon) doc["icon"] = icon;
+            if (strcmp(key, "uptime") == 0) {
+                doc["val_tpl"] = "{% set s = value | int %}{% set d = s // 86400 %}{% set h = (s % 86400) // 3600 %}{% set m = (s % 3600) // 60 %}{% set sec = s % 60 %}{% if d > 0 %}{{ d }}j {{ h }}h {{ m }}m {{ sec }}s{% elif h > 0 %}{{ h }}h {{ m }}m {{ sec }}s{% else %}{{ m }}m {{ sec }}s{% endif %}";
+            }
 
             if (is_binary) {
                 doc["pl_on"] = "ON";
