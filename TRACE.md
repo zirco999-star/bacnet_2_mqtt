@@ -765,3 +765,17 @@
   - Compilation et déploiement réussis par flashage OTA `v7.1.7` sur `192.168.1.50`.
   - Déclenchement de la découverte via l'API `/api/trigger_discovery` pour forcer la mise à jour globale.
   - Validation par le sous-agent `ha_agent` : les entités de type `switch` (telles que `switch.ecb_203_demandechaud1`) sont désormais correctement reconnues à l'état **`off`** par Home Assistant.
+
+## [Lovelace - ECB-203] - 2026-06-17
+### Ajout
+- **Dashboard Lovelace 'ECB-203' & Intégration Ventilation / Correctifs** :
+  - Création du dashboard Lovelace dédié à l'automate ECB-203 (ID HA `445f07a00f471bf7e7fb8f10d0a3cd03`).
+  - Implémentation des scripts globaux `script.ecb_203_global_reset` (relâchement global) et `script.ecb_203_global_oos_cancel` (annulation OoS globale) dans `scripts.yaml`.
+  - Configuration de la structure Lovelace en JSON dans `.storage/lovelace.ecb_203` incluant 7 vues (Accueil, Zones, Consignes Analogiques, Ventilation & Volets, Commandes Binaires, Modes Multi-États, Sondes & Simulations).
+  - **Onglet Ventilation & Volets (Vue 4)** : Nouvel onglet regroupant les entités de ventilation (`Ventilateur`, `Ventil UTA2`, `MaxVentilateur`, `VentilLimitebasse`, et `VoletAir1`, `VoletAir2`, `VoletAir3`) avec leurs 5 diagnostics de statut et bouton Reset.
+  - **Onglet Zones (Vue 2 - Layout 2x2)** : Réorganisation en 4 grandes cartes (Salon, Bureau, Chambre, et Global/Système) disposées en grille 2x2. Chaque pièce intègre ses températures, consignes actives, actionneurs, volets de soufflage, consignes éco, et boutons de reset individuels. Les entités sont séparées de façon lisible par des dividers thématiques (`type: section`).
+  - **Page d'Accueil (Vue 1 - Commandes rapides)** : Intégration d'une carte de commandes directes pour agir manuellement sur le `Ventilateur`, `VoletAir1 (Salon)`, `VoletAir3 (Bureau)` et `VoletAir2 (Chambre)`.
+  - **Correctif Vanne BO:6** : Remplacement de l'ID erroné `switch.ecb_203_vanne_bo_6` par l'ID réel `switch.ecb_203_vanne` pour la commande dans l'onglet des commandes binaires.
+  - Redémarrage de Home Assistant et validation de l'état `RUNNING` après 55 secondes (les commandes de volets et de vanne répondent parfaitement).
+
+
