@@ -732,3 +732,15 @@
   - Compilation et déploiement réussis par flashage OTA `v7.1.4` sur `192.168.1.50`.
   - Validation via le script Python `test_v7.1.4_overridden_bacnet.py` : l'écriture à la priorité 8 active le flag `overridden_bacnet` à `True` dans `/api/objects`, et le relinquish (`AUTO`) le repasse correctement à `False`.
   - Relinquish global appliqué sur l'ensemble des 45 objets de l'automate pour restaurer la configuration d'origine.
+
+## [v7.1.5] - 2026-06-17
+### Modification
+- **Ajout d'un Bouton de Relinquish ("Reset") dans Home Assistant** :
+  - Publication d'une entité de type `button` nommée `[nom objet] Reset` pour tout objet commandable via le protocole de découverte MQTT HA (`src/z_mqtt.cpp`).
+  - Configuration de la propriété `payload_press = "AUTO"` et du topic `cmd_t = "~/set"` pour envoyer automatiquement un ordre de relinquish sur l'objet lors de l'appui dans HA.
+  - Utilisation de l'icône `mdi:restore` pour identifier visuellement le bouton.
+  - Mise à jour de la suppression unitaire et globale de la découverte pour désenregistrer proprement l'entité bouton.
+- **Validation** :
+  - Compilation et déploiement réussis par flashage OTA `v7.1.5` sur `192.168.1.50`.
+  - Validation via le sous-agent `ha_agent` communiquant avec l'API HA locale : les boutons `button.voletair1_reset` et `button.consignefinale1_reset` ont été correctement auto-découverts et rattachés aux équipements respectifs.
+  - Le relinquish global via le bouton (ou script de repli) fonctionne comme prévu.

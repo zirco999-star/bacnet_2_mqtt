@@ -1220,6 +1220,38 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                         total_published++;
                     }
                 }
+
+                // AJOUT CHIRURGICAL : Publication du bouton de libération (Reset) pour les objets commandables
+                if (obj_commandable) {
+                    JsonDocument reset_doc;
+                    char reset_uniq_id[128];
+                    snprintf(reset_uniq_id, sizeof(reset_uniq_id), "bacnet_%lu_%s_%lu_reset",
+                             (unsigned long)current_did, t_str, (unsigned long)obj_inst);
+                    char reset_config_topic[128];
+                    snprintf(reset_config_topic, sizeof(reset_config_topic), "homeassistant/button/%s/config", reset_uniq_id);
+
+                    reset_doc["~"] = String(base_topic);
+                    reset_doc["uniq_id"] = String(reset_uniq_id);
+                    reset_doc["name"] = String(obj_name) + " Reset";
+                    reset_doc["cmd_t"] = "~/set";
+                    reset_doc["payload_press"] = "AUTO";
+                    reset_doc["icon"] = "mdi:restore";
+                    reset_doc["avty_t"] = String(lwt_topic);
+                    reset_doc["pl_avail"] = "online";
+                    reset_doc["pl_not_avail"] = "offline";
+
+                    JsonObject reset_device = reset_doc["dev"].to<JsonObject>();
+                    JsonArray reset_ids = reset_device["ids"].to<JsonArray>();
+                    reset_ids.add(String(dev_id_str));
+                    reset_device["name"] = dev_name.length() > 0 ? String(dev_name) : String(dev_id_str);
+                    reset_device["mf"] = dev_vendor.length() > 0 ? String(dev_vendor) : "BACnet Manufacturer";
+                    reset_device["sw"] = configVERSION_GLOBAL;
+
+                    String reset_payload;
+                    serializeJson(reset_doc, reset_payload);
+                    esp_mqtt_client_publish(mqtt_client, reset_config_topic, reset_payload.c_str(), reset_payload.length(), 1, 1);
+                    total_published++;
+                }
                 
                 // AJOUT CHIRURGICAL : Publication des 5 sensors de status_flags pour cet objet
                 const char* flags[] = {"alarm", "fault", "overridden", "oos", "overridden_bacnet"};
@@ -1285,6 +1317,14 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                     snprintf(flag_topic_sen, sizeof(flag_topic_sen), "homeassistant/sensor/bacnet_%lu_%s_%lu_%s/config",
                              (unsigned long)current_did, t_str, (unsigned long)obj_inst, flag);
                     esp_mqtt_client_publish(mqtt_client, flag_topic_sen, "", 0, 1, 1);
+                }
+
+                // AJOUT CHIRURGICAL : Supprimer également le bouton Reset s'il existe
+                if (obj_commandable) {
+                    char reset_topic[128];
+                    snprintf(reset_topic, sizeof(reset_topic), "homeassistant/button/bacnet_%lu_%s_%lu_reset/config",
+                             (unsigned long)current_did, t_str, (unsigned long)obj_inst);
+                    esp_mqtt_client_publish(mqtt_client, reset_topic, "", 0, 1, 1);
                 }
             }
 
@@ -1501,6 +1541,14 @@ void unpublish_ha_discovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type, co
                     snprintf(flag_topic_sen, sizeof(flag_topic_sen), "homeassistant/sensor/bacnet_%lu_%s_%lu_%s/config",
                              (unsigned long)dev.ulDeviceId, t_str, (unsigned long)obj.ulInstance, flag);
                     esp_mqtt_client_publish(mqtt_client, flag_topic_sen, "", 0, 1, 1);
+                }
+                
+                // AJOUT CHIRURGICAL : Supprimer également le bouton Reset s'il existe
+                if (obj.xIsCommandable) {
+                    char reset_topic[128];
+                    snprintf(reset_topic, sizeof(reset_topic), "homeassistant/button/bacnet_%lu_%s_%lu_reset/config",
+                             (unsigned long)dev.ulDeviceId, t_str, (unsigned long)obj.ulInstance);
+                    esp_mqtt_client_publish(mqtt_client, reset_topic, "", 0, 1, 1);
                 }
                 vTaskDelay(pdMS_TO_TICKS(10));
             }
