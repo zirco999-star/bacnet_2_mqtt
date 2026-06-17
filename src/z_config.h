@@ -43,7 +43,7 @@
 // ============================================================================
 
 /** @brief Version globale du firmware, incrémentée avant chaque commit Git. */
-#define configVERSION_GLOBAL "v7.1.12"
+#define configVERSION_GLOBAL "v7.1.13"
 
 /** @name Configuration WiFi par défaut */
 ///@{
