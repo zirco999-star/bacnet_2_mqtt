@@ -257,6 +257,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                                     job.type = JOB_WRITE_PROP;
                                     job.target_mac = target_mac;
                                     job.obj_instance = t.substring(p3 + 1, p4).toInt();
+                                    job.priority = 8; // v7.0.18: Priorité 8 par défaut pour toutes les écritures MQTT
 
                                     
                                     /* Distinction entre écriture Present_Value (prop 85) et
@@ -279,61 +280,77 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                                     else if (type_str == "AI") job.obj_type = 0;
                                     else { job.type = JOB_WHO_IS; found = false; }
 
-                                    // v7.0.17: Priorité 8 (Manuel) par défaut uniquement pour les objets commandables (AO, BO, AV, BV, MSO, MSV)
-                                    // Les objets d'entrée (AI, BI, MSI) refusent les écritures avec priorité.
-                                    if (job.obj_type == 0 || job.obj_type == 3 || job.obj_type == 13) {
-                                        job.priority = 0;
-                                    } else {
-                                        job.priority = 8;
-                                    }
-                                    
                                     if (found) {
-                                        if (job.prop_id == 81) {
-                                            /* Commande OutOfService : payload "ON"/"OFF".
-                                             * Mise à jour locale immédiate du statusFlags en cache
-                                             * + publication MQTT du nouvel état pour feedback HA instantané. */
-                                            bool xState = (String(payload_buf) == "ON");
-                                            job.write_value = xState ? 1.0f : 0.0f;
-                                            
-                                            /* Émulation locale : on met à jour le bit OutOfService
-                                             * dans le cache avant même l'écriture BACnet, pour que
-                                             * l'entité HA reflète immédiatement le changement. */
+                                        bool xProceed = true;
+                                        
+                                        /* Option A (Rejet Strict) : Pour les objets d'entrée (AI=0, BI=3, MSI=13),
+                                         * l'écriture Present_Value (85) n'est autorisée que si OutOfService (81) est ON.
+                                         * Sinon, on rejette la commande et on republie l'ancienne valeur du cache. */
+                                        if (job.prop_id == 85 && (job.obj_type == 0 || job.obj_type == 3 || job.obj_type == 13)) {
+                                            bool xIsOos = false;
                                             for (auto& o : d.objects) {
                                                 if (o.usType == job.obj_type && o.ulInstance == job.obj_instance) {
-                                                    if (xState) {
-                                                        o.ucStatusFlags |= BACNET_STATUS_OUT_OF_SERVICE;
-                                                    } else {
-                                                        o.ucStatusFlags &= ~BACNET_STATUS_OUT_OF_SERVICE;
-                                                    }
-                                                    o.ulLastUpdate = millis();
-                                                    publish_mqtt_topic(d.ulDeviceId, o, 81, false);
-                                                    break;
-                                                }
-                                            }
-                                        } else if (job.obj_type == 14 || job.obj_type == 19) {
-                                            /* Multi-State Output/Value : conversion texte → index.
-                                             * BACnet utilise des index 1-based pour les états.
-                                             * Si le texte ne correspond à aucun state_text connu,
-                                             * on tente un fallback en conversion numérique directe. */
-                                            bool text_found = false;
-                                            for (auto& o : d.objects) {
-                                                if (o.usType == job.obj_type && o.ulInstance == job.obj_instance) {
-                                                    for (size_t i = 0; i < o.state_texts.size(); i++) {
-                                                        if (o.state_texts[i] == String(payload_buf)) {
-                                                            job.write_value = (float)(i + 1);
-                                                            text_found = true;
-                                                            break;
-                                                        }
+                                                    xIsOos = o.isOutOfService();
+                                                    if (!xIsOos) {
+                                                        xProceed = false;
+                                                        z_log(pdLOG_WARN, "MQTT", "Write to Input %u:%lu ignored (OutOfService is OFF)\n", 
+                                                              (unsigned int)job.obj_type, (unsigned long)job.obj_instance);
+                                                        // Republier l'ancienne valeur pour forcer HA à se resynchroniser
+                                                        publish_mqtt_topic(d.ulDeviceId, o, 85, false);
                                                     }
                                                     break;
                                                 }
                                             }
-                                            if (!text_found) job.write_value = String(payload_buf).toFloat();
-                                        } else {
-                                            /* Types analogiques et binaires : conversion directe float. */
-                                            job.write_value = String(payload_buf).toFloat();
                                         }
-                                        enqueue_bacnet_job(job);
+
+                                        if (xProceed) {
+                                            if (job.prop_id == 81) {
+                                                /* Commande OutOfService : payload "ON"/"OFF".
+                                                 * Mise à jour locale immédiate du statusFlags en cache
+                                                 * + publication MQTT du nouvel état pour feedback HA instantané. */
+                                                bool xState = (String(payload_buf) == "ON");
+                                                job.write_value = xState ? 1.0f : 0.0f;
+                                                
+                                                /* Émulation locale : on met à jour le bit OutOfService
+                                                 * dans le cache avant même l'écriture BACnet, pour que
+                                                 * l'entité HA reflète immédiatement le changement. */
+                                                for (auto& o : d.objects) {
+                                                    if (o.usType == job.obj_type && o.ulInstance == job.obj_instance) {
+                                                        if (xState) {
+                                                            o.ucStatusFlags |= BACNET_STATUS_OUT_OF_SERVICE;
+                                                        } else {
+                                                            o.ucStatusFlags &= ~BACNET_STATUS_OUT_OF_SERVICE;
+                                                        }
+                                                        o.ulLastUpdate = millis();
+                                                        publish_mqtt_topic(d.ulDeviceId, o, 81, false);
+                                                        break;
+                                                    }
+                                                }
+                                            } else if (job.obj_type == 14 || job.obj_type == 19) {
+                                                /* Multi-State Output/Value : conversion texte → index.
+                                                 * BACnet utilise des index 1-based pour les états.
+                                                 * Si le texte ne correspond à aucun state_text connu,
+                                                 * on tente un fallback en conversion numérique directe. */
+                                                bool text_found = false;
+                                                for (auto& o : d.objects) {
+                                                    if (o.usType == job.obj_type && o.ulInstance == job.obj_instance) {
+                                                        for (size_t i = 0; i < o.state_texts.size(); i++) {
+                                                            if (o.state_texts[i] == String(payload_buf)) {
+                                                                job.write_value = (float)(i + 1);
+                                                                text_found = true;
+                                                                break;
+                                                            }
+                                                        }
+                                                        break;
+                                                    }
+                                                }
+                                                if (!text_found) job.write_value = String(payload_buf).toFloat();
+                                            } else {
+                                                /* Types analogiques et binaires : conversion directe float. */
+                                                job.write_value = String(payload_buf).toFloat();
+                                            }
+                                            enqueue_bacnet_job(job);
+                                        }
                                     }
                                     break; 
                                 }

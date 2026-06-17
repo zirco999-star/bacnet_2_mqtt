@@ -676,3 +676,13 @@
   - Établissement du modèle mathématique de ventilation : `Ventilateur = max(VentilLimitebasse, sum(VoletAir_i * PoidsVolet_i * DemandeChaud_i) / 100)`.
 - **Statut Final** : Version `v7.0.17` compilée, déployée par OTA et validée. Original parameters restored.
 
+## [v7.0.18] - 2026-06-17
+### Modification
+- **Priorité 8 et Out-Of-Service pour les Inputs (AI, BI, MSI)** :
+  - Restauration de la priorité 8 par défaut pour toutes les écritures MQTT (conformément aux souhaits de l'utilisateur).
+  - Ajout de la validation strict OoS (Option A) : Les écritures de valeurs numériques (`Present_Value` / 85) sur les objets d'entrée (`AI` = 0, `BI` = 3, `MSI` = 13) ne sont transmises à l'automate (avec la priorité 8) que si l'objet est déjà configuré en mode `OutOfService` (OoS) dans le cache.
+  - Si l'OoS est désactivé, l'écriture est immédiatement rejetée localement par la passerelle, et la valeur physique actuelle du cache est republiée sur le topic MQTT de l'objet pour réinitialiser l'état dans Home Assistant (feedback visuel de rejet).
+- **Validation** :
+  - Validation réussie par script `test_oos_strict.py` : l'écriture sur `AI:5001` sans OoS est rejetée et réinitialisée, tandis que l'écriture après passage de OoS à ON est acceptée avec priorité 8 et déclenche correctement la demande de chauffage associée (`DemandeChaud1`).
+  - Déploiement de la version `v7.0.18` par OTA validé. Original parameters restored.
+
