@@ -659,3 +659,20 @@
     - Le forçage de `temp_salon` (`AI:5001`) à `-1.00` quant à lui applique la valeur à `TempFinale1` (`AV:27`), ce qui active la demande de chauffage associée **`DemandeChaud1` (`BV:1`)** de `0.00` à `1.00` après ~10s.
     - La restauration de `outofservice` à `OFF` libère immédiatement la sonde physique, ramenant les variables `TempFinale1/2` à leurs valeurs ambiantes physiques et désactivant le chauffage (`DemandeChaud1/2` repassent à `0.00`).
 
+## [v7.0.16] - 2026-06-17
+### Modification
+- **Priorité d'Écriture MQTT par Défaut** :
+  - Modification de `src/z_mqtt.cpp` pour appliquer la priorité 8 (manual operator) par défaut sur tous les jobs d'écriture MQTT (`job.priority = 8`) afin d'écraser la régulation automatique du contrôleur ECB-203 et éviter que les écritures MQTT ne soient immédiatement survolées par le programme GFX.
+- **Validation** : Compilation et flashage OTA réussis.
+
+## [v7.0.17] - 2026-06-17
+### Modification
+- **Priorité d'Écriture Sélective (Correction Régression Inputs)** :
+  - Analyse : Les objets d'entrée (Analog Input, Binary Input, Multi-State Input) ne supportent pas la priorité dans le standard BACnet (pas de Priority_Array). Forcer la priorité 8 sur ces objets causait des rejets d'écriture par le contrôleur.
+  - Correction : Limitation de la priorité 8 aux seuls objets commandables (AO, BO, AV, BV, MSO, MSV). Les objets d'entrée (AI, BI, MSI) sont désormais écrits avec la priorité 0 (sans priorité).
+- **Validation** :
+  - Validation du fonctionnement du mode `OutOfService` et du forçage de température sur `temp_salon` (AI:5001) et `temp_chambre` (AI:3) sans rejet.
+  - Identification de l'indépendance de la temporisation de demande de chaud par rapport à `TempoVolet` (le retard de déclenchement est purement lié à la période de polling).
+  - Établissement du modèle mathématique de ventilation : `Ventilateur = max(VentilLimitebasse, sum(VoletAir_i * PoidsVolet_i * DemandeChaud_i) / 100)`.
+- **Statut Final** : Version `v7.0.17` compilée, déployée par OTA et validée. Original parameters restored.
+

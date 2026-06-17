@@ -257,6 +257,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                                     job.type = JOB_WRITE_PROP;
                                     job.target_mac = target_mac;
                                     job.obj_instance = t.substring(p3 + 1, p4).toInt();
+
                                     
                                     /* Distinction entre écriture Present_Value (prop 85) et
                                      * commande OutOfService (prop 81) selon la structure du topic.
@@ -277,6 +278,14 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                                     else if (type_str == "MSO" || type_str == "MSV") job.obj_type = (type_str == "MSO") ? 14 : 19;
                                     else if (type_str == "AI") job.obj_type = 0;
                                     else { job.type = JOB_WHO_IS; found = false; }
+
+                                    // v7.0.17: Priorité 8 (Manuel) par défaut uniquement pour les objets commandables (AO, BO, AV, BV, MSO, MSV)
+                                    // Les objets d'entrée (AI, BI, MSI) refusent les écritures avec priorité.
+                                    if (job.obj_type == 0 || job.obj_type == 3 || job.obj_type == 13) {
+                                        job.priority = 0;
+                                    } else {
+                                        job.priority = 8;
+                                    }
                                     
                                     if (found) {
                                         if (job.prop_id == 81) {
