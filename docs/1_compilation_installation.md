@@ -34,7 +34,7 @@ Dans le répertoire de développement, utilisez les scripts du dossier `utils/` 
 
 1. **Compiler le firmware** :
    ```bash
-   ./utils/compil.sh
+   ./utils/Compile.sh
    ```
    Cette commande génère le fichier binaire compressé dans `build/bacnet_2_mqtt.ino.bin`.
 
@@ -44,7 +44,7 @@ Dans le répertoire de développement, utilisez les scripts du dossier `utils/` 
 3. **Flasher par OTA (Over-The-Air)** :
    Une fois la passerelle connectée à votre réseau, vous pouvez la mettre à jour à distance :
    ```bash
-   ./utils/flashOTA.sh [IP_DE_LA_PASSERELLE] [PORT]
+   ./utils/Flash_OTA.sh [IP_DE_LA_PASSERELLE] [PORT]
    # Exemple par défaut : ./utils/flashOTA.sh 192.168.1.50 3232
    ```
 
