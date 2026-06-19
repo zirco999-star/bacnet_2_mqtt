@@ -1847,7 +1847,7 @@ static void bacnet_task(void *pv) {
                 }
                 xSemaphoreGive(cache_mutex);
             }
-            z_log(pdLOG_DEBUG,"BACNET","Heartbeat - Tokens:%lu, RX:%lu, TX:%lu (State:%d, Cache:%u, Enabled:%lu)\n", 
+            z_log(pdLOG_INFO,"BACNET","Heartbeat - Tokens:%lu, RX:%lu, TX:%lu (State:%d, Cache:%u, Enabled:%lu)\n", 
                   bacnetStats.ulTokensSeen, bacnetStats.ulMsMsgsRx, bacnetStats.ulMsMsgsTx, (int)mstp_state, cache_size, enabled_count);
             z_log(pdLOG_DEBUG,"BACNET","Polling - objects polled : %lu\n", (unsigned long)period_poll_count);
             period_poll_count = 0;
