@@ -92,12 +92,22 @@ Chaque objet publie son état JSON sur le topic suivant dès qu'une variation es
 *   **Payload** : Nom texte de l'objet (ex: `TempFinale1`).
 
 ### 3. Commandes d'Écriture (Broker → Passerelle)
-Pour modifier la Present_Value d'un objet (écriture automatique à la priorité MQTT configurée, défaut `8`) :
+Pour modifier la Present_Value d'un objet (mode standard à priorité 0 ou mode manuel/forcé à priorité 8 selon le statut `manual_op`) :
 *   **Topic** : `bacnet/[DeviceID]/[Type]/[Instance]/set`
 *   **Payload** : La valeur numérique souhaitée (ex: `22.5`).
-*   **Libération (Relinquish)** : Envoyez le mot-clé `"AUTO"` pour effacer la consigne manuelle et rendre le contrôle à l'automate.
+*   **Comportement des priorités** :
+    *   Si le mode manuel est désactivé (`OFF` / `overridden_bacnet` est `false`) : L'écriture s'effectue en **priorité 0** (sans priorité). La valeur n'est pas verrouillée et le programme interne de l'automate peut l'écraser.
+    *   Si le mode manuel est activé (`ON` / `overridden_bacnet` est `true`) : L'écriture s'effectue en **priorité 8** (mode forçage manuel). La valeur est verrouillée sur l'actionneur.
+*   **Libération (Relinquish)** : Envoyez le mot-clé `"AUTO"` pour effacer le forçage manuel à la priorité 8, remettre le mode automatique (priorité 0) et restituer le contrôle au programme local de l'automate.
 
-### 4. Commandes OutOfService (Broker → Passerelle)
+### 4. Commande de Mode Manuel "Manual Operator" (Broker → Passerelle)
+Pour forcer manuellement le contrôle ou relâcher un objet commandable (AV, AO, BV, BO, MSV, MSO) :
+*   **Topic** : `bacnet/[DeviceID]/[Type]/[Instance]/manual_op/set`
+*   **Payload** : 
+    *   `"ON"` : Force la valeur actuelle du cache en **priorité 8** et verrouille l'écriture en mode manuel (toutes les écritures suivantes sur `/set` se feront également en priorité 8).
+    *   `"OFF"` : Envoie un `AUTO` (Relinquish/NULL) à la **priorité 8** pour libérer le contrôle et repasse l'objet en mode automatique (priorité 0 pour les écritures futures).
+
+### 5. Commandes OutOfService (Broker → Passerelle)
 Pour simuler une sonde en mettant l'objet hors-service :
 *   **Topic** : `bacnet/[DeviceID]/AI/[Instance]/outofservice/set`
 *   **Payload** : `"ON"` pour activer le mode hors-service, `"OFF"` pour repasser en mode automatique.

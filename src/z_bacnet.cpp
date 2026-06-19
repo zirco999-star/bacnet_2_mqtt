@@ -66,6 +66,7 @@ static uint8_t retry_count = 0;
 static BACnetJob pending_write_job;
 static BACnetJob xPendingReadJob;
 static bool xReadJobPending = false;
+static uint8_t ucLastSentTargetMac = 0xFF;
 
 static MSTP_MASTER_STATE mstp_state = MSTP_INITIALIZE;
 static uint32_t timer_silence_us = 0;
@@ -395,7 +396,7 @@ static void handle_i_am_response(uint8_t src_mac, const uint8_t *apdu, uint16_t 
  * @param src_mac Adresse MAC de l'équipement émetteur de l'ACK.
  */
 static void handle_simple_ack(uint8_t src_mac) {
-    z_log(pdLOG_DEBUG, "BACNET", "Simple-ACK from MAC %d (Success)\n", src_mac);
+    z_log(pdLOG_INFO, "BACNET", "Simple-ACK from MAC %d (Success)\n", src_mac);
     if (xSemaphoreTake(cache_mutex, 0)) {
         for (auto& d : bacnet_network_cache) {
             if (d.ucMacAddress == src_mac) {
@@ -412,19 +413,26 @@ static void handle_simple_ack(uint8_t src_mac) {
                                 o.ulLastUpdate = 0;
                                 publish_mqtt_topic(d.ulDeviceId, o, 85, false);
                                 check_ha_dependencies(d.ulDeviceId, o.usType, o.ulInstance);
-                                z_log(pdLOG_INFO, "BACNET", "Relinquish ACK for %u:%lu (Prio %u). Scheduled immediate refresh.\n",
-                                      o.usType, (unsigned long)o.ulInstance, pending_write_job.priority);
+                                z_log(pdLOG_INFO, "BACNET", "Relinquish ACK for %u:%lu (Prio %u). Scheduled immediate refresh.value : %f.\n",
+                                    o.usType, (unsigned long)o.ulInstance, pending_write_job.priority,pending_write_job.write_value);
                             } else {
                                 o.fPresentValue = pending_write_job.write_value;
                                 if (pending_write_job.priority == 8) {
                                     o.xOverriddenBacnet = true;
+                                    z_log(pdLOG_INFO, "BACNET", "Override ACK for %u:%lu (Prio %u). value : %f.\n",
+                                o.usType, (unsigned long)o.ulInstance, pending_write_job.priority,pending_write_job.write_value);
                                 }
                                 o.ulLastStatusFlagsUpdate = 0; // Force relecture StatusFlags
                                 publish_mqtt_topic(d.ulDeviceId, o, 85, false);
                                 check_ha_dependencies(d.ulDeviceId, o.usType, o.ulInstance);
+                                z_log(pdLOG_INFO, "BACNET", "ACK (85) for %u:%lu (Prio %u). Write-value : %f.\n",
+                                      o.usType, (unsigned long)o.ulInstance, pending_write_job.priority,pending_write_job.write_value);
                             }
                         } else if (pending_write_job.prop_id == 77) {
                             publish_mqtt_topic(d.ulDeviceId, o, 77, true);
+                            z_log(pdLOG_INFO, "BACNET", "ACK(77) for %u:%lu (Prio %u).value : %f.\n",
+                                o.usType, (unsigned long)o.ulInstance, pending_write_job.priority,pending_write_job.write_value);
+                        
                         } else if (pending_write_job.prop_id == 81) {
                             bool xIsOos = (pending_write_job.write_value > 0.5f);
                             if (xIsOos) {
@@ -433,6 +441,10 @@ static void handle_simple_ack(uint8_t src_mac) {
                                 o.ucStatusFlags &= ~BACNET_STATUS_OUT_OF_SERVICE;
                             }
                             publish_mqtt_topic(d.ulDeviceId, o, 81, false);
+                            publish_mqtt_topic(d.ulDeviceId, o, 85, false);
+                            z_log(pdLOG_INFO, "BACNET", "ACK(81) for %u:%lu (Prio %u). value : %f.\n",
+                                o.usType, (unsigned long)o.ulInstance, pending_write_job.priority,pending_write_job.write_value);
+                            
                         }
                         o.ulLastUpdate = millis();
                         break;
@@ -928,6 +940,7 @@ static void uart_tx(const uint8_t *buf, uint16_t len) {
  * @param len Longueur de l'APDU (0 si pas de données).
  */
 static void send_mstp_frame(uint8_t target, uint8_t type, const uint8_t* apdu, uint16_t len) {
+    if (type == 0x05) { ucLastSentTargetMac = target; }
     if (apdu && len > 4) last_sent_invoke_id = apdu[4]; else last_sent_invoke_id = 0xFF;
     if (apdu && len > 0) { memcpy(last_apdu, apdu, len); last_apdu_len = len; }
     uint8_t b[512+10]; b[0]=0x55; b[1]=0xFF; b[2]=type; b[3]=target; b[4]=sysCfg.ucMacAddress;
@@ -1262,10 +1275,52 @@ void handle_mstp_wait_for_reply() {
         bacnetStats.xRingActive = true;
 
         MSTP_Frame f = { frame_type, dest_mac, src_mac, data_len, {0}, (uint32_t)esp_timer_get_time() };
-        memcpy(f.data, data_buf, data_len); process_incoming_frame(f);
-        waiting_for_reply = false; mstp_state = MSTP_DONE_WITH_TOKEN;
+        memcpy(f.data, data_buf, data_len); 
+
+        bool xIsTargetMatch = true;
+        if (ucLastSentTargetMac != 0xFF) {
+            if (src_mac != ucLastSentTargetMac || (frame_type != 0x05 && frame_type != 0x06)) {
+                xIsTargetMatch = false;
+            } else {
+                uint8_t ucRecvInvokeId = 0xFF;
+                if (data_len >= 2 && data_buf[0] == 0x01) {
+                    uint8_t ctrl = data_buf[1];
+                    uint16_t pos = 2;
+                    if ((ctrl & 0x80) == 0) {
+                        if ((ctrl & 0x20) != 0) { if (pos + 2 < data_len) pos += 3 + data_buf[pos+2]; }
+                        if ((ctrl & 0x08) != 0) { if (pos + 2 < data_len) pos += 3 + data_buf[pos+2]; }
+                        if ((ctrl & 0x20) != 0) pos += 1;
+                        if (pos < data_len) {
+                            uint8_t *apdu = &data_buf[pos];
+                            uint16_t al = data_len - pos;
+                            uint8_t pdu_type = apdu[0] & 0xF0;
+                            if (pdu_type == 0x20 || pdu_type == 0x30 || pdu_type == 0x50 || pdu_type == 0x60 || pdu_type == 0x70) {
+                                if (al > 1) {
+                                    ucRecvInvokeId = apdu[1];
+                                }
+                            }
+                        }
+                    }
+                }
+                if (ucRecvInvokeId != 0xFF && last_sent_invoke_id != 0xFF && ucRecvInvokeId != last_sent_invoke_id) {
+                    z_log(pdLOG_DEBUG, "BACNET", "FSM: Received frame from MAC %d with mismatch Invoke ID (Received: %u, Expected: %u), processing but keeping wait.\n", src_mac, ucRecvInvokeId, last_sent_invoke_id);
+                    xIsTargetMatch = false;
+                }
+            }
+        }
+
+        process_incoming_frame(f);
+
+        if (xIsTargetMatch) {
+            waiting_for_reply = false;
+            ucLastSentTargetMac = 0xFF;
+            mstp_state = MSTP_DONE_WITH_TOKEN;
+        } else {
+            z_log(pdLOG_DEBUG, "BACNET", "FSM: Frame processed but not matching current request target. Remaining in WAIT_FOR_REPLY.\n");
+        }
     } else if (timer_silence_us >= T_REPLY_TIMEOUT_US) {
         waiting_for_reply = false;
+        ucLastSentTargetMac = 0xFF;
         if (!ring_stable) {
             poll_station = (poll_station + 1) % 128; if (poll_station == sysCfg.ucMacAddress) poll_station = (poll_station + 1) % 128;
             poll_station = (poll_station + 1) % (sysCfg.max_master + 1); if (poll_station == sysCfg.ucMacAddress) poll_station = (poll_station + 1) % (sysCfg.max_master + 1);

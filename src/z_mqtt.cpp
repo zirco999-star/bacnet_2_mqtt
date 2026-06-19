@@ -150,6 +150,14 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                 char sub_topic_oos[128];
                 snprintf(sub_topic_oos, sizeof(sub_topic_oos), "%s/+/+/+/outofservice/set", sysCfg.mqtt_prefix);
                 esp_mqtt_client_subscribe(mqtt_client, sub_topic_oos, 0);
+
+                /*
+                 * Souscription aux commandes de forçage manuel (manual_op).
+                 * Format : {prefix}/{deviceId}/{type}/{instance}/manual_op/set
+                 */
+                char sub_topic_op[128];
+                snprintf(sub_topic_op, sizeof(sub_topic_op), "%s/+/+/+/manual_op/set", sysCfg.mqtt_prefix);
+                esp_mqtt_client_subscribe(mqtt_client, sub_topic_op, 0);
                 
                 /*
                  * Après reconnexion, on force une discovery HA complète pour
@@ -257,15 +265,16 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                                     job.type = JOB_WRITE_PROP;
                                     job.target_mac = target_mac;
                                     job.obj_instance = t.substring(p3 + 1, p4).toInt();
-                                    job.priority = 8; // v7.0.18: Priorité 8 par défaut pour toutes les écritures MQTT
+                                    job.priority = 0; // Pas de priorité par défaut (ex: non commandable ou mode auto)
 
-                                    
-                                    /* Distinction entre écriture Present_Value (prop 85) et
-                                     * commande OutOfService (prop 81) selon la structure du topic.
-                                     * Un 5e segment "outofservice" avant "/set" indique une commande OoS. */
+                                    /* Distinction entre écriture Present_Value (prop 85),
+                                     * commande OutOfService (prop 81) et commande manual_op (prop 82) selon la structure du topic.
+                                     * Un 5e segment avant "/set" indique une commande spéciale. */
                                     int p5 = t.indexOf('/', p4 + 1);
                                     if (p5 > 0 && t.substring(p4 + 1, p5) == "outofservice") {
                                         job.prop_id = 81;
+                                    } else if (p5 > 0 && t.substring(p4 + 1, p5) == "manual_op") {
+                                        job.prop_id = 82;
                                     } else {
                                         job.prop_id = 85;
                                     }
@@ -280,20 +289,23 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                                     else if (type_str == "AI") job.obj_type = 0;
                                     else { job.type = JOB_WHO_IS; found = false; }
 
-                                    // Déterminer la priorité selon la commandabilité réelle dans le cache
-                                    if (found) {
-                                        job.priority = 0; // Pas de priorité par défaut (ex: non commandable)
-                                        if (job.prop_id == 85) {
-                                            for (auto& o : d.objects) {
-                                                if (o.usType == job.obj_type && o.ulInstance == job.obj_instance) {
-                                                    if (o.xIsCommandable) {
-                                                        job.priority = 8; // Priorité 8 si commandable
-                                                    }
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
+                                                                         // Déterminer la priorité selon la commandabilité réelle dans le cache
+                                     if (found) {
+                                         if (job.prop_id == 85) {
+                                             for (auto& o : d.objects) {
+                                                 if (o.usType == job.obj_type && o.ulInstance == job.obj_instance) {
+                                                     if (o.xIsCommandable) {
+                                                         // Priorité 8 si manual_op est ON (xOverriddenBacnet), sinon 0 (Auto)
+                                                         job.priority = o.xOverriddenBacnet ? 8 : 0;
+                                                     }
+                                                     break;
+                                                 }
+                                             }
+                                         } else if (job.prop_id == 82) {
+                                             // La commande manual_op forcera l'écriture de Present_Value (85) à la priorité 8
+                                             job.priority = 8;
+                                         }
+                                     }
 
                                     if (found) {
                                         bool xProceed = true;
@@ -341,10 +353,41 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                                                         break;
                                                     }
                                                 }
-                                            } else if (String(payload_buf).equalsIgnoreCase("AUTO")) {
-                                                // AJOUT CHIRURGICAL : Prise en charge du mot clé AUTO depuis MQTT (Relinquish)
-                                                job.write_value = NAN;
-                                            } else if (job.obj_type == 14 || job.obj_type == 19) {
+                                             } else if (job.prop_id == 82) {
+                                                 bool xState = (String(payload_buf) == "ON");
+                                                 for (auto& o : d.objects) {
+                                                     if (o.usType == job.obj_type && o.ulInstance == job.obj_instance) {
+                                                         if (o.xIsCommandable) {
+                                                             o.xOverriddenBacnet = xState;
+                                                             o.ulLastUpdate = millis();
+                                                             job.priority = 8;
+                                                             job.prop_id = 85;
+                                                             if (xState) {
+                                                                 job.write_value = o.fPresentValue;
+                                                             } else {
+                                                                 job.write_value = NAN;
+                                                             }
+                                                             publish_mqtt_topic(d.ulDeviceId, o, 82, false);
+                                                         } else {
+                                                             xProceed = false;
+                                                         }
+                                                         break;
+                                                     }
+                                                 }
+                                             } else if (String(payload_buf).equalsIgnoreCase("AUTO")) {
+                                                 job.write_value = NAN;
+                                                 for (auto& o : d.objects) {
+                                                     if (o.usType == job.obj_type && o.ulInstance == job.obj_instance) {
+                                                         if (o.xIsCommandable) {
+                                                             job.priority = 8;
+                                                             o.xOverriddenBacnet = false;
+                                                             o.ulLastUpdate = millis();
+                                                             publish_mqtt_topic(d.ulDeviceId, o, 82, false);
+                                                         }
+                                                         break;
+                                                     }
+                                                 }
+                                             } else if (job.obj_type == 14 || job.obj_type == 19) {
                                                 /* Multi-State Output/Value : conversion texte → index.
                                                  * BACnet utilise des index 1-based pour les états.
                                                  * Si le texte ne correspond à aucun state_text connu,
@@ -498,6 +541,7 @@ static void mqtt_gatekeeper_task(void *pv) {
                 const char* subtopic = "state";
                 if (pubJob.prop_id == 77) subtopic = "name";
                 else if (pubJob.prop_id == 81) subtopic = "outofservice";
+                else if (pubJob.prop_id == 82) subtopic = "manual_op";
                 snprintf(topic, sizeof(topic), "%s/%lu/%s/%lu/%s", sysCfg.mqtt_prefix, (unsigned long)pubJob.ulDeviceId, t_str, (unsigned long)pubJob.obj_instance, subtopic);
                 
                 if (esp_mqtt_client_publish(mqtt_client, topic, pubJob.value_string, 0, 1, pubJob.retain) < 0) {
@@ -1274,7 +1318,7 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                     }
                 }
 
-                // AJOUT CHIRURGICAL : Publication du bouton de libération (Reset) pour les objets commandables
+                // AJOUT CHIRURGICAL : Publication du bouton de libération (Reset) et du switch de forçage (Manual Operator) pour les objets commandables
                 if (obj_commandable) {
                     JsonDocument reset_doc;
                     char reset_uniq_id[128];
@@ -1304,14 +1348,53 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
                     serializeJson(reset_doc, reset_payload);
                     esp_mqtt_client_publish(mqtt_client, reset_config_topic, reset_payload.c_str(), reset_payload.length(), 1, 1);
                     total_published++;
+
+                    // Switch Manual Operator
+                    JsonDocument op_doc;
+                    char op_uniq_id[128];
+                    snprintf(op_uniq_id, sizeof(op_uniq_id), "bacnet_%lu_%s_%lu_manual_op",
+                             (unsigned long)current_did, t_str, (unsigned long)obj_inst);
+                    char op_config_topic[128];
+                    snprintf(op_config_topic, sizeof(op_config_topic), "homeassistant/switch/%s/config", op_uniq_id);
+
+                    op_doc["~"] = String(base_topic);
+                    op_doc["uniq_id"] = String(op_uniq_id);
+                    op_doc["name"] = String(obj_name) + " Manual Operator";
+                    op_doc["icon"] = "mdi:hand-pointing-right";
+                    op_doc["avty_t"] = String(lwt_topic);
+                    op_doc["pl_avail"] = "online";
+                    op_doc["pl_not_avail"] = "offline";
+                    op_doc["stat_t"] = "~/manual_op";
+                    op_doc["cmd_t"] = "~/manual_op/set";
+                    op_doc["pl_on"] = "ON";
+                    op_doc["pl_off"] = "OFF";
+
+                    JsonObject op_device = op_doc["dev"].to<JsonObject>();
+                    JsonArray op_ids = op_device["ids"].to<JsonArray>();
+                    op_ids.add(String(dev_id_str));
+                    op_device["name"] = dev_name.length() > 0 ? String(dev_name) : String(dev_id_str);
+                    op_device["mf"] = dev_vendor.length() > 0 ? String(dev_vendor) : "BACnet Manufacturer";
+                    op_device["sw"] = configVERSION_GLOBAL;
+
+                    String op_payload;
+                    serializeJson(op_doc, op_payload);
+                    esp_mqtt_client_publish(mqtt_client, op_config_topic, op_payload.c_str(), op_payload.length(), 1, 1);
+                    total_published++;
                 } else {
-                    // Si l'objet n'est plus commandable, supprimer son bouton de reset de HA
+                    // Si l'objet n'est plus commandable, supprimer son bouton de reset et son switch manual_op de HA
                     char reset_uniq_id[128];
                     snprintf(reset_uniq_id, sizeof(reset_uniq_id), "bacnet_%lu_%s_%lu_reset",
                              (unsigned long)current_did, t_str, (unsigned long)obj_inst);
                     char reset_config_topic[128];
                     snprintf(reset_config_topic, sizeof(reset_config_topic), "homeassistant/button/%s/config", reset_uniq_id);
                     esp_mqtt_client_publish(mqtt_client, reset_config_topic, "", 0, 1, 1);
+
+                    char op_uniq_id[128];
+                    snprintf(op_uniq_id, sizeof(op_uniq_id), "bacnet_%lu_%s_%lu_manual_op",
+                             (unsigned long)current_did, t_str, (unsigned long)obj_inst);
+                    char op_config_topic[128];
+                    snprintf(op_config_topic, sizeof(op_config_topic), "homeassistant/switch/%s/config", op_uniq_id);
+                    esp_mqtt_client_publish(mqtt_client, op_config_topic, "", 0, 1, 1);
                 }
                 
                 // AJOUT CHIRURGICAL : Publication des 5 sensors de status_flags pour cet objet
@@ -1431,15 +1514,8 @@ void publish_ha_autodiscovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type) 
  * @param prop_id     Identifiant de la propriété BACnet à publier (77, 85 ou 81).
  * @param retain      true pour un message MQTT retained (persiste sur le broker).
  */
-void publish_mqtt_topic(uint32_t ulDeviceId, BACnetObject& obj, uint8_t prop_id, bool retain) {
+void publish_mqtt_topic_internal(uint32_t ulDeviceId, BACnetObject& obj, uint8_t prop_id, bool retain, bool xTriggerLinked) {
     if (!obj.xEnabled) return;
-
-    /* Blocage de la publication de la Present_Value physique pour les sondes
-     * en mode OutOfService. Empêche le polling BACnet d'écraser la valeur
-     * de forçage injectée par l'opérateur via HA. */
-    if (prop_id == 85 && obj.usType == OBJ_ANALOG_INPUT && obj.isOutOfService()) {
-        return; 
-    }
 
     MQTTPublishJob pub;
     pub.ulDeviceId = ulDeviceId;
@@ -1502,16 +1578,32 @@ void publish_mqtt_topic(uint32_t ulDeviceId, BACnetObject& obj, uint8_t prop_id,
     /* Propriété Out_Of_Service : formatage binaire "ON"/"OFF" pour le switch HA. */
     else if (prop_id == 81) {
         strlcpy(pub.value_string, obj.isOutOfService() ? "ON" : "OFF", sizeof(pub.value_string));
+    }
+    /* Propriété Manual Operator : formatage binaire "ON"/"OFF" pour le switch HA. */
+    else if (prop_id == 82) {
+        strlcpy(pub.value_string, obj.xOverriddenBacnet ? "ON" : "OFF", sizeof(pub.value_string));
     } else return;
 
     enqueue_mqtt_publish(pub);
 
-    /* Synchronisation automatique : chaque publication de Present_Value d'une AI
-     * est suivie d'une publication de son statut OutOfService pour garantir
-     * que le switch HA reflète toujours l'état correct. */
-    if (prop_id == 85 && obj.usType == OBJ_ANALOG_INPUT) {
-        publish_mqtt_topic(ulDeviceId, obj, 81, retain);
+    /* Synchronisation automatique bidirectionnelle */
+    if (xTriggerLinked) {
+        if (prop_id == 85) {
+            if (obj.usType == OBJ_ANALOG_INPUT) {
+                publish_mqtt_topic_internal(ulDeviceId, obj, 81, retain, false);
+            } else if (obj.xIsCommandable) {
+                publish_mqtt_topic_internal(ulDeviceId, obj, 82, retain, false);
+            }
+        } else if (prop_id == 81 && obj.usType == OBJ_ANALOG_INPUT) {
+            publish_mqtt_topic_internal(ulDeviceId, obj, 85, retain, false);
+        } else if (prop_id == 82 && obj.xIsCommandable) {
+            publish_mqtt_topic_internal(ulDeviceId, obj, 85, retain, false);
+        }
     }
+}
+
+void publish_mqtt_topic(uint32_t ulDeviceId, BACnetObject& obj, uint8_t prop_id, bool retain) {
+    publish_mqtt_topic_internal(ulDeviceId, obj, prop_id, retain, true);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
@@ -1609,12 +1701,17 @@ void unpublish_ha_discovery(uint32_t t_did, uint32_t t_inst, uint16_t t_type, co
                     esp_mqtt_client_publish(mqtt_client, flag_topic_sen, "", 0, 1, 1);
                 }
                 
-                // AJOUT CHIRURGICAL : Supprimer également le bouton Reset s'il existe
+                // AJOUT CHIRURGICAL : Supprimer également le bouton Reset et le switch manual_op s'ils existent
                 if (obj.xIsCommandable) {
                     char reset_topic[128];
                     snprintf(reset_topic, sizeof(reset_topic), "homeassistant/button/bacnet_%lu_%s_%lu_reset/config",
                              (unsigned long)dev.ulDeviceId, t_str, (unsigned long)obj.ulInstance);
                     esp_mqtt_client_publish(mqtt_client, reset_topic, "", 0, 1, 1);
+
+                    char op_topic[128];
+                    snprintf(op_topic, sizeof(op_topic), "homeassistant/switch/bacnet_%lu_%s_%lu_manual_op/config",
+                             (unsigned long)dev.ulDeviceId, t_str, (unsigned long)obj.ulInstance);
+                    esp_mqtt_client_publish(mqtt_client, op_topic, "", 0, 1, 1);
                 }
                 vTaskDelay(pdMS_TO_TICKS(10));
             }

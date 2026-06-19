@@ -909,7 +909,15 @@ void setup_web_routes() {
             float fVal = NAN;
             if (request->hasParam("val", true)) {
                 String xValStr = request->getParam("val", true)->value();
-                fVal = xValStr.equalsIgnoreCase("AUTO") ? NAN : xValStr.toFloat();
+                if (ucProp == 81) {
+                    if (xValStr.equalsIgnoreCase("ON") || xValStr.equalsIgnoreCase("true") || xValStr.equalsIgnoreCase("1")) {
+                        fVal = 1.0f;
+                    } else {
+                        fVal = 0.0f;
+                    }
+                } else {
+                    fVal = xValStr.equalsIgnoreCase("AUTO") ? NAN : xValStr.toFloat();
+                }
             }
             
             uint8_t ucPriority = request->hasParam("priority", true) ? request->getParam("priority", true)->value().toInt() : 0;

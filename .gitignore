@@ -9,3 +9,5 @@ index_html.h.gch
 tmp/
 plans/
 utils/
+config_local.json
+.env
