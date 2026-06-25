@@ -18,6 +18,38 @@ Une passerelle bidirectionnelle autonome BACnet MS/TP vers MQTT (ESP32-S3) pour 
 - **Rafraîchissement instantané Out-of-Service (OOS)** : Cascade asynchrone bidirectionnelle lors de la publication d'une valeur et de son statut OOS, garantissant un retour d'état immédiat sous Home Assistant.
 - **Commutateur de Forçage "Manual Operator" (Prio 8)** : Ajout d'un switch `Manual Operator` (`switch.[name]_manual_operator`) pour toutes les entités commandables, permettant d'activer à la demande le forçage à la priorité 8, de piloter les setpoints à ce niveau, et d'envoyer un `AUTO` (Relinquish) pour repasser en mode automatique (priorité 0 par défaut).
 
+### 🏗️ Principe d'Architecture
+
+La passerelle **bacnet_2_mqtt** permet de connecter des réseaux **BACnet MS/TP (RS-485)** à **Home Assistant** via **MQTT**.
+#### ***Flux de données*** :
+````mermaid
+graph TD
+    subgraph "`**Réseau Terrain (RS-485)**`"
+        A["Automate BACnet MS/TP"] -->|Trames BACnet MS/TP| B["Interface NET"]
+    end
+
+    subgraph "`**ESP32-S3-RS485-CAN**`"
+        B -->|Trames brutes| C["Parser BACnet MS/TP (Implémentation personnalisée)"]
+        C -->|Données décodées| D["Gestion des priorités + OutOfService"]
+        D -->|JSON| E["Client MQTT"]
+    end
+
+    subgraph "`**Réseau IP**`"
+        E -->|Publish/Subscribe| F["Broker MQTT (ex: Mosquitto)"]
+        F -->|Auto-Discovery| G["Home Assistant"]
+    end
+
+    G -->|Commandes MQTT| E
+    E -->|Trames BACnet| D
+    D -->|Construction trames| C
+    C -->|RS-485| B
+    B -->|Trames MS/TP| A
+
+    style A fill:#f9f,stroke:#333
+    style G fill:#bbf,stroke:#333
+    style C fill:#ffd0d0,stroke:#333
+    style D fill:#d0d0ff,stroke:#333
+````
 ### 📚 Documentation Détaillée
 Consultez les guides du dossier [docs/](file:///home/dev/bacnet_2_mqtt/docs/) :
 1. [docs/1_compilation_installation.md](file:///home/dev/bacnet_2_mqtt/docs/1_compilation_installation.md) : Guide de compilation et flash.
