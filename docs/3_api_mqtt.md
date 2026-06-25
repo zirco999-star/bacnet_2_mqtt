@@ -70,6 +70,73 @@ Toutes les requêtes de modification ou lecture nécessitent une authentificatio
 ## 📡 Topics MQTT (Bidirectionnel)
 
 Le préfixe par défaut est `bacnet`.
+### Principe de Conversion BACnet ↔ MQTT
+````mermaid
+---
+config:
+  layout: elk
+---
+flowchart BT
+ subgraph reception["`**Réception BACnet → MQTT**`"]
+        B["Vérification CRC16"]
+        A["Trame MS/TP brute (ex: 55 FF 06 00 00 00 08 1D ...)"]
+        C["Extraction:
+- Type de trame
+- Adresse source/dest
+- Payload"]
+        D["Décodage payload (ex: ReadProperty, WriteProperty)"]
+        E["Conversion en JSON {device_id: 1234, object: AI1, value: 22.5, oos: false}"]
+        F["Publication MQTT
+Topic: bacnet/1234/ai1/value"]
+  end
+ subgraph command["`**Commande MQTT → BACnet**`"]
+        H["Reçoit topic:
+bacnet/1234/ai1/manual_operator/set"]
+        G["Commande HA:
+switch.uta1_manual_operator = ON"]
+        I["Construction payload BACnet
+Priority_Array = 8"]
+        J["Construction trame MS/TP
+Type: 0x06 Data Not Expecting Reply"]
+        K["Ajout CRC16"]
+        L["Envoi RS-485"]
+  end
+    A --> B
+    B -- CRC valide --> C
+    C --> D
+    D --> E
+    E --> F
+    G --> H
+    H --> I
+    I --> J
+    J --> K
+    K --> L
+
+     B:::processNode
+     A:::inputNode
+     C:::processNode
+     D:::processNode
+     E:::processNode
+     F:::outputNode
+     I:::processNode
+     J:::processNode
+     K:::processNode
+     L:::outputNode
+    classDef inputNode stroke:#818cf8,fill:#eef2ff
+    classDef processNode stroke:#a78bfa,fill:#f5f3ff
+    classDef outputNode stroke:#4ade80,fill:#f0fdf4
+    classDef errorNode stroke:#f87171,fill:#fef2f2
+````
+### ***Explications*** :
+* **Réception** :
+  * Vérification du CRC16 (comme dans ton code avec check_mstp_crc).
+  * Extraction des champs (type de trame, adresses, payload).
+  * Décodage du payload (ex: ReadProperty pour lire une valeur, WriteProperty pour une commande).
+* **Émission** :
+  * Construction du payload BACnet (ex: Priority_Array pour le forçage manuel).
+  * Ajout du CRC16 (via crc16_ms dans ton code).
+  * Envoi sur le bus RS-485.
+
 
 ### 1. Publication d'État (Passerelle → Broker)
 Chaque objet publie son état JSON sur le topic suivant dès qu'une variation est détectée ou lors du rafraîchissement périodique :
