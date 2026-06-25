@@ -54,3 +54,38 @@ Dans le répertoire de développement, utilisez les scripts du dossier `utils/` 
 2. Assurez-vous que le dossier `src/` contenant les fichiers d'en-tête et sources `.h`/`.cpp` est bien présent.
 3. Configurez les options de carte comme indiqué ci-dessus.
 4. Cliquez sur **Vérifier/Compiler**, puis sur **Téléverser**.
+
+## Structure du code
+### Diagramme des fonctions clés
+````mermaid
+classDiagram
+    class BACnetGateway {
+        +uint8_t device_address_
+        +bool has_token_
+        +void handle_mstp_frame(const std::vector<uint8_t> &data)
+        +void send_mstp_frame(const std::vector<uint8_t> &data)
+        +uint16_t crc16_ms(const uint8_t *data, size_t length)
+        +size_t build_mstp_frame(uint8_t frame_type, uint8_t dest_addr, const std::vector<uint8_t> &payload, uint8_t *buffer)
+        +bool check_mstp_crc(const std::vector<uint8_t> &data)
+    }
+
+    class MQTTHandler {
+        +void publish_bacnet_state(uint32_t device_id, uint32_t object_id, float value, bool oos)
+        +void handle_mqtt_command(const std::string &topic, const std::string &payload)
+    }
+
+    BACnetGateway --> MQTTHandler : Utilise pour publier les états
+    MQTTHandler --> BACnetGateway : Appelle pour envoyer des commandes
+
+    style BACnetGateway fill:#ffd0d0,stroke:#333
+    style MQTTHandler fill:#d0d0ff,stroke:#333
+````
+### Explications :
+
+* `BACnetGateway` : Classe principale avec fonctions personnalisées :
+  * `handle_mstp_frame` : Parse les trames MS/TP entrantes.
+  * `send_mstp_frame` : Construit et envoie des trames MS/TP.
+  * `crc16_ms` : Calcule le CRC16 pour les trames MS/TP.
+  * `build_mstp_frame` : Construit une trame MS/TP complète (préambule, headers, payload, CRC).
+  * `check_mstp_crc` : Vérifie le CRC d'une trame reçue.
+* `MQTTHandler` : Gère la conversion entre BACnet et MQTT.
